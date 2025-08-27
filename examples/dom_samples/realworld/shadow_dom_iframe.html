@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shadow DOM and iFrame Complex Page</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #f0f2f5;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        .card {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        h1, h2 {
+            color: #1a1a1a;
+        }
+        
+        /* Custom element styles */
+        custom-input {
+            display: block;
+            margin-bottom: 15px;
+        }
+        
+        iframe {
+            width: 100%;
+            height: 400px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        
+        .submit-btn {
+            background: #0066cc;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        
+        .submit-btn:hover {
+            background: #0052a3;
+        }
+        
+        #result {
+            margin-top: 20px;
+            padding: 15px;
+            background: #e8f4f8;
+            border-radius: 4px;
+            display: none;
+        }
+        
+        #result.show {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Complex Form with Shadow DOM and iFrame</h1>
+        
+        <!-- Regular DOM section -->
+        <div class="card">
+            <h2>Personal Information</h2>
+            <form id="main-form">
+                <div>
+                    <label for="full-name">Full Name:</label>
+                    <input type="text" id="full-name" name="fullName" placeholder="Enter your full name">
+                </div>
+                
+                <!-- Custom element with Shadow DOM -->
+                <custom-input 
+                    label="Email Address" 
+                    type="email" 
+                    name="email" 
+                    placeholder="email@example.com"
+                    required="true">
+                </custom-input>
+                
+                <custom-input 
+                    label="Phone Number" 
+                    type="tel" 
+                    name="phone" 
+                    placeholder="+1 (555) 123-4567"
+                    pattern="[+]?[0-9\s()-]+">
+                </custom-input>
+                
+                <!-- Another custom element -->
+                <custom-dropdown 
+                    label="Country" 
+                    name="country"
+                    options="USA,Canada,UK,Australia,Germany,France,Japan,Other">
+                </custom-dropdown>
+            </form>
+        </div>
+        
+        <!-- iFrame section -->
+        <div class="card">
+            <h2>Secure Payment Information</h2>
+            <iframe id="payment-frame" srcdoc='
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <style>
+                        body {
+                            font-family: Arial, sans-serif;
+                            padding: 20px;
+                            margin: 0;
+                            background: #fafafa;
+                        }
+                        .payment-form {
+                            max-width: 400px;
+                        }
+                        .form-group {
+                            margin-bottom: 15px;
+                        }
+                        label {
+                            display: block;
+                            margin-bottom: 5px;
+                            font-weight: 500;
+                            color: #333;
+                        }
+                        input {
+                            width: 100%;
+                            padding: 8px;
+                            border: 1px solid #ddd;
+                            border-radius: 4px;
+                            box-sizing: border-box;
+                        }
+                        .card-row {
+                            display: flex;
+                            gap: 10px;
+                        }
+                        .card-row .form-group {
+                            flex: 1;
+                        }
+                        .secure-badge {
+                            display: flex;
+                            align-items: center;
+                            gap: 5px;
+                            color: #0066cc;
+                            font-size: 14px;
+                            margin-bottom: 15px;
+                        }
+                        #otp-container {
+                            margin-top: 20px;
+                            padding: 15px;
+                            background: #fff3cd;
+                            border: 1px solid #ffc107;
+                            border-radius: 4px;
+                            display: none;
+                        }
+                        #otp-container.show {
+                            display: block;
+                        }
+                    </style>
+                </head>
+                <body>
+                    <div class="secure-badge">
+                        🔒 Secure Payment Form
+                    </div>
+                    <form class="payment-form" id="payment-form">
+                        <div class="form-group">
+                            <label for="card-number">Card Number</label>
+                            <input type="text" id="card-number" placeholder="1234 5678 9012 3456" maxlength="19">
+                        </div>
+                        <div class="card-row">
+                            <div class="form-group">
+                                <label for="expiry">Expiry Date</label>
+                                <input type="text" id="expiry" placeholder="MM/YY" maxlength="5">
+                            </div>
+                            <div class="form-group">
+                                <label for="cvv">CVV</label>
+                                <input type="text" id="cvv" placeholder="123" maxlength="4">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="cardholder">Cardholder Name</label>
+                            <input type="text" id="cardholder" placeholder="Name on card">
+                        </div>
+                        <div id="otp-container">
+                            <label for="otp-input">Enter OTP sent to your phone:</label>
+                            <input type="text" id="otp-input" placeholder="123456" maxlength="6">
+                        </div>
+                    </form>
+                    <script>
+                        // Format card number
+                        document.getElementById("card-number").addEventListener("input", function(e) {
+                            let value = e.target.value.replace(/\s/g, "");
+                            let formattedValue = value.match(/.{1,4}/g)?.join(" ") || value;
+                            e.target.value = formattedValue;
+                            
+                            // Show OTP field when card number is complete
+                            if (value.length === 16) {
+                                document.getElementById("otp-container").classList.add("show");
+                            }
+                        });
+                        
+                        // Format expiry
+                        document.getElementById("expiry").addEventListener("input", function(e) {
+                            let value = e.target.value.replace(/\D/g, "");
+                            if (value.length >= 2) {
+                                value = value.slice(0,2) + "/" + value.slice(2,4);
+                            }
+                            e.target.value = value;
+                        });
+                        
+                        // Only allow numbers for CVV
+                        document.getElementById("cvv").addEventListener("input", function(e) {
+                            e.target.value = e.target.value.replace(/\D/g, "");
+                        });
+                        
+                        // Only allow numbers for OTP
+                        document.getElementById("otp-input").addEventListener("input", function(e) {
+                            e.target.value = e.target.value.replace(/\D/g, "");
+                        });
+                        
+                        // Listen for messages from parent
+                        window.addEventListener("message", function(e) {
+                            if (e.data.action === "getPaymentData") {
+                                const data = {
+                                    cardNumber: document.getElementById("card-number").value,
+                                    expiry: document.getElementById("expiry").value,
+                                    cvv: document.getElementById("cvv").value,
+                                    cardholder: document.getElementById("cardholder").value,
+                                    otp: document.getElementById("otp-input").value
+                                };
+                                parent.postMessage({type: "paymentData", data: data}, "*");
+                            }
+                        });
+                    </script>
+                </body>
+                </html>
+            '></iframe>
+        </div>
+        
+        <!-- Nested Shadow DOM component -->
+        <div class="card">
+            <h2>Additional Options</h2>
+            <nested-component></nested-component>
+        </div>
+        
+        <button class="submit-btn" onclick="submitForm()">Submit Application</button>
+        
+        <div id="result"></div>
+    </div>
+    
+    <script>
+        // Define custom input element with Shadow DOM
+        class CustomInput extends HTMLElement {
+            constructor() {
+                super();
+                const shadow = this.attachShadow({ mode: 'open' });
+                
+                const label = this.getAttribute('label');
+                const type = this.getAttribute('type') || 'text';
+                const name = this.getAttribute('name');
+                const placeholder = this.getAttribute('placeholder') || '';
+                const pattern = this.getAttribute('pattern') || '';
+                const required = this.getAttribute('required') === 'true';
+                
+                shadow.innerHTML = `
+                    <style>
+                        :host {
+                            display: block;
+                            margin-bottom: 15px;
+                        }
+                        label {
+                            display: block;
+                            margin-bottom: 5px;
+                            font-weight: 500;
+                            color: #333;
+                        }
+                        input {
+                            width: 100%;
+                            padding: 8px;
+                            border: 1px solid #ddd;
+                            border-radius: 4px;
+                            box-sizing: border-box;
+                            font-size: 14px;
+                        }
+                        input:focus {
+                            outline: none;
+                            border-color: #0066cc;
+                            box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.2);
+                        }
+                        input:invalid {
+                            border-color: #dc3545;
+                        }
+                        .error-message {
+                            color: #dc3545;
+                            font-size: 12px;
+                            margin-top: 5px;
+                            display: none;
+                        }
+                        input:invalid ~ .error-message {
+                            display: block;
+                        }
+                    </style>
+                    <label for="${name}">${label}${required ? ' *' : ''}</label>
+                    <input 
+                        type="${type}" 
+                        id="${name}" 
+                        name="${name}" 
+                        placeholder="${placeholder}"
+                        ${pattern ? `pattern="${pattern}"` : ''}
+                        ${required ? 'required' : ''}
+                    >
+                    <div class="error-message">Please enter a valid ${label.toLowerCase()}</div>
+                `;
+                
+                this.input = shadow.querySelector('input');
+            }
+            
+            get value() {
+                return this.input ? this.input.value : '';
+            }
+            
+            set value(val) {
+                if (this.input) {
+                    this.input.value = val;
+                }
+            }
+        }
+        
+        // Define custom dropdown with Shadow DOM
+        class CustomDropdown extends HTMLElement {
+            constructor() {
+                super();
+                const shadow = this.attachShadow({ mode: 'open' });
+                
+                const label = this.getAttribute('label');
+                const name = this.getAttribute('name');
+                const options = this.getAttribute('options').split(',');
+                
+                shadow.innerHTML = `
+                    <style>
+                        :host {
+                            display: block;
+                            margin-bottom: 15px;
+                        }
+                        label {
+                            display: block;
+                            margin-bottom: 5px;
+                            font-weight: 500;
+                            color: #333;
+                        }
+                        select {
+                            width: 100%;
+                            padding: 8px;
+                            border: 1px solid #ddd;
+                            border-radius: 4px;
+                            box-sizing: border-box;
+                            font-size: 14px;
+                            background: white;
+                        }
+                        select:focus {
+                            outline: none;
+                            border-color: #0066cc;
+                            box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.2);
+                        }
+                    </style>
+                    <label for="${name}">${label}</label>
+                    <select id="${name}" name="${name}">
+                        <option value="">Select ${label}</option>
+                        ${options.map(opt => `<option value="${opt}">${opt}</option>`).join('')}
+                    </select>
+                `;
+                
+                this.select = shadow.querySelector('select');
+            }
+            
+            get value() {
+                return this.select ? this.select.value : '';
+            }
+            
+            set value(val) {
+                if (this.select) {
+                    this.select.value = val;
+                }
+            }
+        }
+        
+        // Define nested component with multiple shadow roots
+        class NestedComponent extends HTMLElement {
+            constructor() {
+                super();
+                const shadow = this.attachShadow({ mode: 'open' });
+                
+                shadow.innerHTML = `
+                    <style>
+                        :host {
+                            display: block;
+                        }
+                        .options-grid {
+                            display: grid;
+                            grid-template-columns: repeat(2, 1fr);
+                            gap: 15px;
+                        }
+                    </style>
+                    <div class="options-grid">
+                        <inner-toggle label="Express Shipping" name="express"></inner-toggle>
+                        <inner-toggle label="Insurance" name="insurance"></inner-toggle>
+                        <inner-toggle label="Gift Wrap" name="gift"></inner-toggle>
+                        <inner-toggle label="Priority Support" name="support"></inner-toggle>
+                    </div>
+                `;
+            }
+        }
+        
+        // Define inner toggle component (nested shadow DOM)
+        class InnerToggle extends HTMLElement {
+            constructor() {
+                super();
+                const shadow = this.attachShadow({ mode: 'open' });
+                
+                const label = this.getAttribute('label');
+                const name = this.getAttribute('name');
+                
+                shadow.innerHTML = `
+                    <style>
+                        :host {
+                            display: block;
+                        }
+                        .toggle-container {
+                            display: flex;
+                            align-items: center;
+                            gap: 10px;
+                            padding: 10px;
+                            background: #f8f9fa;
+                            border-radius: 4px;
+                        }
+                        .toggle {
+                            position: relative;
+                            width: 44px;
+                            height: 24px;
+                        }
+                        .toggle input {
+                            opacity: 0;
+                            width: 0;
+                            height: 0;
+                        }
+                        .slider {
+                            position: absolute;
+                            cursor: pointer;
+                            top: 0;
+                            left: 0;
+                            right: 0;
+                            bottom: 0;
+                            background-color: #ccc;
+                            transition: .3s;
+                            border-radius: 24px;
+                        }
+                        .slider:before {
+                            position: absolute;
+                            content: "";
+                            height: 18px;
+                            width: 18px;
+                            left: 3px;
+                            bottom: 3px;
+                            background-color: white;
+                            transition: .3s;
+                            border-radius: 50%;
+                        }
+                        input:checked + .slider {
+                            background-color: #0066cc;
+                        }
+                        input:checked + .slider:before {
+                            transform: translateX(20px);
+                        }
+                        label {
+                            cursor: pointer;
+                            user-select: none;
+                        }
+                    </style>
+                    <div class="toggle-container">
+                        <div class="toggle">
+                            <input type="checkbox" id="${name}" name="${name}">
+                            <span class="slider"></span>
+                        </div>
+                        <label for="${name}">${label}</label>
+                    </div>
+                `;
+                
+                this.checkbox = shadow.querySelector('input');
+                
+                // Make label clickable
+                shadow.querySelector('label').addEventListener('click', () => {
+                    this.checkbox.checked = !this.checkbox.checked;
+                });
+            }
+            
+            get checked() {
+                return this.checkbox ? this.checkbox.checked : false;
+            }
+            
+            set checked(val) {
+                if (this.checkbox) {
+                    this.checkbox.checked = val;
+                }
+            }
+        }
+        
+        // Register custom elements
+        customElements.define('custom-input', CustomInput);
+        customElements.define('custom-dropdown', CustomDropdown);
+        customElements.define('nested-component', NestedComponent);
+        customElements.define('inner-toggle', InnerToggle);
+        
+        // Form submission
+        function submitForm() {
+            // Collect data from regular DOM
+            const fullName = document.getElementById('full-name').value;
+            
+            // Collect data from Shadow DOM elements
+            const email = document.querySelector('custom-input[name="email"]').value;
+            const phone = document.querySelector('custom-input[name="phone"]').value;
+            const country = document.querySelector('custom-dropdown[name="country"]').value;
+            
+            // Collect data from nested Shadow DOM
+            const nestedComponent = document.querySelector('nested-component');
+            const toggles = {};
+            if (nestedComponent && nestedComponent.shadowRoot) {
+                const innerToggles = nestedComponent.shadowRoot.querySelectorAll('inner-toggle');
+                innerToggles.forEach(toggle => {
+                    toggles[toggle.getAttribute('name')] = toggle.checked;
+                });
+            }
+            
+            // Request data from iframe
+            const iframe = document.getElementById('payment-frame');
+            iframe.contentWindow.postMessage({action: 'getPaymentData'}, '*');
+            
+            // Listen for iframe response
+            window.addEventListener('message', function handler(e) {
+                if (e.data.type === 'paymentData') {
+                    window.removeEventListener('message', handler);
+                    
+                    // Display results
+                    const result = document.getElementById('result');
+                    result.innerHTML = `
+                        <h3>Form Submission Summary</h3>
+                        <p><strong>Personal Info:</strong></p>
+                        <ul>
+                            <li>Name: ${fullName}</li>
+                            <li>Email: ${email}</li>
+                            <li>Phone: ${phone}</li>
+                            <li>Country: ${country}</li>
+                        </ul>
+                        <p><strong>Payment Info:</strong></p>
+                        <ul>
+                            <li>Card: ${e.data.data.cardNumber.replace(/\d(?=\d{4})/g, '*')}</li>
+                            <li>Expiry: ${e.data.data.expiry}</li>
+                            <li>Cardholder: ${e.data.data.cardholder}</li>
+                            <li>OTP: ${e.data.data.otp ? '✓ Verified' : '✗ Not verified'}</li>
+                        </ul>
+                        <p><strong>Options:</strong></p>
+                        <ul>
+                            ${Object.entries(toggles).map(([key, val]) => 
+                                `<li>${key}: ${val ? '✓' : '✗'}</li>`
+                            ).join('')}
+                        </ul>
+                    `;
+                    result.classList.add('show');
+                }
+            });
+        }
+    </script>
+</body>
+</html>

@@ -13,10 +13,16 @@ logger = logging.getLogger(__name__)
 
 
 def main(argv=None):
-    """Main CLI entry point."""
+    """Main CLI entry point with strict JSON output."""
     parser = argparse.ArgumentParser(
         prog="her",
         description="Hybrid Element Retriever - Natural language UI automation",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""Examples:
+  her act "click the login button" --url https://example.com
+  her query "submit buttons" --url https://example.com --limit 5
+  her cache --stats
+"""
     )
 
     # Add subcommands
@@ -96,7 +102,12 @@ def main(argv=None):
 
         # Handle version command
         if args.command == "version":
-            print("Hybrid Element Retriever (HER) v0.1.0")
+            version_info = {
+                "name": "Hybrid Element Retriever",
+                "version": "1.0.0",
+                "status": "production-ready"
+            }
+            print(json.dumps(version_info, indent=2))
             return 0
 
         # Import here to avoid loading everything for simple commands

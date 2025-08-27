@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SPA with Dynamic Content</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: #f5f7fa;
+        }
+        
+        /* Navigation */
+        nav {
+            background: #2c3e50;
+            padding: 1rem 2rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        nav ul {
+            list-style: none;
+            display: flex;
+            gap: 2rem;
+        }
+        
+        nav a {
+            color: white;
+            text-decoration: none;
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+            transition: background 0.3s;
+        }
+        
+        nav a:hover, nav a.active {
+            background: #34495e;
+        }
+        
+        /* Main Content */
+        #app {
+            max-width: 1200px;
+            margin: 2rem auto;
+            padding: 0 2rem;
+        }
+        
+        .page {
+            background: white;
+            padding: 2rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            animation: fadeIn 0.3s ease-in;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        /* Dashboard styles */
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1.5rem;
+            margin-top: 1.5rem;
+        }
+        
+        .metric-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 1.5rem;
+            border-radius: 8px;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .metric-card h3 {
+            font-size: 0.875rem;
+            opacity: 0.9;
+            margin-bottom: 0.5rem;
+        }
+        
+        .metric-card .value {
+            font-size: 2rem;
+            font-weight: bold;
+        }
+        
+        .metric-card .change {
+            font-size: 0.875rem;
+            margin-top: 0.5rem;
+            opacity: 0.9;
+        }
+        
+        /* Products page */
+        .product-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 1.5rem;
+            margin-top: 1.5rem;
+        }
+        
+        .product-card {
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            overflow: hidden;
+            transition: transform 0.3s, box-shadow 0.3s;
+        }
+        
+        .product-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        
+        .product-image {
+            height: 200px;
+            background: linear-gradient(45deg, #f0f0f0 25%, transparent 25%, transparent 75%, #f0f0f0 75%, #f0f0f0),
+                        linear-gradient(45deg, #f0f0f0 25%, transparent 25%, transparent 75%, #f0f0f0 75%, #f0f0f0);
+            background-size: 20px 20px;
+            background-position: 0 0, 10px 10px;
+        }
+        
+        .product-info {
+            padding: 1rem;
+        }
+        
+        .product-name {
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+        
+        .product-price {
+            color: #667eea;
+            font-size: 1.25rem;
+            font-weight: bold;
+        }
+        
+        .add-to-cart {
+            width: 100%;
+            padding: 0.75rem;
+            background: #48bb78;
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-weight: 600;
+            transition: background 0.3s;
+        }
+        
+        .add-to-cart:hover {
+            background: #38a169;
+        }
+        
+        /* Settings page */
+        .settings-section {
+            margin-bottom: 2rem;
+            padding-bottom: 2rem;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        
+        .settings-section:last-child {
+            border-bottom: none;
+        }
+        
+        .settings-section h3 {
+            margin-bottom: 1rem;
+            color: #2d3748;
+        }
+        
+        .form-group {
+            margin-bottom: 1rem;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            color: #4a5568;
+            font-weight: 500;
+        }
+        
+        .form-group input,
+        .form-group select {
+            width: 100%;
+            padding: 0.5rem;
+            border: 1px solid #cbd5e0;
+            border-radius: 4px;
+            font-size: 1rem;
+        }
+        
+        .form-group input:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        
+        .toggle-switch {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        
+        .toggle-switch input[type="checkbox"] {
+            width: auto;
+        }
+        
+        .btn-primary {
+            background: #667eea;
+            color: white;
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: background 0.3s;
+        }
+        
+        .btn-primary:hover {
+            background: #5a67d8;
+        }
+        
+        /* Loading state */
+        .loading {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 400px;
+        }
+        
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid #e2e8f0;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        /* Notification */
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: #48bb78;
+            color: white;
+            padding: 1rem 1.5rem;
+            border-radius: 4px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            transform: translateX(400px);
+            transition: transform 0.3s;
+            z-index: 1000;
+        }
+        
+        .notification.show {
+            transform: translateX(0);
+        }
+    </style>
+</head>
+<body>
+    <nav>
+        <ul>
+            <li><a href="#/dashboard" class="nav-link active" data-route="dashboard">Dashboard</a></li>
+            <li><a href="#/products" class="nav-link" data-route="products">Products</a></li>
+            <li><a href="#/orders" class="nav-link" data-route="orders">Orders</a></li>
+            <li><a href="#/settings" class="nav-link" data-route="settings">Settings</a></li>
+        </ul>
+    </nav>
+    
+    <div id="app">
+        <!-- Content will be dynamically loaded here -->
+    </div>
+    
+    <div class="notification" id="notification">
+        <span id="notification-text">Action completed successfully!</span>
+    </div>
+    
+    <script>
+        // SPA Router
+        class Router {
+            constructor() {
+                this.routes = {};
+                this.currentRoute = null;
+                window.addEventListener('popstate', () => this.handleRoute());
+                document.addEventListener('click', (e) => this.handleLinkClick(e));
+            }
+            
+            register(path, handler) {
+                this.routes[path] = handler;
+            }
+            
+            navigate(path) {
+                if (path !== this.currentRoute) {
+                    history.pushState({}, '', `#${path}`);
+                    this.handleRoute();
+                }
+            }
+            
+            handleRoute() {
+                const hash = window.location.hash.slice(1) || '/dashboard';
+                const path = hash.startsWith('/') ? hash : '/' + hash;
+                
+                // Update active nav
+                document.querySelectorAll('.nav-link').forEach(link => {
+                    link.classList.toggle('active', link.dataset.route === path.slice(1));
+                });
+                
+                // Show loading
+                document.getElementById('app').innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+                
+                // Simulate async loading
+                setTimeout(() => {
+                    if (this.routes[path]) {
+                        this.routes[path]();
+                        this.currentRoute = path;
+                    } else {
+                        this.routes['/dashboard']();
+                    }
+                }, 300);
+            }
+            
+            handleLinkClick(e) {
+                if (e.target.matches('a[href^="#"]')) {
+                    e.preventDefault();
+                    const path = e.target.getAttribute('href').slice(1);
+                    this.navigate(path);
+                }
+            }
+        }
+        
+        const router = new Router();
+        
+        // Dashboard page
+        router.register('/dashboard', () => {
+            document.getElementById('app').innerHTML = `
+                <div class="page">
+                    <h1>Dashboard</h1>
+                    <div class="dashboard-grid">
+                        <div class="metric-card">
+                            <h3>Total Revenue</h3>
+                            <div class="value">$45,231</div>
+                            <div class="change">+12% from last month</div>
+                        </div>
+                        <div class="metric-card">
+                            <h3>Active Users</h3>
+                            <div class="value">1,234</div>
+                            <div class="change">+5% from last month</div>
+                        </div>
+                        <div class="metric-card">
+                            <h3>Orders</h3>
+                            <div class="value">89</div>
+                            <div class="change">+23% from last month</div>
+                        </div>
+                        <div class="metric-card">
+                            <h3>Conversion Rate</h3>
+                            <div class="value">3.2%</div>
+                            <div class="change">+0.5% from last month</div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+        
+        // Products page
+        router.register('/products', () => {
+            const products = [
+                { id: 1, name: 'Premium Widget', price: 99.99 },
+                { id: 2, name: 'Standard Widget', price: 49.99 },
+                { id: 3, name: 'Basic Widget', price: 19.99 },
+                { id: 4, name: 'Pro Widget', price: 149.99 },
+                { id: 5, name: 'Elite Widget', price: 199.99 },
+                { id: 6, name: 'Starter Widget', price: 9.99 }
+            ];
+            
+            document.getElementById('app').innerHTML = `
+                <div class="page">
+                    <h1>Products</h1>
+                    <div class="product-grid">
+                        ${products.map(p => `
+                            <div class="product-card">
+                                <div class="product-image"></div>
+                                <div class="product-info">
+                                    <div class="product-name">${p.name}</div>
+                                    <div class="product-price">$${p.price}</div>
+                                </div>
+                                <button class="add-to-cart" data-product-id="${p.id}">Add to Cart</button>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+            
+            // Add event listeners for add to cart buttons
+            document.querySelectorAll('.add-to-cart').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    const productId = e.target.dataset.productId;
+                    showNotification(`Product ${productId} added to cart!`);
+                });
+            });
+        });
+        
+        // Orders page
+        router.register('/orders', () => {
+            document.getElementById('app').innerHTML = `
+                <div class="page">
+                    <h1>Orders</h1>
+                    <table style="width: 100%; border-collapse: collapse;">
+                        <thead>
+                            <tr style="border-bottom: 2px solid #e2e8f0;">
+                                <th style="padding: 1rem; text-align: left;">Order ID</th>
+                                <th style="padding: 1rem; text-align: left;">Customer</th>
+                                <th style="padding: 1rem; text-align: left;">Date</th>
+                                <th style="padding: 1rem; text-align: left;">Status</th>
+                                <th style="padding: 1rem; text-align: right;">Total</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr style="border-bottom: 1px solid #e2e8f0;">
+                                <td style="padding: 1rem;">#1234</td>
+                                <td style="padding: 1rem;">John Doe</td>
+                                <td style="padding: 1rem;">2024-01-15</td>
+                                <td style="padding: 1rem;"><span style="color: #48bb78;">Completed</span></td>
+                                <td style="padding: 1rem; text-align: right;">$299.99</td>
+                            </tr>
+                            <tr style="border-bottom: 1px solid #e2e8f0;">
+                                <td style="padding: 1rem;">#1235</td>
+                                <td style="padding: 1rem;">Jane Smith</td>
+                                <td style="padding: 1rem;">2024-01-16</td>
+                                <td style="padding: 1rem;"><span style="color: #f6ad55;">Processing</span></td>
+                                <td style="padding: 1rem; text-align: right;">$149.99</td>
+                            </tr>
+                            <tr style="border-bottom: 1px solid #e2e8f0;">
+                                <td style="padding: 1rem;">#1236</td>
+                                <td style="padding: 1rem;">Bob Johnson</td>
+                                <td style="padding: 1rem;">2024-01-17</td>
+                                <td style="padding: 1rem;"><span style="color: #4299e1;">Shipped</span></td>
+                                <td style="padding: 1rem; text-align: right;">$99.99</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            `;
+        });
+        
+        // Settings page
+        router.register('/settings', () => {
+            document.getElementById('app').innerHTML = `
+                <div class="page">
+                    <h1>Settings</h1>
+                    
+                    <div class="settings-section">
+                        <h3>Profile Settings</h3>
+                        <div class="form-group">
+                            <label for="display-name">Display Name</label>
+                            <input type="text" id="display-name" value="John Doe">
+                        </div>
+                        <div class="form-group">
+                            <label for="email">Email</label>
+                            <input type="email" id="email" value="john@example.com">
+                        </div>
+                        <div class="form-group">
+                            <label for="timezone">Timezone</label>
+                            <select id="timezone">
+                                <option>UTC-8 (PST)</option>
+                                <option>UTC-5 (EST)</option>
+                                <option>UTC+0 (GMT)</option>
+                                <option>UTC+1 (CET)</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div class="settings-section">
+                        <h3>Notification Preferences</h3>
+                        <div class="form-group">
+                            <div class="toggle-switch">
+                                <input type="checkbox" id="email-notifications" checked>
+                                <label for="email-notifications">Email Notifications</label>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <div class="toggle-switch">
+                                <input type="checkbox" id="push-notifications">
+                                <label for="push-notifications">Push Notifications</label>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <div class="toggle-switch">
+                                <input type="checkbox" id="marketing-emails">
+                                <label for="marketing-emails">Marketing Emails</label>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="settings-section">
+                        <h3>Security</h3>
+                        <div class="form-group">
+                            <div class="toggle-switch">
+                                <input type="checkbox" id="two-factor" checked>
+                                <label for="two-factor">Two-Factor Authentication</label>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="password">Change Password</label>
+                            <input type="password" id="password" placeholder="Enter new password">
+                        </div>
+                    </div>
+                    
+                    <button class="btn-primary" onclick="saveSettings()">Save Settings</button>
+                </div>
+            `;
+        });
+        
+        // Helper functions
+        function showNotification(text) {
+            const notification = document.getElementById('notification');
+            document.getElementById('notification-text').textContent = text;
+            notification.classList.add('show');
+            setTimeout(() => {
+                notification.classList.remove('show');
+            }, 3000);
+        }
+        
+        function saveSettings() {
+            showNotification('Settings saved successfully!');
+        }
+        
+        // Initialize router
+        router.handleRoute();
+    </script>
+</body>
+</html>

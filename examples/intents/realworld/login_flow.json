@@ -1,0 +1,86 @@
+{
+  "name": "Login Flow with Overlay Handling",
+  "description": "Complete login flow with cookie banner dismissal and modal handling",
+  "url": "file:///workspace/examples/dom_samples/realworld/login_with_overlay.html",
+  "steps": [
+    {
+      "step": 1,
+      "action": "dismiss_overlay",
+      "intent": "Close the cookie banner by clicking Accept All",
+      "expected_locator": "//button[@id='accept-cookies']",
+      "validation": {
+        "element_exists": false,
+        "selector": "#cookie-banner"
+      }
+    },
+    {
+      "step": 2,
+      "action": "wait",
+      "intent": "Wait for modal to appear",
+      "duration_ms": 2500,
+      "validation": {
+        "element_visible": true,
+        "selector": "#modal-overlay.active"
+      }
+    },
+    {
+      "step": 3,
+      "action": "click",
+      "intent": "Click I Understand button to close the modal",
+      "expected_locator": "//button[contains(text(), 'I Understand')]",
+      "validation": {
+        "element_exists": false,
+        "selector": "#modal-overlay.active"
+      }
+    },
+    {
+      "step": 4,
+      "action": "type",
+      "intent": "Enter username into the login field",
+      "value": "testuser@example.com",
+      "expected_locator": "//input[@id='username']",
+      "validation": {
+        "value_set": true,
+        "expected_value": "testuser@example.com"
+      }
+    },
+    {
+      "step": 5,
+      "action": "type",
+      "intent": "Type password into the password field",
+      "value": "SecurePass123!",
+      "expected_locator": "//input[@id='password']",
+      "validation": {
+        "value_set": true,
+        "field_type": "password"
+      }
+    },
+    {
+      "step": 6,
+      "action": "click",
+      "intent": "Check the Remember me checkbox",
+      "expected_locator": "//input[@id='remember-me']",
+      "validation": {
+        "checked": true
+      }
+    },
+    {
+      "step": 7,
+      "action": "click",
+      "intent": "Click the Sign In button to submit the form",
+      "expected_locator": "//button[@id='login-button']",
+      "validation": {
+        "loading_state": true,
+        "success_message": true,
+        "selector": "#success-msg.show"
+      }
+    }
+  ],
+  "edge_cases": [
+    "Cookie banner occludes form initially",
+    "Modal appears after delay",
+    "Form validation on empty fields",
+    "Loading state after submission",
+    "Success message display"
+  ]
+}
