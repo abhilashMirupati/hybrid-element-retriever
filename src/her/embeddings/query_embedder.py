@@ -1,29 +1,61 @@
-# PLACE: src/her/embeddings/query_embedder.py
-"""MiniLM/E5-small ONNX (optional) or deterministic hash fallback for query text."""
+"""Query text embedder with ONNX support and deterministic fallback."""
 from __future__ import annotations
-from typing import Optional
+from typing import Optional, List, Dict, Any
 import numpy as np
-from ..utils import sha1_of
+import logging
+from ._resolve import get_query_resolver, FALLBACK_DIM
 from .cache import EmbeddingCache
 
-DIM = 16  # small for demo; can be 384+ with a real model
-MODEL_VERSION = "minilm-e5-small-onnx-or-hash"
+logger = logging.getLogger(__name__)
+
+MODEL_VERSION = "minilm-e5-small-v2"
+
 
 class QueryEmbedder:
-    def __init__(self, cache: Optional[EmbeddingCache] = None) -> None:
+    """Embeds query text using MiniLM/E5-small or deterministic fallback."""
+    
+    def __init__(self, cache: Optional[EmbeddingCache] = None, dim: int = FALLBACK_DIM) -> None:
         self.cache = cache or EmbeddingCache()
-
+        self.resolver = get_query_resolver()
+        self.dim = dim
+        self._log_mode()
+    
+    def _log_mode(self) -> None:
+        """Log whether using ONNX or fallback."""
+        if self.resolver.session:
+            logger.info(f"QueryEmbedder using ONNX model")
+        else:
+            logger.info(f"QueryEmbedder using deterministic fallback (dim={self.dim})")
+    
     def embed(self, text: str) -> np.ndarray:
-        key = f"q:{MODEL_VERSION}:{text}"
-        hit = self.cache.get(key)
-        if hit is not None:
-            return hit
-        # fallback deterministic vector
-        h = sha1_of(text)
-        rng = np.random.default_rng(int(h[:8], 16))
-        vec = rng.normal(size=(DIM,)).astype(np.float32)
-        # L2 normalise
-        n = np.linalg.norm(vec) + 1e-8
-        vec = vec / n
-        self.cache.put(key, vec)
-        return vec
+        """Generate embedding for query text."""
+        # Cache key includes model version and text
+        cache_key = f"query:{MODEL_VERSION}:{text}"
+        
+        # Check cache first
+        cached = self.cache.get(cache_key)
+        if cached is not None:
+            logger.debug(f"Cache hit for query: {text[:50]}...")
+            return cached
+        
+        # Generate embedding
+        logger.debug(f"Generating embedding for query: {text[:50]}...")
+        embedding = self.resolver.embed(text, self.dim)
+        
+        # Cache the result
+        self.cache.put(cache_key, embedding)
+        
+        return embedding
+    
+    def embed_batch(self, texts: List[str]) -> List[np.ndarray]:
+        """Generate embeddings for multiple queries."""
+        return [self.embed(text) for text in texts]
+    
+    def similarity(self, query_vec: np.ndarray, element_vec: np.ndarray) -> float:
+        """Compute cosine similarity between query and element vectors."""
+        # Ensure both are normalized
+        query_norm = query_vec / (np.linalg.norm(query_vec) + 1e-8)
+        element_norm = element_vec / (np.linalg.norm(element_vec) + 1e-8)
+        
+        # Cosine similarity
+        return float(np.dot(query_norm, element_norm))
