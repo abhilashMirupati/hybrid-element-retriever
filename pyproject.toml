@@ -1,0 +1,61 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hybrid-element-retriever"
+version = "0.1.0"
+description = "A hybrid framework for translating natural language steps into robust UI actions using automatic indexing and semantic retrieval."
+authors = [ { name = "Your Name", email = "you@example.com" } ]
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+dependencies = [
+    # Browser automation and CDP access
+    "playwright==1.39.0",
+    # Vector search backend (optional for small corpora)
+    "faiss-cpu==1.7.3",
+    # Numerical computing
+    "numpy==1.23.5",
+    # Py4J for Java wrapper
+    "py4j==0.10.9.7",
+    # Dataclass validation
+    "pydantic==1.10.12",
+    # Lightweight embedding runtime for ONNX models
+    "onnxruntime==1.15.0",
+    # Base transformer packages required only when models are installed at runtime.  These
+    # are imported lazily and are not strictly necessary for stub operation, but
+    # including them here simplifies development and testing.
+    "transformers==4.32.0",
+    "tokenizers==0.13.3",
+    "huggingface_hub==0.16.4",
+    # Types for requests (used by Playwright stubs)
+    "types-requests==2.31.0.4",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==7.4.0",
+    "pytest-cov==4.1.0",
+    "flake8==6.1.0",
+    "black==23.7.0",
+    "mypy==1.5.1"
+]
+
+[project.scripts]
+her-act = "her.cli:main"
+
+[tool.black]
+line-length = 88
+target-version = ["py39"]
+
+[tool.isort]
+profile = "black"
+
+[tool.flake8]
+max-line-length = 88
+extend-ignore = ["E203", "W503"]
+
+[tool.mypy]
+python_version = 3.9
+strict = false
