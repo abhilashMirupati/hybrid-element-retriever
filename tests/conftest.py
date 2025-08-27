@@ -1,4 +1,5 @@
 """Pytest configuration and fixtures."""
+
 import sys
 import os
 from pathlib import Path
@@ -19,6 +20,7 @@ import pytest
 def mock_page():
     """Provide a mock page object for tests."""
     from unittest.mock import Mock
+
     page = Mock()
     page.url = "https://example.com"
     return page

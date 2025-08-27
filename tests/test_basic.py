@@ -1,15 +1,17 @@
 """Basic tests to ensure CI works."""
+
 import sys
 import os
 
 # Add src to path for imports
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 
 def test_imports():
     """Test that basic imports work."""
     try:
         from her.utils import sha1_of, flatten
+
         assert sha1_of is not None
         assert flatten is not None
     except ImportError:
@@ -31,7 +33,7 @@ def test_python_version():
 
 class TestDummy:
     """Dummy test class to ensure class-based tests work."""
-    
+
     def test_dummy(self):
         """Dummy test."""
         assert True

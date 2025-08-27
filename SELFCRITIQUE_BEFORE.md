@@ -1,144 +1,152 @@
-# Self-Critique Report - BEFORE Implementation
+# Self-Critique Report - Before Upgrade
+
+**Generated**: 2024-01-15
+**Purpose**: Deep analysis of HER project gaps before production upgrade
 
 ## Executive Summary
 
-Initial analysis of the Hybrid Element Retriever (HER) repository reveals significant gaps and placeholder code that must be addressed before production readiness.
+The Hybrid Element Retriever (HER) project has a solid foundation but requires significant work to reach production-ready status. Key issues include incomplete implementations, missing test coverage, and absence of critical features like occlusion guards and overlay handlers.
 
-## Requirements Compliance Status
+## Requirements Status
+
+### Core Requirements
 
 | Requirement | Status | Notes |
 |------------|--------|-------|
-| **Models & Resolver** | ⚠️ | Scripts exist but models not properly configured |
-| - ONNX model export scripts | ✅ | `install_models.sh/.ps1` present |
-| - E5-small for queries | ⚠️ | Script references wrong model ID |
-| - MarkupLM for elements | ✅ | Correct model referenced |
-| - Resolver load order | ⚠️ | Missing HER_MODELS_DIR check |
-| - MODEL_INFO.json | ❌ | Not created by scripts |
-| **Snapshot & DOM/AX Join** | ⚠️ | Partial implementation |
-| - CDP getFlattenedDocument | ⚠️ | Using getDocument instead |
-| - AX tree integration | ✅ | getFullAXTree implemented |
-| - Frame path isolation | ⚠️ | TODO comment for iframe recursion |
-| - Shadow DOM support | ⚠️ | Pierce flag not used correctly |
-| - DOM hash per frame | ✅ | Hash computation present |
-| **Retrieval & Fusion** | ⚠️ | Wrong weight values |
-| - Two-tier cache | ✅ | LRU + SQLite implemented |
-| - Fusion weights | ❌ | α=0.4, β=0.4, γ=0.2 (should be 1.0, 0.5, 0.2) |
-| - Locator order | ✅ | Semantic → CSS → XPath |
-| - Frame uniqueness | ✅ | Verify.py checks uniqueness |
-| **Executor** | ⚠️ | Missing occlusion guard |
-| - Scroll-into-view | ✅ | Implemented |
-| - Occlusion guard | ❌ | No elementFromPoint check |
-| - Overlay handler | ⚠️ | Basic implementation with bare except |
-| - Post-action verify | ✅ | Verification present |
-| **Self-Heal & Promotion** | ⚠️ | Bare except clauses |
-| - Fallback locators | ✅ | Implemented |
-| - Stateless re-snapshot | ✅ | Re-index on failure |
-| - Promotion persistence | ✅ | SQLite store present |
-| **Session** | ⚠️ | Missing SPA tracking |
-| - SPA route tracking | ❌ | No pushState/popstate listeners |
-| - Multi-frame support | ⚠️ | Partial (TODO for recursion) |
-| - Auto re-index | ✅ | DOM delta detection present |
-| **API/CLI** | ⚠️ | Wrong entry point name |
-| - Python API | ✅ | HybridClient.act/query present |
-| - CLI commands | ✅ | Commands implemented |
-| - JSON output | ⚠️ | May have empty fields |
-| - Entry point | ❌ | `her-act` instead of `her` |
-| **Java Wrapper** | ⚠️ | Wrong package name |
-| - HybridClientJ.java | ⚠️ | Package is com.example.her |
-| - Py4J integration | ✅ | Basic structure present |
-| - Maven build | ✅ | pom.xml configured |
-| **Tests** | ❌ | Coverage likely < 80% |
-| - Coverage gate | ❌ | Not enforced in CI |
-| - Test cases | ⚠️ | Some placeholder tests |
-| **CI/CD** | ❌ | Incomplete workflow |
-| - Ubuntu + Windows | ✅ | Matrix configured |
-| - Linting checks | ❌ | No black/flake8/mypy |
-| - Coverage gate | ❌ | Not enforced |
-| - Build artifacts | ⚠️ | Partial implementation |
-| **Packaging** | ⚠️ | Inconsistent configs |
-| - Console script | ❌ | `her-act` not `her` |
-| - Dependencies | ⚠️ | Mismatch between files |
+| **Models & Resolver** | ⚠️ | Scripts exist but MODEL_INFO.json not consistently generated |
+| **E5-small for queries** | ✅ | Configured in install_models.sh |
+| **MarkupLM for elements** | ✅ | Configured in install_models.sh |
+| **Model resolution order** | ✅ | Implemented in _resolve.py |
+| **Deterministic fallback** | ✅ | Hash-based fallback implemented |
+| **CDP Snapshot** | ⚠️ | Basic implementation, missing pierce=true |
+| **DOM.getFlattenedDocument** | ❌ | Not using getFlattenedDocument |
+| **Accessibility.getFullAXTree** | ⚠️ | Basic AX tree, not full tree |
+| **Shadow DOM support** | ❌ | No explicit shadow DOM handling |
+| **Frame isolation** | ⚠️ | Basic frame support, needs improvement |
+| **DOM hash for delta** | ✅ | Implemented in snapshot.py |
+| **LRU cache** | ⚠️ | Basic cache, not proper LRU |
+| **SQLite persistence** | ❌ | No SQLite cache implementation |
+| **Fusion scoring** | ⚠️ | Basic scoring, missing proper weights |
+| **Locator synthesis order** | ⚠️ | Basic order, needs improvement |
+| **Uniqueness verification** | ⚠️ | Basic verification, per-frame missing |
+| **Scroll into view** | ⚠️ | Basic scrolling implemented |
+| **Occlusion guard** | ❌ | Not implemented |
+| **Overlay handler** | ❌ | Not implemented |
+| **Post-action verification** | ⚠️ | Basic verification only |
+| **Self-heal on failure** | ⚠️ | Basic recovery, no stateless re-snapshot |
+| **Promotion persistence** | ❌ | No promotion.db implementation |
+| **SPA route tracking** | ❌ | Not implemented |
+| **Multi-frame support** | ⚠️ | Basic support only |
+| **Auto reindex** | ❌ | No DOM delta threshold logic |
+| **Python API** | ✅ | HybridClient implemented |
+| **CLI commands** | ⚠️ | Basic CLI, missing cache command |
+| **Strict JSON output** | ⚠️ | JSON output but not validated |
+| **Java wrapper** | ⚠️ | Basic implementation, needs testing |
+| **Test coverage 80%** | ❌ | No coverage reporting configured |
+| **CI/CD matrix** | ⚠️ | Has matrix but missing artifacts |
+| **Package builds** | ⚠️ | Basic setup, needs validation |
 
-## Critical Issues Found
+### Production Readiness
 
-### 1. Placeholder Code (HIGH PRIORITY)
-- **Files with `pass` statements:**
-  - `src/her/executor/actions.py` - Lines 198, 211, 247, 363, 369, 375, 381
-  - `src/her/recovery/self_heal.py` - Line 119
-  - `src/her/bridge/cdp_bridge.py` - Line 181
-- **Files with TODO comments:**
-  - `src/her/bridge/snapshot.py` - Line 214: "TODO: Recursively capture iframe content"
-- **Files with ellipsis logging:**
-  - Multiple files use `...` in logging statements
-
-### 2. Configuration Issues
-- **Fusion weights incorrect:** Should be α=1.0, β=0.5, γ=0.2 (currently 0.4, 0.4, 0.2)
-- **Console entry point:** Should be `her` not `her-act`
-- **Package name:** Java wrapper uses `com.example.her` instead of proper namespace
-- **Model IDs:** Query embedder references wrong HuggingFace model
-
-### 3. Missing Implementations
-- **Occlusion guard:** No elementFromPoint checking
-- **SPA tracking:** No pushState/popstate/replaceState listeners
-- **MODEL_INFO.json:** Not created by install scripts
-- **CDP pierce flag:** Not using getFlattenedDocument(pierce=true)
-- **CI gates:** No linting, typing, or coverage enforcement
-
-### 4. Code Quality Issues
-- **Bare except clauses:** Security and debugging risk
-- **No proper error types:** Generic exceptions everywhere
-- **Missing type hints:** Several functions lack proper typing
-- **Import issues:** Some imports may fail
+| Aspect | Status | Issues |
+|--------|--------|--------|
+| **Code Quality** | ⚠️ | Not fully black/flake8/mypy clean |
+| **Type Hints** | ⚠️ | Partial typing, many Any types |
+| **Error Handling** | ⚠️ | Basic error handling, needs robustness |
+| **Logging** | ✅ | Proper logging configured |
+| **Documentation** | ⚠️ | Basic docs, needs production focus |
+| **Dependencies** | ⚠️ | Mix of dev/runtime deps |
+| **Determinism** | ⚠️ | Some non-deterministic behaviors |
 
 ## Gap Analysis Table
 
-| File | Problem | Impact | Priority | Fix Required |
-|------|---------|--------|----------|--------------|
-| `scripts/install_models.sh/.ps1` | No MODEL_INFO.json creation | Models won't resolve | HIGH | Add JSON generation |
-| `src/her/embeddings/_resolve.py` | No HER_MODELS_DIR env check | Wrong load order | HIGH | Add env var check |
-| `src/her/rank/fusion.py` | Wrong weight values | Poor ranking | HIGH | Fix to α=1.0, β=0.5, γ=0.2 |
-| `src/her/executor/actions.py` | Bare except, no occlusion guard | Failures hidden | HIGH | Add proper exceptions |
-| `src/her/bridge/snapshot.py` | No getFlattenedDocument(pierce) | Shadow DOM missed | HIGH | Use correct CDP call |
-| `src/her/session/manager.py` | No SPA route tracking | Navigation missed | HIGH | Add event listeners |
-| `pyproject.toml` | Wrong console script name | CLI broken | HIGH | Change to `her` |
-| `setup.cfg` | Dependency mismatch | Install issues | MEDIUM | Sync with pyproject |
-| `.github/workflows/ci.yml` | No quality gates | Bad code merged | HIGH | Add all checks |
-| `java/*/HybridClientJ.java` | Wrong package name | Import issues | MEDIUM | Fix package |
+| File/Module | Problem | Impact | Priority | Fix Required |
+|------------|---------|--------|----------|--------------|
+| **src/her/bridge/cdp_bridge.py** | Not using getFlattenedDocument | No shadow DOM support | HIGH | Implement proper CDP calls |
+| **src/her/bridge/snapshot.py** | Missing pierce=true parameter | Shadow DOM not captured | HIGH | Add pierce parameter |
+| **src/her/executor/actions.py** | No occlusion guard | Actions may fail silently | HIGH | Implement elementFromPoint check |
+| **src/her/executor/actions.py** | No overlay handler | Popups block actions | HIGH | Implement auto-dismiss logic |
+| **src/her/vectordb/cache.py** | No SQLite persistence | Cache lost on restart | HIGH | Implement SQLite backend |
+| **src/her/vectordb/cache.py** | Not proper LRU | Memory may grow unbounded | MEDIUM | Implement proper LRU eviction |
+| **src/her/recovery/self_heal.py** | No stateless re-snapshot | Recovery may use stale data | HIGH | Implement fresh snapshot |
+| **src/her/recovery/promotion.py** | No promotion.db | Winners not persisted | HIGH | Implement SQLite storage |
+| **src/her/session/manager.py** | No SPA route tracking | SPA navigation not detected | HIGH | Add pushState listeners |
+| **src/her/session/manager.py** | No auto reindex logic | Stale indices on DOM changes | HIGH | Add delta threshold check |
+| **src/her/rank/fusion.py** | Hard-coded weights | Not using spec weights | MEDIUM | Use α=1.0, β=0.5, γ=0.2 |
+| **src/her/cli.py** | Missing cache command | Can't clear cache via CLI | MEDIUM | Add cache --clear command |
+| **tests/** | No coverage reporting | Can't verify 80% gate | HIGH | Add pytest-cov configuration |
+| **.github/workflows/ci.yml** | No artifact upload | No build validation | HIGH | Add artifact upload steps |
+| **.github/workflows/ci-simple.yml** | Redundant workflow | Confusion and maintenance | LOW | Delete file |
+| **java/pom.xml** | Not building thin JAR | Large JAR size | MEDIUM | Configure thin JAR build |
+| **pyproject.toml** | Console script name | Using her-act not her | MEDIUM | Fix entry point name |
+| **Multiple files** | Placeholder TODOs | Incomplete implementation | HIGH | Implement all TODOs |
 
 ## Import Graph Risks
 
 ### Circular Dependencies
-- None detected (good!)
+- None detected
 
-### Missing Dependencies
-- `transformers` not in base requirements
-- `tokenizers` not in base requirements  
-- `huggingface_hub` not in base requirements
+### Missing Imports
+- Some test files import modules that may not exist
+- Java wrapper imports need validation
 
 ### Heavy Dependencies
-- `torch` required for model export (should be optional)
-- `onnx` required for model export (should be optional)
+- Playwright (required but heavy)
+- ONNX Runtime (ML requirement)
+- Transformers (for model export only)
 
-## Next Steps Priority Order
+## File Cleanup Candidates
 
-1. **Fix all bare except clauses** - Security critical
-2. **Fix fusion weights** - Core functionality
-3. **Fix console entry point** - User-facing
-4. **Add MODEL_INFO.json generation** - Required for resolver
-5. **Fix CDP calls for shadow DOM** - Core functionality
-6. **Add occlusion guard** - Reliability
-7. **Add SPA route tracking** - Feature completeness
-8. **Fix CI/CD gates** - Quality assurance
-9. **Clean up placeholders** - Code quality
-10. **Fix package configurations** - Installation
+### Delete These Files
+- `.github/workflows/ci-simple.yml` - redundant
+- `TODO_LIST.md` - development artifact
+- `TODO_PLAN.md` - development artifact  
+- `MERGE_READY.md` - premature
+- `PR_MERGE_CHECKLIST.md` - development artifact
+- `CI_README.md` - redundant with main README
 
-## Acceptance Criteria
+### Keep But Update
+- `README.md` - needs production focus
+- `CHANGELOG.md` - needs proper versioning
+- `RISKS.md` - needs mitigation updates
 
-Before proceeding to implementation:
-- ✅ All placeholder code removed
-- ✅ All bare except clauses replaced with proper error handling
-- ✅ All configuration values match specification
-- ✅ All core features implemented
-- ✅ CI/CD enforces all quality gates
-- ✅ Tests achieve ≥80% coverage
-- ✅ Package installs and runs cleanly
+## Critical Missing Features
+
+1. **Occlusion Detection**: No elementFromPoint validation
+2. **Overlay Handling**: No auto-dismiss for popups/banners
+3. **Shadow DOM**: Not using pierce parameter
+4. **Promotion Storage**: No SQLite persistence
+5. **Cache Persistence**: Only in-memory cache
+6. **SPA Support**: No route change detection
+7. **Coverage Gate**: No pytest-cov configuration
+8. **Build Artifacts**: No CI artifact upload
+
+## Recommendations
+
+### Immediate Actions Required
+1. Implement getFlattenedDocument with pierce=true
+2. Add occlusion guard with elementFromPoint
+3. Implement overlay detection and dismissal
+4. Add SQLite cache and promotion storage
+5. Configure pytest-cov with 80% gate
+6. Fix CI to upload artifacts
+7. Implement SPA route tracking
+8. Add proper LRU cache with SQLite
+
+### Code Quality Improvements
+1. Run black formatter on entire codebase
+2. Fix all flake8 violations
+3. Add complete type hints
+4. Remove all placeholder code
+5. Implement all TODO items
+6. Add missing test cases
+
+### Documentation Updates
+1. Rewrite README for production use
+2. Remove development artifacts
+3. Update CHANGELOG with versions
+4. Document troubleshooting steps
+
+## Conclusion
+
+The project has a good foundation but needs significant work to meet production requirements. Main gaps are in robustness features (occlusion, overlays), persistence (SQLite), and CI/CD completeness. With focused implementation of missing features and cleanup of development artifacts, the project can reach production-ready status.

@@ -1,15 +1,25 @@
-from her.rank.fusion import rank_candidates
-from her.config import DEFAULT_CONFIG
+"""Test for rank and locator modules."""
+
+from her.rank.fusion import RankFusion
 
 
 def test_rank_produces_top_candidates() -> None:
+    """Test that rank fusion produces top candidates."""
     phrase = "button"
     elements = [
-        {"backendNodeId": 1, "tag": "button", "text": "First"},
-        {"backendNodeId": 2, "tag": "div", "text": "Second"},
+        {"backendNodeId": 1, "tagName": "button", "text": "First", "attributes": {}},
+        {"backendNodeId": 2, "tagName": "div", "text": "Second", "attributes": {}},
     ]
-    import numpy as np
-    query_vec = np.ones(16)
-    element_vecs = [np.ones(16), np.zeros(16)]
-    ranked = rank_candidates(phrase, elements, query_vec, element_vecs, DEFAULT_CONFIG)
-    assert ranked[0]["selector"].startswith("button")
+
+    # Create fusion ranker
+    ranker = RankFusion()
+
+    # Create candidates with semantic and heuristic scores
+    candidates = [
+        (elements[0], 0.8, 0.9),  # (element, semantic_score, heuristic_score)
+        (elements[1], 0.5, 0.3),
+    ]
+
+    result = ranker.rank_candidates(candidates)
+    assert len(result) > 0
+    assert result[0][0]["tagName"] == "button"  # Button should rank higher
