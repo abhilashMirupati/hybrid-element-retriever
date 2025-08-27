@@ -24,7 +24,7 @@ class InMemoryVectorStore:
         """Return top_k payloads sorted by cosine similarity descending."""
         sims = []
         for vec, payload in zip(self.vectors, self.payloads):
-            denom = (np.linalg.norm(vec) * np.linalg.norm(query_vec))
+            denom = np.linalg.norm(vec) * np.linalg.norm(query_vec)
             sim = float(np.dot(vec, query_vec) / denom) if denom != 0 else 0.0
             sims.append((payload, sim))
         sims.sort(key=lambda x: x[1], reverse=True)

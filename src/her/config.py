@@ -1,7 +1,7 @@
 """Configuration management for Hybrid Element Retriever."""
+
 import os
 from pathlib import Path
-from typing import Optional
 
 # Environment variables
 HER_MODELS_DIR = os.environ.get("HER_MODELS_DIR")
@@ -22,7 +22,7 @@ ELEMENT_MODEL_HF_ID = "microsoft/markuplm-base"
 
 # Fusion weights (must sum to ~1.0 after normalization)
 FUSION_ALPHA = 1.0  # Semantic similarity weight
-FUSION_BETA = 0.5   # Heuristic score weight  
+FUSION_BETA = 0.5  # Heuristic score weight
 FUSION_GAMMA = 0.2  # Promotion score weight
 
 # Embedding dimensions
@@ -54,11 +54,12 @@ LOCATOR_VERIFY_TIMEOUT_MS = 5000
 # Recovery settings
 MAX_HEAL_ATTEMPTS = 3
 PROMOTION_THRESHOLD = 0.8  # Score threshold for promotion
-DEMOTION_THRESHOLD = 0.3   # Score threshold for demotion
+DEMOTION_THRESHOLD = 0.3  # Score threshold for demotion
+
 
 def get_models_dir() -> Path:
     """Get the models directory with proper fallback order.
-    
+
     Order:
     1. HER_MODELS_DIR environment variable
     2. Package-bundled models directory
@@ -72,21 +73,24 @@ def get_models_dir() -> Path:
         HOME_MODELS_DIR.mkdir(parents=True, exist_ok=True)
         return HOME_MODELS_DIR
 
+
 def get_cache_dir() -> Path:
     """Get the cache directory."""
     if HER_CACHE_DIR:
         cache_dir = Path(HER_CACHE_DIR)
     else:
         cache_dir = DEFAULT_CACHE_DIR
-    
+
     cache_dir.mkdir(parents=True, exist_ok=True)
     return cache_dir
+
 
 def get_embeddings_cache_dir() -> Path:
     """Get the embeddings cache directory."""
     cache_dir = get_cache_dir() / "embeddings"
     cache_dir.mkdir(parents=True, exist_ok=True)
     return cache_dir
+
 
 def get_promotion_store_path() -> Path:
     """Get the promotion store database path."""

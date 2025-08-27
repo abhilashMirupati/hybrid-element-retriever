@@ -29,5 +29,6 @@ __all__ = [
 
 # Optional: Log that HER is imported successfully
 import logging
+
 logger = logging.getLogger(__name__)
 logger.info(f"HER {__version__} initialized")
