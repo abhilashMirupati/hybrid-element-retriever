@@ -388,6 +388,30 @@ class PromotionStore:
             "top_performers": self.get_best_locators(top_k=3),
         }
     
+    def get_boost(self, locator: str, context: str) -> float:
+        """Get promotion boost for a locator.
+        
+        Args:
+            locator: The locator to check
+            context: Context identifier
+            
+        Returns:
+            Boost value between 0.0 and 1.0
+        """
+        with self.lock:
+            cursor = self.conn.execute(
+                """
+                SELECT success_count FROM promotions
+                WHERE locator = ? AND context = ?
+                """,
+                (locator, context)
+            )
+            row = cursor.fetchone()
+            if row:
+                # Scale boost based on success count (max 1.0)
+                return min(row[0] * 0.1, 1.0)
+            return 0.0
+    
     def record_success(self, locator: str, context: str):
         """Record a successful locator use.
         
