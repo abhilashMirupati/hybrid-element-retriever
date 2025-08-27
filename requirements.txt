@@ -1,0 +1,17 @@
+# Core dependencies
+playwright==1.39.0
+numpy==1.23.5
+pydantic==1.10.12
+
+# Optional dependencies (install if available)
+faiss-cpu==1.7.3
+onnxruntime==1.15.0
+py4j==0.10.9.7
+
+# Optional ML dependencies (can work without these)
+# transformers==4.32.0
+# tokenizers==0.13.3
+# huggingface_hub==0.16.4
+
+# Type hints
+types-requests==2.31.0.4
