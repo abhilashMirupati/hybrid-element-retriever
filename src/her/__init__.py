@@ -1,15 +1,33 @@
-"""Top‑level package for Hybrid Element Retriever.
+"""
+Hybrid Element Retriever (HER) - Natural Language Web Automation
 
-This package exposes a simplified public API through :class:`HybridClient` in
-:mod:`her.cli_api`.  Most implementation details live under the subpackages
-such as ``parser``, ``session``, ``bridge`` and ``rank``.
+Convert natural language descriptions into precise XPath/CSS selectors.
 
-When importing this package your code should avoid calling any indexing
-functions directly.  All indexing is handled automatically by the
-:class:`HybridClient`.
+Example:
+    >>> from her.cli_api import HybridClient
+    >>> client = HybridClient()
+    >>> result = client.act("Click the login button", url="https://example.com")
+    >>> print(result['used_locator'])  # Shows the XPath that was used
 
+For more information, see:
+- SETUP_GUIDE.md for comprehensive documentation
+- QUICK_REFERENCE.md for quick start guide
+- examples/demo.py for interactive examples
 """
 
-from .cli_api import HybridClient  # noqa: F401
+__version__ = "0.1.0"
+__author__ = "Your Name"
+__email__ = "your.email@example.com"
 
-__all__ = ["HybridClient"]
+# Main public API
+from .cli_api import HybridClient
+
+__all__ = [
+    "HybridClient",
+    "__version__",
+]
+
+# Optional: Log that HER is imported successfully
+import logging
+logger = logging.getLogger(__name__)
+logger.info(f"HER {__version__} initialized")
