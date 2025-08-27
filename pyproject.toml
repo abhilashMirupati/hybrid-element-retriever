@@ -39,7 +39,7 @@ all = [
 ]
 
 [project.scripts]
-her-act = "her.cli:main"
+her = "her.cli:main"
 
 [tool.black]
 line-length = 88

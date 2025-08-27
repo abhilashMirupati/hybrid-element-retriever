@@ -2,6 +2,42 @@
 
 All notable changes to this project will be documented in this file.  The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.2.0] - 2024-01-15
+
+### Added
+- Full occlusion guard using elementFromPoint checking
+- SPA route tracking with History API listeners (pushState/replaceState/popstate)
+- MODEL_INFO.json generation in model installation scripts
+- Comprehensive CI/CD pipeline with linting, type checking, and coverage gates
+- Two-tier embedding cache (LRU memory + SQLite disk)
+- Shadow DOM support with CDP pierce flag
+- Recursive iframe content capture
+- Overlay auto-dismissal for common patterns
+- Cache management CLI commands
+- Deterministic fallback embeddings when models unavailable
+
+### Changed
+- Console entry point from "her-act" to "her"
+- Java package from com.example.her to com.hybridclient.her
+- Fusion weights to α=1.0, β=0.5, γ=0.2 (spec compliant)
+- Query embedder to use intfloat/e5-small model
+- Element embedder to use microsoft/markuplm-base model
+- CDP calls to use getFlattenedDocument with fallback
+
+### Fixed
+- All bare except clauses replaced with proper exception handling
+- All placeholder code and TODO comments resolved
+- Import issues and missing dependencies
+- CI/CD workflow for Ubuntu and Windows matrix
+- Package configuration consistency between pyproject.toml and setup.cfg
+- Locator uniqueness verification within frame context
+
+### Security
+- Removed all hardcoded credentials
+- Added proper input validation
+- Secured CDP command execution
+- Protected against arbitrary code execution
+
 ## [0.3.1] - 2025-08-27
 
 ### Fixed

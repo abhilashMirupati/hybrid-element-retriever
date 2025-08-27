@@ -1,8 +1,9 @@
-"""DOM and AX tree snapshot utilities."""
-from typing import Any, Dict, List, Optional, Tuple
+"""DOM and AX tree snapshot capture and merging."""
+from typing import Any, Dict, List, Optional, Tuple, Set
 import hashlib
 import json
 import logging
+
 from .cdp_bridge import get_flattened_document, get_full_ax_tree, get_frame_tree
 
 logger = logging.getLogger(__name__)
@@ -24,179 +25,244 @@ def compute_dom_hash(descriptors: List[Dict[str, Any]]) -> str:
     Returns:
         SHA256 hash of DOM structure
     """
-    # Create signature from key attributes
-    sig_parts = []
+    # Create stable representation
+    stable_parts = []
+    
     for desc in descriptors:
-        sig = (
-            desc.get("backendNodeId", ""),
-            desc.get("tag", ""),
-            desc.get("text", "")[:50],  # Limit text length
+        parts = [
+            desc.get("tagName", ""),
+            desc.get("text", "")[:100],  # Truncate text for stability
+            str(desc.get("attributes", {}).get("id", "")),
+            str(desc.get("attributes", {}).get("class", "")),
             desc.get("role", ""),
-            desc.get("name", ""),
-            desc.get("id", ""),
-            str(desc.get("classes", [])),
-        )
-        sig_parts.append(json.dumps(sig, sort_keys=True))
+            desc.get("framePath", "")
+        ]
+        stable_parts.append("|".join(parts))
     
-    combined = "\n".join(sig_parts)
-    return hashlib.sha256(combined.encode()).hexdigest()
-
-
-def index_by_backend_id(nodes: List[Dict[str, Any]], id_field: str = "backendNodeId") -> Dict[int, Dict[str, Any]]:
-    """Index nodes by backend node ID.
+    # Sort for consistency
+    stable_parts.sort()
     
-    Args:
-        nodes: List of nodes (DOM or AX)
-        id_field: Field name containing backend node ID
-    
-    Returns:
-        Dict mapping backend node ID to node
-    """
-    indexed = {}
-    for node in nodes:
-        # Try different field names
-        backend_id = node.get(id_field) or node.get("backendDOMNodeId")
-        if isinstance(backend_id, int):
-            indexed[backend_id] = node
-    return indexed
+    # Compute hash
+    content = "\n".join(stable_parts)
+    return hashlib.sha256(content.encode('utf-8')).hexdigest()
 
 
 def merge_dom_and_ax(
     dom_nodes: List[Dict[str, Any]],
     ax_nodes: List[Dict[str, Any]]
 ) -> List[Dict[str, Any]]:
-    """Merge DOM and accessibility tree nodes by backend node ID.
+    """Merge DOM and accessibility tree data.
     
     Args:
-        dom_nodes: Flattened DOM nodes
-        ax_nodes: Accessibility tree nodes
+        dom_nodes: List of DOM nodes
+        ax_nodes: List of accessibility nodes
     
     Returns:
         List of merged element descriptors
     """
-    # Index AX nodes by backend ID
-    ax_by_id = index_by_backend_id(ax_nodes, "backendDOMNodeId")
-    
     descriptors = []
+    
+    # Create mapping of backend node IDs to AX data
+    ax_by_backend = {}
+    for ax_node in ax_nodes:
+        backend_id = ax_node.get("backendDOMNodeId")
+        if backend_id:
+            ax_by_backend[backend_id] = ax_node
+    
+    # Process DOM nodes
     for dom_node in dom_nodes:
-        backend_id = dom_node.get("backendNodeId")
-        
-        # Extract DOM attributes
-        tag = (dom_node.get("nodeName") or "").lower()
-        node_type = dom_node.get("nodeType", 1)
-        
         # Skip non-element nodes
-        if node_type != 1:  # ELEMENT_NODE
+        node_type = dom_node.get("nodeType")
+        if node_type != 1:  # Not an element
             continue
         
-        # Get text content
-        text = dom_node.get("nodeValue") or ""
+        # Extract basic info
+        descriptor = {
+            "nodeId": dom_node.get("nodeId"),
+            "backendNodeId": dom_node.get("backendNodeId"),
+            "tagName": dom_node.get("nodeName", "").lower(),
+            "attributes": {},
+            "text": "",
+            "visible": True,
+            "role": "",
+            "name": "",
+            "description": "",
+            "value": "",
+            "disabled": False,
+            "checked": False,
+            "selected": False,
+            "focused": False,
+            "framePath": ""
+        }
         
-        # Get attributes
-        attributes = {}
+        # Parse attributes
         attr_list = dom_node.get("attributes", [])
         # Attributes come as flat list [name, value, name, value, ...]
         for i in range(0, len(attr_list), 2):
             if i + 1 < len(attr_list):
-                attributes[attr_list[i]] = attr_list[i + 1]
+                attr_name = attr_list[i]
+                attr_value = attr_list[i + 1]
+                descriptor["attributes"][attr_name] = attr_value
         
-        # Get AX node if available
-        ax_node = ax_by_id.get(backend_id, {})
+        # Get text content
+        node_value = dom_node.get("nodeValue", "")
+        if node_value:
+            descriptor["text"] = node_value.strip()
         
-        # Extract AX properties
-        ax_role = None
-        ax_name = None
-        ax_description = None
-        ax_value = None
-        ax_disabled = False
-        ax_hidden = False
+        # Look for child text nodes
+        children = dom_node.get("children", [])
+        text_parts = []
+        for child in children:
+            if child.get("nodeType") == 3:  # Text node
+                child_text = child.get("nodeValue", "").strip()
+                if child_text:
+                    text_parts.append(child_text)
+        if text_parts and not descriptor["text"]:
+            descriptor["text"] = " ".join(text_parts)
         
-        if ax_node:
+        # Merge accessibility data if available
+        backend_id = descriptor.get("backendNodeId")
+        if backend_id and backend_id in ax_by_backend:
+            ax_data = ax_by_backend[backend_id]
+            
             # Role
-            role_prop = ax_node.get("role", {})
-            if isinstance(role_prop, dict):
-                ax_role = role_prop.get("value")
+            role = ax_data.get("role", {})
+            if isinstance(role, dict):
+                descriptor["role"] = role.get("value", "")
+            elif isinstance(role, str):
+                descriptor["role"] = role
             
             # Name
-            name_prop = ax_node.get("name", {})
-            if isinstance(name_prop, dict):
-                ax_name = name_prop.get("value")
+            name = ax_data.get("name", {})
+            if isinstance(name, dict):
+                descriptor["name"] = name.get("value", "")
+            elif isinstance(name, str):
+                descriptor["name"] = name
             
             # Description
-            desc_prop = ax_node.get("description", {})
-            if isinstance(desc_prop, dict):
-                ax_description = desc_prop.get("value")
+            description = ax_data.get("description", {})
+            if isinstance(description, dict):
+                descriptor["description"] = description.get("value", "")
+            elif isinstance(description, str):
+                descriptor["description"] = description
             
             # Value
-            value_prop = ax_node.get("value", {})
-            if isinstance(value_prop, dict):
-                ax_value = value_prop.get("value")
+            value = ax_data.get("value", {})
+            if isinstance(value, dict):
+                descriptor["value"] = value.get("value", "")
+            elif isinstance(value, str):
+                descriptor["value"] = value
             
             # Properties
-            props = ax_node.get("properties", [])
-            if isinstance(props, list):
-                for prop in props:
-                    if isinstance(prop, dict):
-                        prop_name = prop.get("name")
-                        prop_value = prop.get("value", {})
-                        if prop_name == "disabled" and isinstance(prop_value, dict):
-                            ax_disabled = prop_value.get("value", False)
-                        elif prop_name == "hidden" and isinstance(prop_value, dict):
-                            ax_hidden = prop_value.get("value", False)
+            properties = ax_data.get("properties", [])
+            for prop in properties:
+                prop_name = prop.get("name", "")
+                prop_value = prop.get("value", {})
+                
+                if prop_name == "disabled" and prop_value.get("value"):
+                    descriptor["disabled"] = True
+                elif prop_name == "checked" and prop_value.get("value"):
+                    descriptor["checked"] = True
+                elif prop_name == "selected" and prop_value.get("value"):
+                    descriptor["selected"] = True
+                elif prop_name == "focused" and prop_value.get("value"):
+                    descriptor["focused"] = True
+                elif prop_name == "hidden" and prop_value.get("value"):
+                    descriptor["visible"] = False
         
-        # Build descriptor
-        descriptor = {
-            "backendNodeId": backend_id,
-            "tag": tag,
-            "text": text or ax_name or "",
-            "role": ax_role,
-            "name": ax_name,
-            "description": ax_description,
-            "value": ax_value,
-            "id": attributes.get("id"),
-            "classes": attributes.get("class", "").split() if attributes.get("class") else [],
-            "type": attributes.get("type"),
-            "placeholder": attributes.get("placeholder"),
-            "href": attributes.get("href"),
-            "src": attributes.get("src"),
-            "alt": attributes.get("alt"),
-            "title": attributes.get("title"),
-            "aria": {k[5:]: v for k, v in attributes.items() if k.startswith("aria-")},
-            "data": {k[5:]: v for k, v in attributes.items() if k.startswith("data-")},
-            "disabled": ax_disabled or attributes.get("disabled") is not None,
-            "hidden": ax_hidden or attributes.get("hidden") is not None,
-            "attributes": attributes,
-        }
-        
+        # Add to descriptors
         descriptors.append(descriptor)
+    
+    return descriptors
+
+
+def capture_frame_snapshot(
+    page: Page,
+    frame_info: Dict[str, Any],
+    frame_path: str = "",
+    visited_frames: Optional[Set[str]] = None
+) -> List[Dict[str, Any]]:
+    """Recursively capture snapshot for a frame and its children.
+    
+    Args:
+        page: Playwright page instance
+        frame_info: Frame tree info from CDP
+        frame_path: Path to this frame (e.g., "0.1.2")
+        visited_frames: Set of already visited frame IDs to prevent loops
+    
+    Returns:
+        List of element descriptors for this frame and children
+    """
+    if visited_frames is None:
+        visited_frames = set()
+    
+    frame_id = frame_info.get("frame", {}).get("id", "")
+    
+    # Prevent infinite loops
+    if frame_id in visited_frames:
+        return []
+    visited_frames.add(frame_id)
+    
+    descriptors = []
+    
+    try:
+        # Get frame handle
+        frame_url = frame_info.get("frame", {}).get("url", "")
+        
+        # Find matching Playwright frame
+        pw_frame = None
+        for f in page.frames:
+            if f.url == frame_url or f.name == frame_info.get("frame", {}).get("name", ""):
+                pw_frame = f
+                break
+        
+        if pw_frame:
+            # Get DOM and AX data for this frame
+            # Note: This is simplified - real implementation would use CDP per frame
+            dom_nodes = get_flattened_document(pw_frame, pierce=True)
+            ax_nodes = get_full_ax_tree(pw_frame)
+            
+            # Merge and add frame path
+            frame_descriptors = merge_dom_and_ax(dom_nodes, ax_nodes)
+            for desc in frame_descriptors:
+                desc["framePath"] = frame_path
+            
+            descriptors.extend(frame_descriptors)
+    
+    except Exception as e:
+        logger.warning(f"Failed to capture frame {frame_id}: {e}")
+    
+    # Process child frames recursively
+    child_frames = frame_info.get("childFrames", [])
+    for i, child in enumerate(child_frames):
+        child_path = f"{frame_path}.{i}" if frame_path else str(i)
+        child_descriptors = capture_frame_snapshot(page, child, child_path, visited_frames)
+        descriptors.extend(child_descriptors)
     
     return descriptors
 
 
 def capture_snapshot(
     page: Optional[Page],
-    frame_path: str = "main",
-    pierce_shadow: bool = True,
-    include_frames: bool = True
+    include_frames: bool = True,
+    frame_path: str = ""
 ) -> Tuple[List[Dict[str, Any]], str]:
-    """Capture complete DOM + AX snapshot.
+    """Capture full DOM and AX tree snapshot.
     
     Args:
         page: Playwright page instance
-        frame_path: Frame identifier
-        pierce_shadow: Whether to pierce shadow DOM
         include_frames: Whether to include iframe content
+        frame_path: Frame path for nested frames
     
     Returns:
         Tuple of (element_descriptors, dom_hash)
     """
     if not page or not PLAYWRIGHT_AVAILABLE:
-        logger.warning("Page not available, returning empty snapshot")
         return [], ""
     
     try:
-        # Get DOM nodes
-        dom_nodes = get_flattened_document(page, pierce=pierce_shadow)
+        # Get DOM nodes with shadow DOM piercing
+        dom_nodes = get_flattened_document(page, pierce=True)
         
         # Get AX nodes
         ax_nodes = get_full_ax_tree(page)
@@ -211,12 +277,18 @@ def capture_snapshot(
         # Handle iframes if requested
         if include_frames:
             frame_tree = get_frame_tree(page)
-            # TODO: Recursively capture iframe content
+            if frame_tree:
+                # Recursively capture iframe content
+                child_frames = frame_tree.get("childFrames", [])
+                for i, child_frame in enumerate(child_frames):
+                    child_path = f"{frame_path}.{i}" if frame_path else str(i)
+                    frame_descriptors = capture_frame_snapshot(page, child_frame, child_path)
+                    descriptors.extend(frame_descriptors)
         
         # Compute DOM hash
         dom_hash = compute_dom_hash(descriptors)
         
-        logger.info(f"Captured snapshot: {len(descriptors)} elements, hash={dom_hash[:8]}...")
+        logger.info(f"Captured snapshot: {len(descriptors)} elements, hash={dom_hash[:8]}")
         
         return descriptors, dom_hash
         
