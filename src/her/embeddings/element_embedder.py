@@ -1,129 +1,228 @@
-"""Element embedder with markup-aware ONNX support and deterministic fallback."""
-from __future__ import annotations
+"""Element embedding using markuplm-base model."""
 from typing import Dict, Any, Optional, List
 import numpy as np
-import json
 import logging
-from ._resolve import get_element_resolver, FALLBACK_DIM
+import json
+
+from ._resolve import get_element_resolver
 from .cache import EmbeddingCache
+from ..config import ELEMENT_EMBEDDING_DIM
 
 logger = logging.getLogger(__name__)
 
-MODEL_VERSION = "markuplm-base-v1"
-
 
 class ElementEmbedder:
-    """Embeds DOM elements using MarkupLM or deterministic fallback."""
+    """Embeds UI elements using markuplm-base model with caching."""
     
-    def __init__(self, cache: Optional[EmbeddingCache] = None, dim: int = FALLBACK_DIM) -> None:
-        self.cache = cache or EmbeddingCache()
+    def __init__(self, cache_enabled: bool = True):
+        """Initialize element embedder.
+        
+        Args:
+            cache_enabled: Whether to use embedding cache
+        """
         self.resolver = get_element_resolver()
-        self.dim = dim
-        self._log_mode()
+        self.dim = ELEMENT_EMBEDDING_DIM
+        self.cache = EmbeddingCache(namespace="element") if cache_enabled else None
     
-    def _log_mode(self) -> None:
-        """Log whether using ONNX or fallback."""
-        if self.resolver.session:
-            logger.info(f"ElementEmbedder using ONNX model")
-        else:
-            logger.info(f"ElementEmbedder using deterministic fallback (dim={self.dim})")
+    def _element_to_text(self, element: Dict[str, Any]) -> str:
+        """Convert element descriptor to text representation.
+        
+        Args:
+            element: Element descriptor dictionary
+            
+        Returns:
+            Text representation for embedding
+        """
+        parts = []
+        
+        # Tag name is primary
+        tag = element.get("tagName", "").lower()
+        if tag:
+            parts.append(f"<{tag}>")
+        
+        # Role from accessibility tree
+        role = element.get("role", "")
+        if role and role != tag:
+            parts.append(f"role={role}")
+        
+        # Text content (visible text)
+        text = element.get("text", "").strip()
+        if text:
+            # Truncate very long text
+            if len(text) > 100:
+                text = text[:97] + "..."
+            parts.append(f'"{text}"')
+        
+        # Name from accessibility tree
+        name = element.get("name", "").strip()
+        if name and name != text:
+            if len(name) > 50:
+                name = name[:47] + "..."
+            parts.append(f"name={name}")
+        
+        # Important attributes
+        attrs = element.get("attributes", {})
+        
+        # ID
+        elem_id = attrs.get("id", "")
+        if elem_id:
+            parts.append(f"#{elem_id}")
+        
+        # Classes
+        classes = attrs.get("class", "")
+        if classes:
+            # Take first few classes
+            class_list = classes.split()[:3]
+            for cls in class_list:
+                parts.append(f".{cls}")
+        
+        # Type for inputs
+        elem_type = attrs.get("type", "")
+        if elem_type and tag in ["input", "button"]:
+            parts.append(f"type={elem_type}")
+        
+        # Placeholder
+        placeholder = attrs.get("placeholder", "")
+        if placeholder:
+            if len(placeholder) > 30:
+                placeholder = placeholder[:27] + "..."
+            parts.append(f"placeholder={placeholder}")
+        
+        # ARIA label
+        aria_label = attrs.get("aria-label", "")
+        if aria_label and aria_label not in [text, name]:
+            if len(aria_label) > 30:
+                aria_label = aria_label[:27] + "..."
+            parts.append(f"aria-label={aria_label}")
+        
+        # Value for form elements
+        value = attrs.get("value", "")
+        if value and tag in ["input", "select", "textarea"]:
+            if len(value) > 30:
+                value = value[:27] + "..."
+            parts.append(f"value={value}")
+        
+        # href for links
+        href = attrs.get("href", "")
+        if href and tag == "a":
+            if len(href) > 50:
+                href = href[:47] + "..."
+            parts.append(f"href={href}")
+        
+        # State information
+        if element.get("disabled"):
+            parts.append("disabled")
+        if element.get("checked"):
+            parts.append("checked")
+        if element.get("selected"):
+            parts.append("selected")
+        if element.get("focused"):
+            parts.append("focused")
+        
+        # Visibility
+        if not element.get("visible", True):
+            parts.append("hidden")
+        
+        # Join all parts
+        return " ".join(parts)
     
     def embed(self, element: Dict[str, Any]) -> np.ndarray:
-        """Generate embedding for a DOM element descriptor."""
-        # Create signature for caching
-        sig = self._element_signature(element)
-        cache_key = f"element:{MODEL_VERSION}:{sig}"
+        """Generate embedding for UI element.
         
-        # Check cache
-        cached = self.cache.get(cache_key)
-        if cached is not None:
-            logger.debug(f"Cache hit for element: {element.get('tag', 'unknown')}")
-            return cached
+        Args:
+            element: Element descriptor dictionary
+            
+        Returns:
+            Normalized embedding vector of shape (dim,)
+        """
+        # Convert element to text representation
+        text = self._element_to_text(element)
         
-        # Generate text representation of element
-        element_text = self._element_to_text(element)
+        if not text:
+            return np.zeros(self.dim, dtype=np.float32)
+        
+        # Create cache key from element
+        cache_key = self._get_cache_key(element)
+        
+        # Check cache first
+        if self.cache and cache_key:
+            cached = self.cache.get(cache_key)
+            if cached is not None:
+                logger.debug(f"Cache hit for element: {text[:50]}")
+                return cached
         
         # Generate embedding
-        logger.debug(f"Generating embedding for element: {element.get('tag', 'unknown')}")
-        embedding = self.resolver.embed(element_text, self.dim)
+        logger.debug(f"Generating embedding for element: {text[:50]}")
         
-        # Cache result
-        self.cache.put(cache_key, embedding)
+        # For markuplm-base, we can provide HTML-like structure
+        # The model is trained on markup, so preserve structure
+        embedding = self.resolver.embed(text, normalize=True)
+        
+        # Cache the result
+        if self.cache and cache_key:
+            self.cache.put(cache_key, embedding)
         
         return embedding
     
-    def embed_batch(self, elements: List[Dict[str, Any]]) -> List[np.ndarray]:
-        """Generate embeddings for multiple elements."""
-        return [self.embed(element) for element in elements]
+    def batch_embed(self, elements: List[Dict[str, Any]]) -> np.ndarray:
+        """Generate embeddings for multiple elements.
+        
+        Args:
+            elements: List of element descriptors
+            
+        Returns:
+            Array of shape (n_elements, dim)
+        """
+        if not elements:
+            return np.array([], dtype=np.float32).reshape(0, self.dim)
+        
+        embeddings = []
+        for element in elements:
+            embeddings.append(self.embed(element))
+        
+        return np.vstack(embeddings)
     
-    def _element_signature(self, element: Dict[str, Any]) -> str:
-        """Create a unique signature for an element for caching."""
-        # Include key attributes that define the element
-        sig_parts = [
-            element.get("tag", ""),
-            element.get("text", ""),
-            element.get("role", ""),
-            element.get("name", ""),
-            element.get("id", ""),
-            str(element.get("classes", [])),
-            element.get("placeholder", ""),
-            element.get("type", ""),
-            str(element.get("aria", {})),
-        ]
-        return json.dumps(sig_parts, sort_keys=True)
-    
-    def _element_to_text(self, element: Dict[str, Any]) -> str:
-        """Convert element descriptor to text for embedding."""
-        parts = []
+    def _get_cache_key(self, element: Dict[str, Any]) -> Optional[str]:
+        """Generate cache key for element.
+        
+        Args:
+            element: Element descriptor
+            
+        Returns:
+            Cache key string or None if element is not cacheable
+        """
+        # Use a subset of stable attributes for cache key
+        key_parts = []
         
         # Tag name
-        if element.get("tag"):
-            parts.append(f"tag:{element['tag']}")
+        tag = element.get("tagName", "")
+        if tag:
+            key_parts.append(f"tag:{tag}")
         
         # Text content
-        if element.get("text"):
-            text = str(element["text"]).strip()[:100]  # Limit length
-            if text:
-                parts.append(f"text:{text}")
+        text = element.get("text", "")[:100]  # Truncate for key
+        if text:
+            key_parts.append(f"text:{text}")
         
-        # Role (accessibility)
-        if element.get("role"):
-            parts.append(f"role:{element['role']}")
+        # Important attributes
+        attrs = element.get("attributes", {})
         
-        # Name (accessibility)
-        if element.get("name"):
-            parts.append(f"name:{element['name']}")
+        # ID is very stable
+        elem_id = attrs.get("id", "")
+        if elem_id:
+            key_parts.append(f"id:{elem_id}")
         
-        # ID attribute
-        if element.get("id"):
-            parts.append(f"id:{element['id']}")
+        # Role
+        role = element.get("role", "")
+        if role:
+            key_parts.append(f"role:{role}")
         
-        # Classes
-        if element.get("classes"):
-            classes = element["classes"]
-            if isinstance(classes, list):
-                parts.append(f"classes:{' '.join(classes)}")
+        # Name from accessibility
+        name = element.get("name", "")[:50]
+        if name:
+            key_parts.append(f"name:{name}")
         
-        # Placeholder
-        if element.get("placeholder"):
-            parts.append(f"placeholder:{element['placeholder']}")
+        if not key_parts:
+            return None
         
-        # Input type
-        if element.get("type"):
-            parts.append(f"type:{element['type']}")
-        
-        # ARIA attributes
-        if element.get("aria"):
-            aria = element["aria"]
-            if isinstance(aria, dict):
-                for key, value in aria.items():
-                    parts.append(f"aria-{key}:{value}")
-        
-        # Labels
-        if element.get("labels"):
-            labels = element["labels"]
-            if isinstance(labels, list):
-                parts.append(f"labels:{' '.join(labels)}")
-        
-        # Combine all parts
-        return " ".join(parts) if parts else "empty-element"
+        return "|".join(key_parts)

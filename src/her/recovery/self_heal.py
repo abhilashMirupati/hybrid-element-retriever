@@ -115,8 +115,8 @@ class SelfHealer:
                             if element.count() > 0:
                                 healed_locators.append((healed, strategy.name))
                                 logger.info(f"Healed locator using {strategy.name}: {healed}")
-                        except:
-                            pass
+                        except Exception as test_error:
+                            logger.debug(f"Failed to test healed locator: {test_error}")
                     else:
                         # No page to test, just add the healed version
                         healed_locators.append((healed, strategy.name))

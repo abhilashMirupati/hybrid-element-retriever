@@ -1,4 +1,4 @@
-package com.example.her;
+package com.hybridclient.her;
 
 import py4j.GatewayServer;
 import java.util.List;

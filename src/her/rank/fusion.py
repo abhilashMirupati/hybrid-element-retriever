@@ -5,20 +5,22 @@ import logging
 import json
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
+from ..config import (
+    FUSION_ALPHA,
+    FUSION_BETA, 
+    FUSION_GAMMA,
+    get_promotion_store_path
+)
 
-# Default weight configuration
-DEFAULT_ALPHA = 0.4  # Semantic similarity weight
-DEFAULT_BETA = 0.4   # Heuristic score weight
-DEFAULT_GAMMA = 0.2  # Promotion score weight
+logger = logging.getLogger(__name__)
 
 
 @dataclass
 class FusionConfig:
     """Configuration for fusion ranking."""
-    alpha: float = DEFAULT_ALPHA
-    beta: float = DEFAULT_BETA
-    gamma: float = DEFAULT_GAMMA
+    alpha: float = FUSION_ALPHA  # Semantic similarity weight (1.0)
+    beta: float = FUSION_BETA    # Heuristic score weight (0.5)
+    gamma: float = FUSION_GAMMA  # Promotion score weight (0.2)
     
     def __post_init__(self):
         # Normalize weights to sum to 1.0
@@ -27,6 +29,8 @@ class FusionConfig:
             self.alpha /= total
             self.beta /= total
             self.gamma /= total
+        
+        logger.debug(f"Fusion weights normalized: α={self.alpha:.3f}, β={self.beta:.3f}, γ={self.gamma:.3f}")
 
 
 class RankFusion:
@@ -38,7 +42,7 @@ class RankFusion:
         promotion_store_path: Optional[Path] = None
     ):
         self.config = config or FusionConfig()
-        self.promotion_store_path = promotion_store_path or Path.home() / ".cache" / "her" / "promotions.json"
+        self.promotion_store_path = promotion_store_path or get_promotion_store_path()
         self.promotions = self._load_promotions()
     
     def _load_promotions(self) -> Dict[str, float]:
@@ -60,219 +64,188 @@ class RankFusion:
         except Exception as e:
             logger.warning(f"Failed to save promotions: {e}")
     
-    def _get_promotion_key(self, descriptor: Dict[str, Any], context: str) -> str:
-        """Generate unique key for promotion lookup."""
-        # Create stable key from element properties and context
-        sig = {
-            "tag": descriptor.get("tag"),
-            "id": descriptor.get("id"),
-            "classes": sorted(descriptor.get("classes", [])),
-            "role": descriptor.get("role"),
-            "name": descriptor.get("name"),
-            "context": context,
-        }
-        return json.dumps(sig, sort_keys=True)
-    
-    def fuse(
+    def fuse_scores(
         self,
-        semantic_scores: List[Tuple[Dict[str, Any], float]],
-        heuristic_scores: List[Tuple[Dict[str, Any], float]],
-        context: str = "",
-        top_k: int = 10
-    ) -> List[Tuple[Dict[str, Any], float, Dict[str, Any]]]:
-        """Fuse multiple ranking signals.
+        semantic_score: float,
+        heuristic_score: float,
+        element: Dict[str, Any]
+    ) -> float:
+        """Fuse multiple ranking scores into final score.
         
         Args:
-            semantic_scores: List of (descriptor, semantic_score) tuples
-            heuristic_scores: List of (descriptor, heuristic_score) tuples
-            context: Context string for promotion lookup
-            top_k: Number of top results to return
+            semantic_score: Semantic similarity score [0, 1]
+            heuristic_score: Heuristic-based score [0, 1]
+            element: Element descriptor for promotion lookup
         
         Returns:
-            List of (descriptor, fused_score, reasons) tuples
+            Fused score [0, 1]
         """
-        # Index scores by element (using backend node ID as key)
-        semantic_by_id = {}
-        for desc, score in semantic_scores:
-            node_id = desc.get("backendNodeId")
-            if node_id:
-                semantic_by_id[node_id] = (desc, score)
+        # Clamp scores to [0, 1]
+        semantic_score = max(0.0, min(1.0, semantic_score))
+        heuristic_score = max(0.0, min(1.0, heuristic_score))
         
-        heuristic_by_id = {}
-        for desc, score in heuristic_scores:
-            node_id = desc.get("backendNodeId")
-            if node_id:
-                heuristic_by_id[node_id] = (desc, score)
+        # Get promotion score
+        promotion_key = self._get_promotion_key(element)
+        promotion_score = self.promotions.get(promotion_key, 0.5)  # Default to neutral
         
-        # Combine all unique elements
-        all_node_ids = set(semantic_by_id.keys()) | set(heuristic_by_id.keys())
+        # Apply fusion formula: score = α*semantic + β*heuristic + γ*promotion
+        fused = (
+            self.config.alpha * semantic_score +
+            self.config.beta * heuristic_score +
+            self.config.gamma * promotion_score
+        )
         
-        fused_results = []
-        for node_id in all_node_ids:
-            # Get descriptor (prefer from semantic since it should have full data)
-            desc = None
-            semantic_score = 0.0
-            heuristic_score = 0.0
-            
-            if node_id in semantic_by_id:
-                desc, semantic_score = semantic_by_id[node_id]
-            
-            if node_id in heuristic_by_id:
-                h_desc, heuristic_score = heuristic_by_id[node_id]
-                if desc is None:
-                    desc = h_desc
-            
-            if desc is None:
-                continue
-            
-            # Get promotion score
-            promotion_key = self._get_promotion_key(desc, context)
-            promotion_score = self.promotions.get(promotion_key, 0.0)
-            
-            # Calculate fused score
-            fused_score = (
-                self.config.alpha * semantic_score +
-                self.config.beta * heuristic_score +
-                self.config.gamma * promotion_score
-            )
-            
-            # Build reasons dictionary
-            reasons = {
-                "semantic_score": semantic_score,
-                "heuristic_score": heuristic_score,
-                "promotion_score": promotion_score,
-                "weights": {
-                    "alpha": self.config.alpha,
-                    "beta": self.config.beta,
-                    "gamma": self.config.gamma,
-                },
-                "fused_score": fused_score,
-                "explanation": self._explain_fusion(
-                    semantic_score, heuristic_score, promotion_score, fused_score
-                ),
-            }
-            
-            fused_results.append((desc, fused_score, reasons))
+        # Ensure result is in [0, 1]
+        fused = max(0.0, min(1.0, fused))
         
-        # Sort by fused score descending
-        fused_results.sort(key=lambda x: x[1], reverse=True)
+        logger.debug(
+            f"Fusion: semantic={semantic_score:.3f}, heuristic={heuristic_score:.3f}, "
+            f"promotion={promotion_score:.3f} -> fused={fused:.3f}"
+        )
         
-        # Log top results
-        if fused_results:
-            top = fused_results[0]
-            logger.info(
-                f"Top fusion result: score={top[1]:.3f}, "
-                f"semantic={top[2]['semantic_score']:.3f}, "
-                f"heuristic={top[2]['heuristic_score']:.3f}, "
-                f"promotion={top[2]['promotion_score']:.3f}"
-            )
-        
-        return fused_results[:top_k]
+        return fused
     
-    def _explain_fusion(
+    def rank_candidates(
         self,
-        semantic: float,
-        heuristic: float,
-        promotion: float,
-        fused: float
-    ) -> str:
-        """Generate human-readable explanation of fusion."""
+        candidates: List[Tuple[Dict[str, Any], float, float]]
+    ) -> List[Tuple[Dict[str, Any], float]]:
+        """Rank candidates using fusion scoring.
+        
+        Args:
+            candidates: List of (element, semantic_score, heuristic_score) tuples
+        
+        Returns:
+            Sorted list of (element, fused_score) tuples
+        """
+        ranked = []
+        
+        for element, semantic_score, heuristic_score in candidates:
+            fused_score = self.fuse_scores(semantic_score, heuristic_score, element)
+            ranked.append((element, fused_score))
+        
+        # Sort by fused score (descending)
+        ranked.sort(key=lambda x: x[1], reverse=True)
+        
+        return ranked
+    
+    def _get_promotion_key(self, element: Dict[str, Any]) -> str:
+        """Generate promotion key for element.
+        
+        Args:
+            element: Element descriptor
+        
+        Returns:
+            Stable key for promotion lookup
+        """
+        # Use combination of stable attributes
         parts = []
         
-        if semantic > 0.5:
-            parts.append("Strong semantic match")
-        elif semantic > 0.2:
-            parts.append("Moderate semantic match")
+        # Tag name
+        tag = element.get("tagName", "")
+        if tag:
+            parts.append(f"tag:{tag}")
         
-        if heuristic > 0.5:
-            parts.append("Strong heuristic match")
-        elif heuristic > 0.2:
-            parts.append("Moderate heuristic match")
+        # ID attribute
+        attrs = element.get("attributes", {})
+        elem_id = attrs.get("id", "")
+        if elem_id:
+            parts.append(f"id:{elem_id}")
         
-        if promotion > 0.5:
-            parts.append("Previously successful (promoted)")
-        elif promotion > 0:
-            parts.append("Some prior success")
+        # Role
+        role = element.get("role", "")
+        if role:
+            parts.append(f"role:{role}")
         
-        if not parts:
-            parts.append("Weak overall match")
+        # Text (truncated)
+        text = element.get("text", "")[:50]
+        if text:
+            parts.append(f"text:{text}")
         
-        return f"Fusion score {fused:.3f}: {', '.join(parts)}"
+        # Name from accessibility
+        name = element.get("name", "")[:50]
+        if name:
+            parts.append(f"name:{name}")
+        
+        return "|".join(parts) if parts else "unknown"
     
-    def promote(
-        self,
-        descriptor: Dict[str, Any],
-        context: str = "",
-        boost: float = 0.1
-    ) -> None:
-        """Promote an element that was successfully used.
+    def promote(self, element: Dict[str, Any], amount: float = 0.1) -> None:
+        """Promote an element by increasing its promotion score.
         
         Args:
-            descriptor: Element descriptor
-            context: Context string
-            boost: Amount to boost promotion score
+            element: Element to promote
+            amount: Amount to increase score by
         """
-        key = self._get_promotion_key(descriptor, context)
-        current = self.promotions.get(key, 0.0)
-        self.promotions[key] = min(1.0, current + boost)
-        self._save_promotions()
+        key = self._get_promotion_key(element)
+        current = self.promotions.get(key, 0.5)
         
-        logger.info(f"Promoted element: {key[:50]}... -> {self.promotions[key]:.3f}")
+        # Increase score (max 1.0)
+        self.promotions[key] = min(1.0, current + amount)
+        
+        logger.info(f"Promoted element: {key[:50]} -> {self.promotions[key]:.3f}")
+        
+        # Save to persistent store
+        self._save_promotions()
     
-    def demote(
-        self,
-        descriptor: Dict[str, Any],
-        context: str = "",
-        penalty: float = 0.05
-    ) -> None:
-        """Demote an element that failed.
+    def demote(self, element: Dict[str, Any], amount: float = 0.1) -> None:
+        """Demote an element by decreasing its promotion score.
         
         Args:
-            descriptor: Element descriptor
-            context: Context string
-            penalty: Amount to reduce promotion score
+            element: Element to demote
+            amount: Amount to decrease score by
         """
-        key = self._get_promotion_key(descriptor, context)
-        current = self.promotions.get(key, 0.0)
-        self.promotions[key] = max(0.0, current - penalty)
-        self._save_promotions()
+        key = self._get_promotion_key(element)
+        current = self.promotions.get(key, 0.5)
         
-        logger.info(f"Demoted element: {key[:50]}... -> {self.promotions[key]:.3f}")
+        # Decrease score (min 0.0)
+        self.promotions[key] = max(0.0, current - amount)
+        
+        logger.info(f"Demoted element: {key[:50]} -> {self.promotions[key]:.3f}")
+        
+        # Save to persistent store
+        self._save_promotions()
     
-    def clear_promotions(self) -> None:
-        """Clear all promotion scores."""
+    def get_promotion_score(self, element: Dict[str, Any]) -> float:
+        """Get current promotion score for element.
+        
+        Args:
+            element: Element descriptor
+        
+        Returns:
+            Promotion score [0, 1]
+        """
+        key = self._get_promotion_key(element)
+        return self.promotions.get(key, 0.5)  # Default to neutral
+    
+    def reset_promotions(self) -> None:
+        """Reset all promotion scores."""
         self.promotions = {}
         self._save_promotions()
-        logger.info("Cleared all promotions")
+        logger.info("Reset all promotion scores")
     
-    def update_weights(
+    def explain_score(
         self,
-        alpha: Optional[float] = None,
-        beta: Optional[float] = None,
-        gamma: Optional[float] = None
-    ) -> None:
-        """Update fusion weights.
+        semantic_score: float,
+        heuristic_score: float,
+        element: Dict[str, Any]
+    ) -> str:
+        """Explain how the fused score was calculated.
         
         Args:
-            alpha: Semantic weight
-            beta: Heuristic weight
-            gamma: Promotion weight
+            semantic_score: Semantic similarity score
+            heuristic_score: Heuristic-based score
+            element: Element descriptor
+        
+        Returns:
+            Human-readable explanation
         """
-        if alpha is not None:
-            self.config.alpha = alpha
-        if beta is not None:
-            self.config.beta = beta
-        if gamma is not None:
-            self.config.gamma = gamma
+        promotion_score = self.get_promotion_score(element)
+        fused_score = self.fuse_scores(semantic_score, heuristic_score, element)
         
-        # Re-normalize
-        total = self.config.alpha + self.config.beta + self.config.gamma
-        if total > 0:
-            self.config.alpha /= total
-            self.config.beta /= total
-            self.config.gamma /= total
+        explanation = [
+            f"Fusion Score: {fused_score:.3f}",
+            f"  Semantic (α={self.config.alpha:.2f}): {semantic_score:.3f} * {self.config.alpha:.2f} = {semantic_score * self.config.alpha:.3f}",
+            f"  Heuristic (β={self.config.beta:.2f}): {heuristic_score:.3f} * {self.config.beta:.2f} = {heuristic_score * self.config.beta:.3f}",
+            f"  Promotion (γ={self.config.gamma:.2f}): {promotion_score:.3f} * {self.config.gamma:.2f} = {promotion_score * self.config.gamma:.3f}"
+        ]
         
-        logger.info(
-            f"Updated fusion weights: α={self.config.alpha:.3f}, "
-            f"β={self.config.beta:.3f}, γ={self.config.gamma:.3f}"
-        )
+        return "\n".join(explanation)

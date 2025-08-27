@@ -88,6 +88,8 @@ class SessionManager:
             self._page_to_session[page] = session_id
             if session.auto_index_enabled:
                 self._index_page(session_id, page)
+            # Set up SPA tracking
+            self._setup_spa_tracking(page, session_id)
         
         logger.info(f"Created session: {session_id}")
         return session
@@ -324,3 +326,142 @@ class SessionManager:
             "reindex_on_change": self.reindex_on_change,
             "reindex_on_failure": self.reindex_on_failure,
         }
+    
+    def _setup_spa_tracking(self, page: Page, session_id: str) -> None:
+        """Set up SPA route change tracking.
+        
+        Args:
+            page: Playwright page instance
+            session_id: Session ID to track
+        """
+        if not page or not PLAYWRIGHT_AVAILABLE:
+            return
+        
+        try:
+            # Inject JavaScript to track SPA route changes
+            spa_tracking_script = """
+            (() => {
+                // Track the original methods
+                const originalPushState = history.pushState;
+                const originalReplaceState = history.replaceState;
+                
+                // Flag to track if we should re-index
+                window.__herNeedsReindex = false;
+                window.__herLastUrl = window.location.href;
+                
+                // Override pushState
+                history.pushState = function() {
+                    originalPushState.apply(history, arguments);
+                    window.__herNeedsReindex = true;
+                    window.__herLastUrl = window.location.href;
+                    window.dispatchEvent(new Event('__herRouteChange'));
+                };
+                
+                // Override replaceState
+                history.replaceState = function() {
+                    originalReplaceState.apply(history, arguments);
+                    window.__herNeedsReindex = true;
+                    window.__herLastUrl = window.location.href;
+                    window.dispatchEvent(new Event('__herRouteChange'));
+                };
+                
+                // Listen for popstate (back/forward)
+                window.addEventListener('popstate', () => {
+                    window.__herNeedsReindex = true;
+                    window.__herLastUrl = window.location.href;
+                    window.dispatchEvent(new Event('__herRouteChange'));
+                });
+                
+                // Also track hash changes
+                window.addEventListener('hashchange', () => {
+                    window.__herNeedsReindex = true;
+                    window.__herLastUrl = window.location.href;
+                    window.dispatchEvent(new Event('__herRouteChange'));
+                });
+                
+                console.log('HER: SPA tracking initialized');
+            })();
+            """
+            
+            # Inject the tracking script
+            page.evaluate(spa_tracking_script)
+            
+            # Set up listener for route changes
+            page.expose_function("__herHandleRouteChange", 
+                                lambda: self._handle_spa_route_change(session_id, page))
+            
+            # Add event listener for our custom event
+            page.evaluate("""
+                window.addEventListener('__herRouteChange', () => {
+                    if (window.__herHandleRouteChange) {
+                        window.__herHandleRouteChange();
+                    }
+                });
+            """)
+            
+            logger.info(f"SPA tracking set up for session {session_id}")
+            
+        except Exception as e:
+            logger.warning(f"Failed to set up SPA tracking: {e}")
+    
+    def _handle_spa_route_change(self, session_id: str, page: Page) -> None:
+        """Handle SPA route change event.
+        
+        Args:
+            session_id: Session ID
+            page: Page that changed
+        """
+        try:
+            session = self.get_session(session_id)
+            if not session:
+                return
+            
+            # Check if URL actually changed
+            new_url = page.url
+            if new_url != session.url:
+                logger.info(f"SPA route change detected: {session.url} -> {new_url}")
+                session.url = new_url
+                
+                # Re-index if auto-index is enabled
+                if session.auto_index_enabled and self.reindex_on_change:
+                    logger.info(f"Re-indexing after SPA route change for session {session_id}")
+                    self._index_page(session_id, page)
+            
+        except Exception as e:
+            logger.warning(f"Failed to handle SPA route change: {e}")
+    
+    def check_spa_changes(self, session_id: str, page: Page) -> bool:
+        """Check if SPA has navigated since last check.
+        
+        Args:
+            session_id: Session ID
+            page: Page to check
+            
+        Returns:
+            True if SPA navigation detected
+        """
+        if not page or not PLAYWRIGHT_AVAILABLE:
+            return False
+        
+        try:
+            # Check the flag we set in JavaScript
+            needs_reindex = page.evaluate("window.__herNeedsReindex || false")
+            
+            if needs_reindex:
+                # Reset the flag
+                page.evaluate("window.__herNeedsReindex = false")
+                
+                # Update session URL
+                session = self.get_session(session_id)
+                if session:
+                    new_url = page.url
+                    if new_url != session.url:
+                        logger.info(f"SPA navigation detected via flag: {session.url} -> {new_url}")
+                        session.url = new_url
+                        return True
+            
+            return False
+            
+        except Exception as e:
+            logger.debug(f"Failed to check SPA changes: {e}")
+            return False
