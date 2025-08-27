@@ -241,3 +241,46 @@ class RankFusion:
         ]
 
         return "\n".join(explanation)
+    
+    def fuse(self, rankings: Dict[str, List[Tuple[str, float]]]) -> List[Tuple[str, float]]:
+        """Simple fusion method for compatibility.
+        
+        Args:
+            rankings: Dictionary of ranking sources
+        
+        Returns:
+            Fused rankings
+        """
+        # Combine all rankings
+        combined = {}
+        for source, items in rankings.items():
+            for item, score in items:
+                if item not in combined:
+                    combined[item] = []
+                combined[item].append(score)
+        
+        # Average scores
+        result = []
+        for item, scores in combined.items():
+            avg_score = sum(scores) / len(scores)
+            result.append((item, avg_score))
+        
+        return sorted(result, key=lambda x: x[1], reverse=True)
+    
+    def update_weights(self, alpha: float = None, beta: float = None, gamma: float = None):
+        """Update fusion weights.
+        
+        Args:
+            alpha: Semantic weight
+            beta: Heuristic weight  
+            gamma: Promotion weight
+        """
+        if alpha is not None:
+            self.config.alpha = alpha
+        if beta is not None:
+            self.config.beta = beta
+        if gamma is not None:
+            self.config.gamma = gamma
+        
+        # Renormalize
+        self.config.__post_init__()

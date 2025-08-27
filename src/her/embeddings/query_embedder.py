@@ -95,3 +95,14 @@ class QueryEmbedder:
 
         # Map from [-1, 1] to [0, 1]
         return (similarity + 1.0) / 2.0
+    
+    def embed_batch(self, texts: List[str]) -> List[np.ndarray]:
+        """Alias for batch_embed for compatibility.
+        
+        Args:
+            texts: List of query texts
+        
+        Returns:
+            List of embedding vectors
+        """
+        return [self.embed(text) for text in texts]

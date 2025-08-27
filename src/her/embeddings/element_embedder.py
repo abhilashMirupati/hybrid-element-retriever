@@ -226,3 +226,14 @@ class ElementEmbedder:
             return None
 
         return "|".join(key_parts)
+    
+    def embed_batch(self, elements: List[Dict[str, Any]]) -> List[np.ndarray]:
+        """Generate embeddings for multiple elements.
+        
+        Args:
+            elements: List of element descriptors
+        
+        Returns:
+            List of embedding vectors
+        """
+        return [self.embed(elem) for elem in elements]

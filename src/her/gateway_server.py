@@ -2,8 +2,21 @@
 
 import logging
 import sys
-from py4j.java_gateway import JavaGateway, CallbackServerParameters
-from py4j.java_gateway import GatewayParameters, GatewayServer
+try:
+    from py4j.java_gateway import JavaGateway, CallbackServerParameters
+    from py4j.java_gateway import GatewayParameters
+    from py4j.java_server import JavaServer as GatewayServer
+except ImportError:
+    # Fallback for older py4j versions
+    try:
+        from py4j.java_gateway import JavaGateway, CallbackServerParameters, GatewayParameters
+        from py4j import GatewayServer
+    except ImportError:
+        # Mock for testing when py4j is not available
+        JavaGateway = None
+        CallbackServerParameters = None
+        GatewayParameters = None
+        GatewayServer = None
 from .cli_api import HybridClient
 
 logger = logging.getLogger(__name__)

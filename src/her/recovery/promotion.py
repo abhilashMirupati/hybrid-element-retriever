@@ -387,3 +387,12 @@ class PromotionStore:
             ),
             "top_performers": self.get_best_locators(top_k=3),
         }
+    
+    def record_success(self, locator: str, context: str):
+        """Record a successful locator use.
+        
+        Args:
+            locator: The locator string
+            context: The context (e.g., URL or page identifier)
+        """
+        self.promote(locator, context)
