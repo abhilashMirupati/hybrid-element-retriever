@@ -22,7 +22,7 @@ def main(argv=None):
   her act "click the login button" --url https://example.com
   her query "submit buttons" --url https://example.com --limit 5
   her cache --stats
-"""
+""",
     )
 
     # Add subcommands
@@ -105,7 +105,7 @@ def main(argv=None):
             version_info = {
                 "name": "Hybrid Element Retriever",
                 "version": "1.0.0",
-                "status": "production-ready"
+                "status": "production-ready",
             }
             print(json.dumps(version_info, indent=2))
             return 0

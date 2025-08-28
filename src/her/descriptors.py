@@ -12,23 +12,23 @@ from typing import List, Optional, Dict, Any
 
 def normalize_descriptor(desc: Dict[str, Any]) -> Dict[str, Any]:
     """Normalize a raw descriptor into a consistent format.
-    
+
     Args:
         desc: Raw descriptor dictionary
-    
+
     Returns:
         Normalized descriptor dictionary
     """
     normalized = {}
-    
+
     # Normalize tag name
     tag = desc.get("tagName", "")
     normalized["tagName"] = tag.lower() if tag else ""
-    
+
     # Normalize text
     text = desc.get("text", "")
     normalized["text"] = text.strip() if text else ""
-    
+
     # Extract attributes
     attributes = desc.get("attributes", {}) or {}
     for key, value in attributes.items():
@@ -36,11 +36,11 @@ def normalize_descriptor(desc: Dict[str, Any]) -> Dict[str, Any]:
             normalized["className"] = value
         else:
             normalized[key] = value
-    
+
     # Add common attributes directly
     if "value" in desc:
         normalized["value"] = desc["value"]
-    
+
     return normalized
 
 

@@ -1,6 +1,6 @@
 """Locator synthesis with role→CSS→XPath progression and uniqueness checks."""
 
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional
 import re
 import logging
 

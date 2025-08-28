@@ -1,6 +1,6 @@
 """Action executor with occlusion guard and overlay handling."""
 
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, field
 import logging
 import time
@@ -316,7 +316,7 @@ class ActionExecutor:
                 const elem = document.elementFromPoint(x, y);
                 const target = document.querySelector(selector);
                 if (!elem || !target) return false;
-                
+
                 // Check if the element at point is our target or a descendant
                 return elem === target || target.contains(elem);
             }

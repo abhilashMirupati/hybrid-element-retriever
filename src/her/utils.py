@@ -32,43 +32,44 @@ def flatten(iterable_of_iterables: Iterable[Iterable[Any]]) -> list:
 
 def sanitize_text(text: Any) -> str:
     """Sanitize text by removing extra whitespace.
-    
+
     Args:
         text: Text to sanitize
-    
+
     Returns:
         Sanitized text
     """
     if not text:
         return ""
-    
+
     text = str(text)
     # Replace newlines and tabs with spaces
-    text = text.replace('\n', ' ').replace('\t', ' ')
+    text = text.replace("\n", " ").replace("\t", " ")
     # Replace multiple spaces with single space
     import re
-    text = re.sub(r'\s+', ' ', text)
+
+    text = re.sub(r"\s+", " ", text)
     return text.strip()
 
 
 def truncate_text(text: Any, max_length: int) -> str:
     """Truncate text to maximum length.
-    
+
     Args:
         text: Text to truncate
         max_length: Maximum length
-    
+
     Returns:
         Truncated text with ellipsis if needed
     """
     if not text:
         return ""
-    
+
     text = str(text)
     if len(text) <= max_length:
         return text
-    
+
     if max_length <= 3:
         return "..."
-    
-    return text[:max_length - 1] + "..."
+
+    return text[: max_length - 1] + "..."

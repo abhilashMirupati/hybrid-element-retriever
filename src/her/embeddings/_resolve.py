@@ -8,8 +8,6 @@ import hashlib
 import numpy as np
 import json
 
-logger = logging.getLogger(__name__)
-
 from ..config import (
     get_models_dir,
     QUERY_MODEL_NAME,
@@ -18,6 +16,8 @@ from ..config import (
     QUERY_EMBEDDING_DIM,
     ELEMENT_EMBEDDING_DIM,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class ONNXModelResolver:

@@ -86,7 +86,7 @@ class EmbeddingCache:
     def set(self, key: str, value: np.ndarray) -> None:
         """Store embedding in cache (both memory and disk)."""
         self.put(key, value)
-    
+
     def put(self, key: str, value: np.ndarray) -> None:
         """Store embedding in both memory and disk cache."""
         # Add to memory

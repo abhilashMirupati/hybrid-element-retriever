@@ -248,7 +248,7 @@ class HybridClient:
                     "explanation": reasons.get("explanation", ""),
                     "dom_hash": dom_hash,
                     "confidence": score,
-                    "rationale": reasons.get("explanation", "")
+                    "rationale": reasons.get("explanation", ""),
                 }
             )
 
@@ -395,7 +395,7 @@ class HybridClient:
             return [self._clean_json_output(item) for item in data if item is not None]
         else:
             return data
-    
+
     def close(self) -> None:
         """Close browser and clean up resources."""
         self.executor.close()
