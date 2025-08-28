@@ -163,8 +163,10 @@ class SessionManager:
         if self.reindex_on_change and page:
             _, new_hash = capture_snapshot(page, session.frame_path)
             if detect_dom_change(session.dom_hash, new_hash):
+                old8 = (session.dom_hash or '')[:8]
+                new8 = (new_hash or '')[:8]
                 logger.debug(
-                    f"DOM changed: {session.dom_hash[:8]}... -> {new_hash[:8]}..."
+                    f"DOM changed: {old8}... -> {new8}..."
                 )
                 return True
 

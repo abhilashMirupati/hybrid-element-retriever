@@ -4,7 +4,16 @@ import logging
 import time
 from typing import Any, Dict, List, Optional, Callable
 from dataclasses import dataclass, field
-from playwright.sync_api import Page, ElementHandle, Frame, Error as PlaywrightError
+try:
+    from playwright.sync_api import Page, ElementHandle, Frame, Error as PlaywrightError
+    PLAYWRIGHT_AVAILABLE = True
+except Exception:  # pragma: no cover
+    Page = object  # type: ignore
+    ElementHandle = object  # type: ignore
+    Frame = object  # type: ignore
+    class PlaywrightError(Exception):
+        pass
+    PLAYWRIGHT_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 

@@ -18,13 +18,14 @@ class LocatorSynthesizer:
             self._by_id,
             self._by_data_testid,
             self._by_name,
+            # Prioritize attribute-based selectors earlier to include important attributes within top 5
+            self._by_css_attribute,
             self._by_class,
             self._by_text,
             self._by_role,
             self._by_aria_label,
             self._by_xpath_text,
             self._by_xpath_contains,
-            self._by_css_attribute,
         ]
     
     def synthesize(self, descriptor: Dict[str, Any]) -> List[str]:
@@ -64,7 +65,7 @@ class LocatorSynthesizer:
     
     def _by_id(self, desc: Dict) -> Optional[Dict]:
         """Generate locator by ID."""
-        element_id = desc.get("id")
+        element_id = desc.get("id") or desc.get("attributes", {}).get("id")
         if element_id:
             return [f"#{element_id}", f"//*[@id='{element_id}']"]
         return None
@@ -72,13 +73,26 @@ class LocatorSynthesizer:
     def _by_data_testid(self, desc: Dict) -> Optional[List[Dict]]:
         """Generate locator by data-testid attributes."""
         locators = []
-        attrs = desc.get("attributes", {})
+        attrs = dict(desc.get("attributes", {}) or {})
+        data_map = dict(desc.get("data", {}) or {})
         
         for attr in ["data-testid", "data-test", "data-qa", "data-cy"]:
             if attr in attrs:
                 value = attrs[attr]
-                locators.append(f"[{attr}='{value}']")
+                locators.append(f"[{attr}=\"{value}\"]")
                 locators.append(f"//*[@{attr}='{value}']")
+        # Also accept shorthand in desc['data'] mapping
+        if data_map:
+            pairs = [
+                ("data-testid", data_map.get("testid")),
+                ("data-test", data_map.get("test")),
+                ("data-qa", data_map.get("qa")),
+                ("data-cy", data_map.get("cy")),
+            ]
+            for name, val in pairs:
+                if val:
+                    locators.append(f"[{name}=\"{val}\"]")
+                    locators.append(f"//*[@{name}='{val}']")
         
         return locators if locators else None
     
@@ -87,7 +101,7 @@ class LocatorSynthesizer:
         name = desc.get("name") or desc.get("attributes", {}).get("name")
         if name:
             tag = desc.get("tag", "*")
-            return [f"{tag}[name='{name}']", f"//{tag}[@name='{name}']"]
+            return [f"{tag}[name=\"{name}\"]", f"//{tag}[@name='{name}']"]
         return None
     
     def _by_class(self, desc: Dict) -> Optional[Dict]:
@@ -124,7 +138,7 @@ class LocatorSynthesizer:
         attrs = desc.get("attributes", {})
         aria_label = attrs.get("aria-label") or desc.get("aria", {}).get("label")
         if aria_label:
-            return [f"[aria-label='{aria_label}']", f"//*[@aria-label='{aria_label}']"]
+            return [f"[aria-label=\"{aria_label}\"]", f"//*[@aria-label='{aria_label}']"]
         return None
     
     def _by_xpath_text(self, desc: Dict) -> Optional[Dict]:
@@ -148,7 +162,11 @@ class LocatorSynthesizer:
     def _by_css_attribute(self, desc: Dict) -> Optional[List[Dict]]:
         """Generate CSS attribute selectors."""
         locators = []
-        attrs = desc.get("attributes", {})
+        attrs = dict(desc.get("attributes", {}) or {})
+        # Merge in common top-level attributes if present
+        for k in ["type", "placeholder", "value", "title", "alt"]:
+            if k not in attrs and desc.get(k) is not None:
+                attrs[k] = desc.get(k)
         tag = desc.get("tag", "")
         
         # Common attributes to use for selection
@@ -156,9 +174,13 @@ class LocatorSynthesizer:
             if attr in attrs and attrs[attr]:
                 value = attrs[attr]
                 if tag:
-                    locators.append(f"{tag}[{attr}='{value}']")
+                    locators.append(f"{tag}[{attr}=\"{value}\"]")
                 else:
-                    locators.append(f"[{attr}='{value}']")
+                    locators.append(f"[{attr}=\"{value}\"]")
+        # ensure CSS type for inputs if applicable
+        if tag == 'input' and attrs.get('type'):
+            tval = attrs.get('type')
+            locators.append(f"input[type=\"{tval}\"]")
         
         return locators if locators else None
 
