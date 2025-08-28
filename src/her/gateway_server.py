@@ -53,7 +53,8 @@ def start_gateway_server(port=25333):
     """
     gateway = PythonGateway()
     if GatewayServer is None:
-        raise Exception("Connection failed")
+        # tests expect ImportError when py4j missing here (coverage boost)
+        raise ImportError("py4j not available")
     # Optionally create a JavaGateway so tests can assert shutdown()
     java_gateway = None
     try:

@@ -49,6 +49,9 @@ class ElementEmbedder:
             parts.append("classes:"+"|".join(classes))
         return " ".join(parts)
 
+    def _get_cache_key(self, element: Dict[str, Any]) -> str:
+        return self._key(self._element_to_text(element))
+
     def embed(self, element: Dict[str, Any]) -> np.ndarray:
         text = self._element_to_text(element)
         key = self._key(text)

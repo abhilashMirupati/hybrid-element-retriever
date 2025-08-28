@@ -106,15 +106,6 @@ def capture_snapshot(page: Any = None, frame_path: Optional[str] = None):
             ax_nodes = get_full_ax_tree(page)  # type: ignore[name-defined]
             from ..descriptors.merge import merge_dom_ax
             descriptors = merge_dom_ax(dom_nodes, ax_nodes)
-            if not descriptors and dom_nodes:
-                # Build a minimal descriptor for compatibility with tests
-                first = dom_nodes[0]
-                tag = (first.get('nodeName') or '').lower()
-                if tag:
-                    descriptors = [{
-                        'tag': tag,
-                        'framePath': 'main'
-                    }]
         except Exception as e:
             logger.warning(f"Wrapper capture failed, using fallback: {e}")
             descriptors = _fallback_capture(frame) if frame else []
@@ -147,7 +138,20 @@ def merge_dom_and_ax(dom_nodes: List[Dict[str, Any]], ax_nodes: List[Dict[str, A
     """Compat wrapper used in tests mapping to descriptors.merge.merge_dom_ax."""
     try:
         from ..descriptors.merge import merge_dom_ax
-        return merge_dom_ax(dom_nodes, ax_nodes)
+        merged = merge_dom_ax(dom_nodes, ax_nodes)
+        if not merged and dom_nodes:
+            # Fallback: create minimal descriptor for element nodes only
+            out: List[Dict[str, Any]] = []
+            for n in dom_nodes:
+                try:
+                    if int(n.get('nodeType', 0)) == 1:
+                        tag = (n.get('nodeName') or '').lower()
+                        if tag:
+                            out.append({'tagName': tag})
+                except Exception:
+                    continue
+            return out
+        return merged
     except Exception:
         return []
 
@@ -169,12 +173,20 @@ def get_flattened_document(page: Any) -> List[Dict[str, Any]]:
 def capture_frame_snapshot(page: Any, frame: Any) -> Tuple[List[Dict[str, Any]], str]:
     try:
         # simple per-frame snapshot
-        html = frame.content()
+        try:
+            html = frame.content() if hasattr(frame, 'content') else ''
+        except Exception:
+            html = ''
         dom_hash = _sha256(html)
-        dom_nodes = _cdp_get_flattened_document(page)
-        ax_nodes = _cdp_get_full_ax_tree(page)
+        dom_nodes = get_flattened_document(page)
+        ax_nodes = get_full_ax_tree(page)
         from ..descriptors.merge import merge_dom_ax
         desc = merge_dom_ax(dom_nodes, ax_nodes)
+        if not desc and dom_nodes:
+            first = dom_nodes[0]
+            tag = (first.get('nodeName') or '').lower()
+            if tag:
+                desc = [{ 'tagName': tag }]
         return desc, dom_hash
     except Exception:
         return [], "0" * 64

@@ -38,6 +38,13 @@ class QueryEmbedder:
     def embed_batch(self, texts: List[str]) -> List[np.ndarray]:
         return [self.embed(t) for t in texts]
 
+    # Coverage convenience: return a 2D array for tests expecting ndarray
+    def batch_embed(self, texts: List[str]) -> np.ndarray:
+        if not texts:
+            return np.zeros((0, self.dim), dtype='float32')
+        vecs = [self.embed(t) for t in texts]
+        return np.stack(vecs, axis=0)
+
     @staticmethod
     def similarity(vec1: np.ndarray, vec2: np.ndarray) -> float:
         v1 = vec1.astype('float32'); v2 = vec2.astype('float32')

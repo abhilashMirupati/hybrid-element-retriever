@@ -30,6 +30,7 @@ class RankFusion:
                 self.promotions = json.loads(Path(p).read_text(encoding='utf-8'))
             except Exception:
                 self.promotions = {}
+        return self.promotions
 
     def _save_promotions(self) -> None:
         p = self.promotion_store_path
@@ -43,6 +44,12 @@ class RankFusion:
         # Prefer stable identifiers
         bid = descriptor.get('backendNodeId') or descriptor.get('id') or descriptor.get('xpath') or descriptor.get('selector') or 'unknown'
         return f"{context}|{bid}"
+
+    def _get_promotion_score(self, descriptor: Dict[str, Any], context: str) -> float:
+        try:
+            return float(self.promotions.get(self._get_promotion_key(descriptor, context), 0.0))
+        except Exception:
+            return 0.0
 
     def promote(self, descriptor: Dict[str, Any], context: str, boost: float = 0.1) -> None:
         k = self._get_promotion_key(descriptor, context)
@@ -103,6 +110,10 @@ class RankFusion:
         self.config.alpha = float(alpha)
         self.config.beta = float(beta)
         self.config.gamma = float(gamma)
+
+    def explain_fusion(self, semantic: float, heuristic: float, promotion: float) -> str:
+        fused = self.config.alpha * semantic + self.config.beta * heuristic + self.config.gamma * promotion
+        return f"Fusion Score: {fused:.3f} (semantic={semantic:.3f}, heuristic={heuristic:.3f}, promotion={promotion:.3f})"
 
 
 def fuse(cands: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
