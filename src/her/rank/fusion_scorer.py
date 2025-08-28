@@ -125,6 +125,27 @@ class FusionScorer:
         self.history: List[ElementScore] = []
         self.success_feedback: Dict[str, float] = {}
 
+    def score(self, semantic: float, heuristic: float, promotion: float) -> float:
+        """Calculate fusion score from component scores.
+        
+        Args:
+            semantic: Semantic similarity score (0-1)
+            heuristic: Heuristic matching score (0-1)
+            promotion: Historical success score (0-1)
+            
+        Returns:
+            Fusion score (0-1)
+        """
+        # Apply weights from config
+        weighted_score = (
+            self.alpha * semantic +
+            self.beta * heuristic +
+            self.gamma * promotion
+        )
+        
+        # Normalize to [0, 1]
+        return min(1.0, max(0.0, weighted_score))
+    
     def score_element(
         self,
         element: Dict[str, Any],
@@ -437,8 +458,8 @@ class FusionScorer:
                 if tabindex >= 0:
                     score += 0.2
             except Exception:
-                # Parent element might not be available
-                continue
+                # Tabindex might not be available or parseable
+                pass
 
         return min(1.0, score)
 

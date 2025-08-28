@@ -361,7 +361,7 @@ class DOMResnapshotStrategy(HealingStrategy):
         return candidates
 
 
-class EnhancedSelfHealer:
+class EnhancedSelfHeal:
     """Enhanced self-healing system with multiple strategies and DOM resnapshot."""
 
     def __init__(self, cache_healed: bool = True):
@@ -582,6 +582,10 @@ class EnhancedSelfHealer:
                 unique_fallbacks.append(fb)
 
         return unique_fallbacks[:count]
+
+
+# Alias for compatibility
+EnhancedSelfHealer = EnhancedSelfHeal
 
     def get_stats(self) -> Dict[str, Any]:
         """Get healing statistics."""
