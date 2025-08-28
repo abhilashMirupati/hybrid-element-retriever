@@ -17,15 +17,25 @@ def normalize_descriptor(node: Dict[str, Any]) -> Dict[str, Any]:
                 attrs_dict[str(attrs[i])] = attrs[i+1]
         attrs = attrs_dict
     out['attributes'] = attrs
-    out['id'] = attrs.get('id','') if isinstance(attrs, dict) else ''
+    out['id'] = (attrs.get('id') if isinstance(attrs, dict) else None) or None
     classes = attrs.get('class','') if isinstance(attrs, dict) else ''
     out['classes'] = classes.split() if isinstance(classes, str) else []
-    out['text'] = node.get('text','') or node.get('nodeValue','') or ''
+    # normalize text - trim whitespace
+    raw_text = node.get('text','') or node.get('nodeValue','') or ''
+    out['text'] = str(raw_text).strip()
     out['type'] = attrs.get('type','') if isinstance(attrs, dict) else ''
     out['placeholder'] = attrs.get('placeholder','') if isinstance(attrs, dict) else ''
+    # mirror class in className for convenience
+    if isinstance(attrs, dict) and 'class' in attrs:
+        out['className'] = attrs.get('class')
+    # include value if present (for inputs)
+    if isinstance(attrs, dict) and 'value' in attrs:
+        out['value'] = attrs.get('value')
     # flatten data- attributes
     for k, v in (attrs.items() if isinstance(attrs, dict) else []):
         if k.startswith('data-'):
+            out[k] = v
+        if k.startswith('aria-') or k == 'role':
             out[k] = v
     return out
 

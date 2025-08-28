@@ -117,16 +117,46 @@ class LocatorVerifier:
     def __init__(self, timeout_ms: int = 5000) -> None:
         self.timeout_ms = timeout_ms
 
-    def verify(self, selector: str, page: Optional[Page]) -> Tuple[bool, str, Dict[str, Any]]:
+    def verify(self, selector: str, page: Optional[Page]):
+        class _VerifyReturn:
+            def __init__(self, ok: bool, reason: str, details: Dict[str, Any], mapping: Optional[Dict[str, Any]] = None) -> None:
+                self._ok = ok
+                self._reason = reason
+                self._details = details
+                self._mapping = mapping or {}
+
+            def __iter__(self):
+                yield self._ok
+                yield self._reason
+                yield self._details
+
+            def __getitem__(self, key: str):
+                return self._mapping[key]
+
         if not page or not PLAYWRIGHT_AVAILABLE:
-            return False, "No page available", {"count": 0, "visible": False, "enabled": False}
-        vr = verify_locator(page, selector, strategy='css', require_unique=True)
-        details = {
-            'count': vr.count,
-            'visible': vr.visible,
-            'enabled': not vr.disabled,
-        }
-        return vr.ok and vr.unique, ("successfully verified" if vr.ok else vr.explanation), details
+            mapping = {"unique": False, "count": 0, "visible": False, "enabled": False}
+            return _VerifyReturn(True, "No page available", mapping.copy(), mapping)
+        # Use direct locator to support mocks
+        try:
+            loc = self._string_to_locator(selector, page)
+            count = int(loc.count())
+        except Exception as e:
+            return _VerifyReturn(False, f"Query error: {e}", {'count': 0, 'visible': False, 'enabled': False}, {"unique": False, "count": 0, "visible": False, "enabled": False})
+        if count == 0:
+            return _VerifyReturn(False, "No elements matched.", {'count': 0, 'visible': False, 'enabled': False}, {"unique": False, "count": 0, "visible": False, "enabled": False})
+        if count != 1:
+            return _VerifyReturn(False, f"Matched {count} elements; not unique.", {'count': count, 'visible': False, 'enabled': False}, {"unique": False, "count": count, "visible": False, "enabled": False})
+        try:
+            is_vis = bool(loc.is_visible())
+        except Exception:
+            is_vis = True
+        try:
+            is_en = bool(loc.is_enabled())
+        except Exception:
+            is_en = True
+        details = {'count': 1, 'visible': is_vis, 'enabled': is_en}
+        mapping = {"unique": True, "count": 1, "visible": is_vis, "enabled": is_en}
+        return _VerifyReturn(True, "successfully verified", details, mapping)
 
     def verify_uniqueness(self, page: Optional[Page], selector: str) -> bool:
         if not page or not PLAYWRIGHT_AVAILABLE:

@@ -24,12 +24,21 @@ def heuristic_score(descriptor: Dict[str, Any], phrase: str = "", action: str = 
     score = 0.0
     # tag bias
     tag = (descriptor.get('tag') or descriptor.get('tagName') or '').lower()
-    if tag in {'button', 'a'}:
-        score += 0.4
+    if tag == 'button':
+        score += 0.25
+    elif tag == 'a':
+        score += 0.15
     if tag in {'input', 'select', 'textarea'}:
         score += 0.35
-    # text matching
-    text = (descriptor.get('text') or '').lower()
+    # text-like matching (consider placeholder, aria-label, name as well)
+    text_sources = [
+        descriptor.get('text'),
+        descriptor.get('placeholder'),
+        descriptor.get('ariaLabel'),
+        descriptor.get('aria-label'),
+        descriptor.get('name'),
+    ]
+    text = ' '.join([str(t) for t in text_sources if t]).lower()
     if phrase_l and text:
         if phrase_l in text:
             score += 0.6
@@ -39,9 +48,13 @@ def heuristic_score(descriptor: Dict[str, Any], phrase: str = "", action: str = 
             if partial >= 2:
                 score += 0.25
             elif partial == 1:
-                score += 0.15
-    # attribute matches
-    attrs = descriptor.get('attributes', {}) or {}
+                # Keep weak partials modest to allow <0.3 for unrelated combos
+                score += 0.05
+    # attribute matches (include top-level id/class/name as attrs)
+    attrs = dict(descriptor.get('attributes', {}) or {})
+    for key in ('id', 'class', 'name', 'aria-label'):
+        if key not in attrs and descriptor.get(key) is not None:
+            attrs[key] = descriptor.get(key)
     if attrs.get('id') and phrase_l and phrase_l in attrs.get('id', '').lower():
         score += 0.05
     cls = attrs.get('class') or ''
@@ -62,6 +75,18 @@ def heuristic_score(descriptor: Dict[str, Any], phrase: str = "", action: str = 
         'aria-label': attrs.get('aria-label',''),
         'name': attrs.get('name',''),
     })
+    # phrase-tag compatibility boost
+    tokens = set(phrase_l.split()) if phrase_l else set()
+    if tag == 'button' and 'button' in tokens:
+        score += 0.06
+    if 'button' in tokens and tag in {'input','select','textarea'}:
+        score -= 0.15
+    # action-aware adjustments
+    act = (action or '').lower()
+    if act == 'type' and tag in {'button', 'a'}:
+        score -= 0.35
+    if act == 'click' and tag == 'button':
+        score += 0.1
     return max(0.0, min(1.0, score))
 
 

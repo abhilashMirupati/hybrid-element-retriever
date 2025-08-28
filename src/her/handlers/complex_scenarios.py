@@ -4,7 +4,16 @@ import logging
 import time
 from typing import Any, Dict, List, Optional, Callable
 from dataclasses import dataclass, field
-from playwright.sync_api import Page, ElementHandle, Frame, Error as PlaywrightError
+try:
+    from playwright.sync_api import Page, ElementHandle, Frame, Error as PlaywrightError
+    PLAYWRIGHT_AVAILABLE = True
+except Exception:  # pragma: no cover
+    Page = object  # type: ignore
+    ElementHandle = object  # type: ignore
+    Frame = object  # type: ignore
+    class PlaywrightError(Exception):
+        pass
+    PLAYWRIGHT_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -243,7 +252,16 @@ class DynamicContentHandler:
             wait_between: Wait time between scrolls
         """
         # Get total page height
-        total_height = self.page.evaluate("() => document.body.scrollHeight")
+        try:
+            total_height = self.page.evaluate("() => document.body.scrollHeight")
+        except Exception:
+            total_height = 0
+        try:
+            total_height = int(total_height) if total_height is not None else 0
+        except Exception:
+            total_height = 0
+        if total_height <= 0:
+            total_height = int(viewport_height)
         
         # Scroll through the page
         current_position = 0
@@ -258,9 +276,13 @@ class DynamicContentHandler:
             current_position += scroll_step
             
             # Check if page height increased (new content loaded)
-            new_height = self.page.evaluate("() => document.body.scrollHeight")
-            if new_height > total_height:
-                total_height = new_height
+            try:
+                new_height = self.page.evaluate("() => document.body.scrollHeight")
+                nh = int(new_height) if new_height is not None else total_height
+                if nh > total_height:
+                    total_height = nh
+            except Exception:
+                pass
         
         # Scroll back to top
         self.page.evaluate("window.scrollTo(0, 0)")
@@ -586,32 +608,31 @@ class SPANavigationHandler:
         Returns:
             True if route changed
         """
-        try:
-            initial_url = self.page.url
-            start_time = time.time()
-            
-            while time.time() - start_time < timeout:
-                current_url = self.page.url
-                
-                # Check URL change
+        initial_url = getattr(self.page, 'url', None)
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            try:
+                current_url = getattr(self.page, 'url', None)
                 if current_url != initial_url:
                     self.route_history.append(current_url)
                     logger.info(f"Route changed: {initial_url} -> {current_url}")
                     return True
-                
-                # Check for client-side route changes
-                routes = self.page.evaluate("() => window.__herRoutes || []")
-                if routes and len(routes) > len(self.route_history):
-                    logger.info(f"Client-side route change detected")
-                    return True
-                
+                try:
+                    routes = self.page.evaluate("() => window.__herRoutes || []")
+                    # Only check length when routes is a sequence
+                    if isinstance(routes, (list, tuple)) and len(routes) > len(self.route_history):
+                        logger.info("Client-side route change detected")
+                        return True
+                except Exception:
+                    # Ignore evaluate errors in mocks
+                    pass
                 time.sleep(0.1)
-            
-            return False
-            
-        except Exception as e:
-            logger.error(f"Error detecting route change: {e}")
-            return False
+            except Exception as e:
+                logger.error(f"Error detecting route change: {e}")
+                # Keep waiting despite transient errors
+                time.sleep(0.1)
+                continue
+        return False
     
     def wait_for_spa_navigation(self, timeout: float = 10.0) -> None:
         """Wait for SPA navigation to complete.

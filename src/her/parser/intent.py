@@ -87,7 +87,7 @@ class IntentParser:
             ),
             (re.compile(r"^select\s+(.+?)\s+option$", re.I), "select", None),
             # Checkbox/Radio actions
-            (re.compile(r"^check\s+(.+?)\s*(?:checkbox|box)?$", re.I), "check", None),
+            (re.compile(r"^check\s+(.+?)\s*(?:checkbox|box)$", re.I), "check", None),
             (re.compile(r"^uncheck\s+(.+?)\s*(?:checkbox|box)?$", re.I), "uncheck", None),
             (re.compile(r"^tick\s+(.+?)\s*(?:checkbox|box)?$", re.I), "check", None),
             (re.compile(r"^toggle\s+(.+?)\s*(?:checkbox)?$", re.I), "toggle", None),
@@ -132,7 +132,9 @@ class IntentParser:
                 "assert",
                 "exists",
             ),
+            (re.compile(r"^verify\s+(.+)$", re.I), "assert", None),
             (re.compile(r"^assert\s+(.+)$", re.I), "assert", None),
+            (re.compile(r"^check\s+(.+)$", re.I), "assert", None),
             # Clear action
             (re.compile(r"^clear\s+(.+)$", re.I), "clear", None),
             # Submit action
