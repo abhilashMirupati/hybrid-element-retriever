@@ -1,229 +1,218 @@
-#!/bin/bash
-# Install ONNX models for HER
+```sh
+# scripts/install_models.sh
+#!/usr/bin/env bash
+# Installs and exports required ONNX models for HER, then writes MODEL_INFO.json.
+# Models:
+#   - intfloat/e5-small           (query embeddings; task: sentence-embedding / feature-extraction)
+#   - microsoft/markuplm-base     (element embeddings; task: feature-extraction)
+#
+# Output directory:
+#   repo_root/src/her/models/
+#
+# Requirements (installed automatically if missing):
+#   - python3, pip
+#   - optimum[onnxruntime], transformers, tokenizers, huggingface_hub
+#
+# Exit codes are non-zero on failure to ensure CI catches issues.
+set -euo pipefail
 
-set -e
+# -------- locate repo root & models dir --------
+SCRIPT_DIR="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+REPO_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
+MODELS_DIR="$REPO_ROOT/src/her/models"
+CACHE_DIR="${HER_HF_CACHE_DIR:-$REPO_ROOT/.cache/hf}"
 
-echo "Installing ONNX models for Hybrid Element Retriever..."
+mkdir -p "$MODELS_DIR"
+mkdir -p "$CACHE_DIR"
 
-# Create models directory
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-MODEL_DIR="$SCRIPT_DIR/../src/her/models"
-mkdir -p "$MODEL_DIR"
+# -------- config --------
+E5_ID="intfloat/e5-small"
+E5_TASK="feature-extraction"            # optimum task name for embeddings export
+E5_OUT="$MODELS_DIR/e5-small-onnx"
 
-# Check if Python is available
-if ! command -v python3 &> /dev/null; then
-    echo "Error: Python 3 is required"
+MARKUPLM_ID="microsoft/markuplm-base"
+MARKUPLM_TASK="feature-extraction"
+MARKUPLM_OUT="$MODELS_DIR/markuplm-base-onnx"
+
+MODEL_INFO_PATH="$MODELS_DIR/MODEL_INFO.json"
+
+# Respect offline if set
+HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-0}"
+export TRANSFORMERS_CACHE="$CACHE_DIR"
+export HF_HOME="$CACHE_DIR"
+export HF_HUB_ENABLE_HF_TRANSFER=1
+
+# -------- helpers --------
+need_cmd () { command -v "$1" >/dev/null 2>&1; }
+ensure_python () {
+  if ! need_cmd python3 && ! need_cmd python; then
+    echo "ERROR: python3 is required." >&2
     exit 1
+  fi
+}
+py () { if need_cmd python3; then python3 "$@"; else python "$@"; fi; }
+
+pip_install () {
+  # Install a package if the import fails
+  local mod="$1"; shift
+  local pkg="${1:-$mod}"
+  if ! py - <<PY >/dev/null 2>&1
+import importlib
+import sys
+sys.exit(0 if importlib.util.find_spec("$mod") is not None else 1)
+PY
+  then
+    echo "Installing $pkg ..."
+    py -m pip install --upgrade "$pkg"
+  fi
+}
+
+write_model_info () {
+  # Write MODEL_INFO.json (id + task + exported paths)
+  cat > "$MODEL_INFO_PATH" <<JSON
+{
+  "generated_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "models": [
+    {
+      "name": "e5-small",
+      "hf_id": "$E5_ID",
+      "task": "$E5_TASK",
+      "path": "src/her/models/$(basename "$E5_OUT")"
+    },
+    {
+      "name": "markuplm-base",
+      "hf_id": "$MARKUPLM_ID",
+      "task": "$MARKUPLM_TASK",
+      "path": "src/her/models/$(basename "$MARKUPLM_OUT")"
+    }
+  ]
+}
+JSON
+  echo "Wrote $MODEL_INFO_PATH"
+}
+
+# -------- preflight --------
+ensure_python
+py -m pip --version >/dev/null 2>&1 || { echo "ERROR: pip not available for Python." >&2; exit 1; }
+
+# install optimum + runtime + transformers stack if missing
+pip_install "transformers" "transformers>=4.40.0"
+pip_install "tokenizers" "tokenizers>=0.15.0"
+pip_install "huggingface_hub" "huggingface_hub>=0.22.0"
+pip_install "onnxruntime" "onnxruntime>=1.16.0"
+pip_install "optimum" "optimum[onnxruntime]>=1.17.0"
+
+# Also ensure the CLI entrypoint is present:
+if ! need_cmd optimum-cli; then
+  # Some environments expose CLI as `optimum-cli` after install; rehash PATH
+  hash -r || true
+fi
+if ! need_cmd optimum-cli; then
+  # Fallback shim using python -m optimum.exporters.onnx
+  export OPTIMUM_NO_CLI=1
 fi
 
-# Create Python script to download and export models
-cat > /tmp/export_models.py << 'EOF'
-#!/usr/bin/env python3
-"""Export Hugging Face models to ONNX format."""
+# -------- export function using optimum --------
+export_model () {
+  local HF_ID="$1"
+  local TASK="$2"
+  local OUT_DIR="$3"
 
-import sys
-import os
-import json
-from pathlib import Path
-from datetime import datetime
+  if [ -d "$OUT_DIR" ] && [ -f "$OUT_DIR/model.onnx" ]; then
+    echo "✓ Skipping export for $HF_ID (already exists at $OUT_DIR)"
+    return 0
+  fi
 
-def export_models(model_dir):
-    """Export models to ONNX format."""
-    model_dir = Path(model_dir)
-    model_dir.mkdir(parents=True, exist_ok=True)
-    
-    print("Checking for required packages...")
-    
-    # Check for required packages
-    try:
-        import torch
-        import transformers
-        import onnx
-        import onnxruntime
-    except ImportError as e:
-        print(f"Missing required package: {e}")
-        print("Installing required packages...")
-        import subprocess
-        subprocess.check_call([sys.executable, "-m", "pip", "install", 
-                              "torch", "transformers", "onnx", "onnxruntime", 
-                              "sentencepiece", "protobuf"])
-        import torch
-        import transformers
-        import onnx
-        import onnxruntime
-    
-    from transformers import AutoModel, AutoTokenizer
-    
-    # Model configurations
-    models = [
-        {
-            "name": "e5-small",
-            "model_id": "intfloat/e5-small",
-            "task": "query_embedding",
-            "output": model_dir / "e5-small.onnx",
-            "tokenizer_output": model_dir / "e5-small-tokenizer",
-            "embedding_dim": 384
-        },
-        {
-            "name": "markuplm-base",
-            "model_id": "microsoft/markuplm-base",
-            "task": "element_embedding",
-            "output": model_dir / "markuplm-base.onnx",
-            "tokenizer_output": model_dir / "markuplm-base-tokenizer",
-            "embedding_dim": 768
-        }
-    ]
-    
-    model_info = {
-        "created": datetime.utcnow().isoformat(),
-        "models": {}
-    }
-    
-    for config in models:
-        output_path = config["output"]
-        tokenizer_path = config["tokenizer_output"]
-        
-        print(f"\nProcessing {config['name']}...")
-        
-        # Record model info
-        model_info["models"][config["name"]] = {
-            "huggingface_id": config["model_id"],
-            "task": config["task"],
-            "onnx_path": output_path.name,
-            "tokenizer_path": tokenizer_path.name,
-            "embedding_dim": config["embedding_dim"],
-            "exported": False,
-            "error": None
-        }
-        
-        if output_path.exists() and tokenizer_path.exists():
-            print(f"Model already exists: {output_path}")
-            model_info["models"][config["name"]]["exported"] = True
-            continue
-        
-        print(f"Downloading {config['name']} from {config['model_id']}...")
-        
-        try:
-            # Load model and tokenizer
-            model = AutoModel.from_pretrained(config["model_id"])
-            tokenizer = AutoTokenizer.from_pretrained(config["model_id"])
-            
-            # Save tokenizer
-            print(f"Saving tokenizer to: {tokenizer_path}")
-            tokenizer.save_pretrained(str(tokenizer_path))
-            
-            # Prepare dummy input
-            dummy_text = "This is a sample text for model export"
-            dummy_input = tokenizer(dummy_text, return_tensors="pt", 
-                                   padding=True, truncation=True, max_length=512)
-            
-            # Set model to eval mode
-            model.eval()
-            
-            # Export to ONNX
-            print(f"Exporting to ONNX: {output_path}")
-            
-            # Get the model output for dynamic axes
-            with torch.no_grad():
-                model_output = model(**dummy_input)
-            
-            # Determine output names based on model output
-            if hasattr(model_output, "last_hidden_state"):
-                output_names = ["last_hidden_state"]
-            elif hasattr(model_output, "pooler_output"):
-                output_names = ["pooler_output"]
-            else:
-                output_names = ["output"]
-            
-            torch.onnx.export(
-                model,
-                tuple(dummy_input.values()),
-                str(output_path),
-                input_names=list(dummy_input.keys()),
-                output_names=output_names,
-                dynamic_axes={
-                    "input_ids": {0: "batch_size", 1: "sequence"},
-                    "attention_mask": {0: "batch_size", 1: "sequence"},
-                    output_names[0]: {0: "batch_size"}
-                },
-                opset_version=11,
-                do_constant_folding=True,
-                export_params=True
-            )
-            
-            print(f"Successfully exported: {output_path}")
-            
-            # Verify the model
-            print(f"Verifying ONNX model...")
-            onnx_model = onnx.load(str(output_path))
-            onnx.checker.check_model(onnx_model)
-            
-            # Test with ONNX Runtime
-            session = onnxruntime.InferenceSession(str(output_path))
-            
-            # Prepare inputs for ONNX runtime
-            ort_inputs = {
-                k: v.numpy() for k, v in dummy_input.items()
-                if k in [inp.name for inp in session.get_inputs()]
-            }
-            
-            # Run inference
-            ort_outputs = session.run(None, ort_inputs)
-            print(f"Model verified successfully! Output shape: {ort_outputs[0].shape}")
-            
-            model_info["models"][config["name"]]["exported"] = True
-            
-        except Exception as e:
-            error_msg = str(e)
-            print(f"Warning: Failed to export {config['name']}: {error_msg}")
-            print("The system will use deterministic fallback embeddings.")
-            
-            model_info["models"][config["name"]]["exported"] = False
-            model_info["models"][config["name"]]["error"] = error_msg
-            
-            # Create placeholder files to prevent re-download attempts
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            output_path.touch()
-            tokenizer_path.mkdir(parents=True, exist_ok=True)
-            (tokenizer_path / "tokenizer_config.json").write_text("{}")
-    
-    # Write MODEL_INFO.json
-    model_info_path = model_dir / "MODEL_INFO.json"
-    print(f"\nWriting model info to: {model_info_path}")
-    with open(model_info_path, 'w') as f:
-        json.dump(model_info, f, indent=2)
-    
-    print("\nModel installation complete!")
-    print("Note: If models failed to export, the system will use deterministic fallback embeddings.")
-    
-    # Print summary
-    print("\n" + "="*50)
-    print("SUMMARY")
-    print("="*50)
-    for name, info in model_info["models"].items():
-        status = "✓ Exported" if info["exported"] else "✗ Fallback"
-        print(f"{name}: {status}")
-        if not info["exported"] and info["error"]:
-            print(f"  Error: {info['error'][:100]}...")
+  rm -rf "$OUT_DIR"
+  mkdir -p "$OUT_DIR"
 
-if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        model_dir = sys.argv[1]
-    else:
-        model_dir = Path(__file__).parent.parent / "src" / "her" / "models"
-    
-    export_models(model_dir)
-EOF
+  echo "→ Exporting $HF_ID to ONNX ($TASK) → $OUT_DIR"
+  if [ "${OPTIMUM_NO_CLI:-0}" = "0" ] && need_cmd optimum-cli; then
+    # Use CLI exporter
+    optimum-cli export onnx \
+      --model "$HF_ID" \
+      --task "$TASK" \
+      --cache_dir "$CACHE_DIR" \
+      "$OUT_DIR"
+  else
+    # Use python module fallback exporter
+    py - "$HF_ID" "$TASK" "$OUT_DIR" "$CACHE_DIR" <<'PY'
+import sys, os
+from optimum.exporters.onnx import main as onnx_export_main
 
-# Run the export script
-echo "Exporting models to ONNX format..."
-python3 /tmp/export_models.py "$MODEL_DIR"
+hf_id, task, out_dir, cache_dir = sys.argv[1:5]
+# Build args similar to CLI:
+args = [
+    "export", "onnx",
+    "--model", hf_id,
+    "--task", task,
+    "--cache_dir", cache_dir,
+    out_dir
+]
+onnx_export_main(args)
+PY
+  fi
 
-# Clean up
-rm -f /tmp/export_models.py
+  # Normalize output: ensure a single top-level model.onnx exists
+  # Some exporters create multiple .onnx files; keep main graph as model.onnx if present.
+  if [ -f "$OUT_DIR/model.onnx" ]; then
+    echo "✓ Exported model.onnx at $OUT_DIR"
+  else
+    # try to find a reasonable primary graph
+    CAND="$(find "$OUT_DIR" -maxdepth 1 -type f -name '*.onnx' | head -n1 || true)"
+    if [ -n "$CAND" ]; then
+      mv "$CAND" "$OUT_DIR/model.onnx"
+      echo "✓ Normalized primary ONNX to $OUT_DIR/model.onnx"
+    else
+      echo "ERROR: No ONNX graph produced for $HF_ID in $OUT_DIR" >&2
+      exit 2
+    fi
+  fi
+}
 
-echo "Model installation complete!"
-echo "Models are stored in: $MODEL_DIR"
+# -------- exports --------
+export_model "$E5_ID" "$E5_TASK" "$E5_OUT"
+export_model "$MARKUPLM_ID" "$MARKUPLM_TASK" "$MARKUPLM_OUT"
 
-# Make script executable
-chmod +x "$0"
+# -------- tokenizer/config copy (safety) --------
+copy_assets () {
+  local HF_ID="$1"
+  local OUT_DIR="$2"
+  py - "$HF_ID" "$OUT_DIR" <<'PY'
+import sys, os, shutil
+from transformers import AutoTokenizer, AutoConfig, AutoProcessor
+
+hf_id, out_dir = sys.argv[1:3]
+os.makedirs(out_dir, exist_ok=True)
+
+# Save tokenizer (if available)
+try:
+    tok = AutoTokenizer.from_pretrained(hf_id, use_fast=True)
+    tok.save_pretrained(out_dir)
+except Exception:
+    pass
+
+# Save config
+try:
+    cfg = AutoConfig.from_pretrained(hf_id)
+    cfg.save_pretrained(out_dir)
+except Exception:
+    pass
+
+# Some models use Processor (e.g., Layout/Markup variants)
+try:
+    proc = AutoProcessor.from_pretrained(hf_id)
+    proc.save_pretrained(out_dir)
+except Exception:
+    pass
+PY
+}
+
+copy_assets "$E5_ID" "$E5_OUT"
+copy_assets "$MARKUPLM_ID" "$MARKUPLM_OUT"
+
+# -------- MODEL_INFO.json --------
+write_model_info
+
+echo "✅ Models installed to: $MODELS_DIR"
+```
