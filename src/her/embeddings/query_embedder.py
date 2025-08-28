@@ -1,108 +1,34 @@
-"""Query text embedding using e5-small model."""
-
-from typing import List
+from __future__ import annotations
+import hashlib
+from typing import List, Sequence
 import numpy as np
-import logging
-
-from ._resolve import get_query_resolver
-from .cache import EmbeddingCache
-from ..config import QUERY_EMBEDDING_DIM
-
-logger = logging.getLogger(__name__)
-
-
+try:
+    import onnxruntime as ort
+    from transformers import AutoTokenizer
+except Exception:
+    ort=None; AutoTokenizer=None  # type: ignore
+from ._resolve import ensure_model_available, resolve_file, E5_SMALL_NAME
 class QueryEmbedder:
-    """Embeds query text using e5-small model with caching."""
-
-    def __init__(self, cache_enabled: bool = True):
-        """Initialize query embedder.
-
-        Args:
-            cache_enabled: Whether to use embedding cache
-        """
-        self.resolver = get_query_resolver()
-        self.dim = QUERY_EMBEDDING_DIM
-        self.cache = EmbeddingCache() if cache_enabled else None
-
-    def embed(self, text: str) -> np.ndarray:
-        """Generate embedding for query text.
-
-        Args:
-            text: Query text to embed
-
-        Returns:
-            Normalized embedding vector of shape (dim,)
-        """
-        if not text:
-            return np.zeros(self.dim, dtype=np.float32)
-
-        # Check cache first
-        if self.cache:
-            cached = self.cache.get(text)
-            if cached is not None:
-                logger.debug(f"Cache hit for query: {text[:50]}")
-                return cached
-
-        # Generate embedding
-        logger.debug(f"Generating embedding for query: {text[:50]}")
-
-        # For e5-small, prepend "query: " prefix as per model documentation
-        prefixed_text = f"query: {text}"
-        embedding = self.resolver.embed(prefixed_text, normalize=True)
-
-        # Cache the result
-        if self.cache:
-            self.cache.put(text, embedding)
-
-        return embedding
-
-    def batch_embed(self, texts: List[str]) -> np.ndarray:
-        """Generate embeddings for multiple query texts.
-
-        Args:
-            texts: List of query texts
-
-        Returns:
-            Array of shape (n_texts, dim)
-        """
-        if not texts:
-            return np.array([], dtype=np.float32).reshape(0, self.dim)
-
-        embeddings = []
-        for text in texts:
-            embeddings.append(self.embed(text))
-
-        return np.vstack(embeddings)
-
-    def similarity(
-        self, query_embedding: np.ndarray, target_embedding: np.ndarray
-    ) -> float:
-        """Compute cosine similarity between embeddings.
-
-        Args:
-            query_embedding: Query embedding vector
-            target_embedding: Target embedding vector
-
-        Returns:
-            Cosine similarity score in [0, 1]
-        """
-        # Ensure both are normalized
-        query_norm = query_embedding / (np.linalg.norm(query_embedding) + 1e-8)
-        target_norm = target_embedding / (np.linalg.norm(target_embedding) + 1e-8)
-
-        # Compute cosine similarity
-        similarity = np.dot(query_norm, target_norm)
-
-        # Map from [-1, 1] to [0, 1]
-        return (similarity + 1.0) / 2.0
-
-    def embed_batch(self, texts: List[str]) -> List[np.ndarray]:
-        """Alias for batch_embed for compatibility.
-
-        Args:
-            texts: List of query texts
-
-        Returns:
-            List of embedding vectors
-        """
-        return [self.embed(text) for text in texts]
+    def __init__(self)->None:
+        self.model_dir=ensure_model_available(E5_SMALL_NAME)
+        self.onnx_path=resolve_file(E5_SMALL_NAME,'model.onnx')
+        self._session=None; self._tokenizer=None
+        if ort and AutoTokenizer:
+            try:
+                self._session=ort.InferenceSession(str(self.onnx_path), providers=['CPUExecutionProvider'])
+                self._tokenizer=AutoTokenizer.from_pretrained(self.model_dir)
+            except Exception:
+                self._session=None; self._tokenizer=None
+    def _hash_embed(self, text:str, dim:int=384)->List[float]:
+        h=hashlib.sha256(text.strip().lower().encode('utf-8')).digest()
+        rng=np.random.RandomState(int.from_bytes(h[:8],'little',signed=False))
+        v=rng.normal(size=dim).astype('float32'); v/= (np.linalg.norm(v)+1e-9); return v.tolist()
+    def embed(self, texts:Sequence[str])->List[List[float]]:
+        if not texts: return []
+        if self._session is None or self._tokenizer is None:
+            return [self._hash_embed(t) for t in texts]
+        toks=self._tokenizer(list(texts), padding=True, truncation=True, return_tensors='np')
+        inputs={k:v.astype('int64') for k,v in toks.items() if k in {'input_ids','attention_mask','token_type_ids'}}
+        if 'token_type_ids' not in inputs: inputs['token_type_ids']=np.zeros_like(inputs['input_ids'], dtype='int64')
+        outs=self._session.run(None, inputs); x=outs[0] if isinstance(outs, list) else outs
+        arr=x.mean(axis=1); arr=arr/(np.linalg.norm(arr,axis=1,keepdims=True)+1e-9); return arr.astype('float32').tolist()

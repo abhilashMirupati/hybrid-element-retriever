@@ -1,60 +1,20 @@
 [build-system]
-requires = ["setuptools>=42", "wheel"]
+requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "hybrid-element-retriever"
 version = "0.1.0"
-description = "A hybrid framework for translating natural language steps into robust UI actions"
-authors = [ { name = "Your Name", email = "you@example.com" } ]
+description = "HER: Natural-language to unique, resilient UI locators with verification/self-heal"
 readme = "README.md"
-license = { text = "MIT" }
 requires-python = ">=3.9"
+authors = [{name="HER Maintainers"}]
 dependencies = [
-    "playwright>=1.39.0",
-    "numpy>=1.23.5",
-    "pydantic>=1.10.12",
-]
-
-[project.optional-dependencies]
-ml = [
-    "onnxruntime>=1.15.0",
-    "faiss-cpu>=1.7.3",
-    "transformers>=4.32.0",
-    "tokenizers>=0.13.3",
-    "huggingface_hub>=0.16.4",
-]
-java = [
-    "py4j>=0.10.9.7",
-]
-dev = [
-    "pytest>=7.4.0",
-    "pytest-cov>=4.1.0",
-    "black>=23.7.0",
-    "flake8>=6.1.0",
-    "mypy>=1.5.1",
-]
-all = [
-    "hybrid-element-retriever[ml,java,dev]",
+  "playwright>=1.43",
+  "transformers>=4.40.0",
+  "onnxruntime>=1.16.0",
+  "optimum[onnxruntime]>=1.17.0",
 ]
 
 [project.scripts]
 her = "her.cli:main"
-
-[tool.black]
-line-length = 88
-target-version = ["py310"]
-
-[tool.isort]
-profile = "black"
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-python_files = ["test_*.py"]
-addopts = "-v --tb=short"
-
-[tool.mypy]
-python_version = "3.10"
-warn_return_any = false
-warn_unused_configs = true
-ignore_missing_imports = true
