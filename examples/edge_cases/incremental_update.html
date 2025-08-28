@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Incremental Update Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f0f0f0;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .todo-list {
+            margin: 20px 0;
+        }
+        .todo-item {
+            display: flex;
+            align-items: center;
+            padding: 10px;
+            margin: 5px 0;
+            background: #f9f9f9;
+            border-radius: 5px;
+            transition: all 0.3s;
+        }
+        .todo-item.completed {
+            opacity: 0.6;
+            text-decoration: line-through;
+        }
+        .todo-checkbox {
+            margin-right: 10px;
+        }
+        .todo-text {
+            flex: 1;
+        }
+        .todo-delete {
+            background: #e74c3c;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+        .add-todo-form {
+            display: flex;
+            margin: 20px 0;
+        }
+        .todo-input {
+            flex: 1;
+            padding: 10px;
+            font-size: 16px;
+            border: 2px solid #3498db;
+            border-radius: 5px 0 0 5px;
+        }
+        .add-btn {
+            background: #3498db;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            font-size: 16px;
+            border-radius: 0 5px 5px 0;
+            cursor: pointer;
+        }
+        .add-btn:hover {
+            background: #2980b9;
+        }
+        .stats {
+            display: flex;
+            justify-content: space-around;
+            margin: 20px 0;
+            padding: 15px;
+            background: #ecf0f1;
+            border-radius: 5px;
+        }
+        .stat-item {
+            text-align: center;
+        }
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #2c3e50;
+        }
+        .stat-label {
+            font-size: 12px;
+            color: #7f8c8d;
+            text-transform: uppercase;
+        }
+        #dynamic-content {
+            margin: 20px 0;
+            padding: 15px;
+            background: #ffffcc;
+            border-radius: 5px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Todo List - Incremental Update Test</h1>
+        <p>This page tests incremental DOM updates and partial re-indexing</p>
+
+        <div class="stats">
+            <div class="stat-item">
+                <div class="stat-value" id="total-count">3</div>
+                <div class="stat-label">Total Tasks</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="completed-count">1</div>
+                <div class="stat-label">Completed</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="pending-count">2</div>
+                <div class="stat-label">Pending</div>
+            </div>
+        </div>
+
+        <form class="add-todo-form" id="todo-form">
+            <input 
+                type="text" 
+                class="todo-input" 
+                id="new-todo-input" 
+                placeholder="Add a new task..." 
+                aria-label="New todo input"
+            >
+            <button type="submit" class="add-btn" aria-label="Add new todo">Add Task</button>
+        </form>
+
+        <div class="todo-list" id="todo-list" role="list" aria-label="Todo items">
+            <!-- Initial todos -->
+            <div class="todo-item" data-todo-id="1" role="listitem">
+                <input type="checkbox" class="todo-checkbox" id="todo-1" aria-label="Mark task 1 complete">
+                <span class="todo-text">Review pull requests</span>
+                <button class="todo-delete" aria-label="Delete task 1">Delete</button>
+            </div>
+
+            <div class="todo-item completed" data-todo-id="2" role="listitem">
+                <input type="checkbox" class="todo-checkbox" id="todo-2" checked aria-label="Mark task 2 complete">
+                <span class="todo-text">Write unit tests</span>
+                <button class="todo-delete" aria-label="Delete task 2">Delete</button>
+            </div>
+
+            <div class="todo-item" data-todo-id="3" role="listitem">
+                <input type="checkbox" class="todo-checkbox" id="todo-3" aria-label="Mark task 3 complete">
+                <span class="todo-text">Update documentation</span>
+                <button class="todo-delete" aria-label="Delete task 3">Delete</button>
+            </div>
+        </div>
+
+        <div id="dynamic-content">
+            <h3>Dynamic Content Section</h3>
+            <p>This section will be dynamically shown/hidden to test incremental updates</p>
+            <button id="dynamic-action" aria-label="Perform dynamic action">Dynamic Action</button>
+        </div>
+
+        <button id="show-dynamic" onclick="toggleDynamic()">Show Dynamic Content</button>
+        <button id="add-batch" onclick="addBatchTodos()">Add 5 New Todos</button>
+        <button id="clear-completed" onclick="clearCompleted()">Clear Completed</button>
+    </div>
+
+    <script>
+        let todoCounter = 3;
+        let dynamicVisible = false;
+
+        // Add new todo
+        document.getElementById('todo-form').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const input = document.getElementById('new-todo-input');
+            const text = input.value.trim();
+            
+            if (text) {
+                todoCounter++;
+                const todoList = document.getElementById('todo-list');
+                const newTodo = document.createElement('div');
+                newTodo.className = 'todo-item';
+                newTodo.setAttribute('data-todo-id', todoCounter);
+                newTodo.setAttribute('role', 'listitem');
+                newTodo.innerHTML = `
+                    <input type="checkbox" class="todo-checkbox" id="todo-${todoCounter}" aria-label="Mark task ${todoCounter} complete">
+                    <span class="todo-text">${text}</span>
+                    <button class="todo-delete" aria-label="Delete task ${todoCounter}">Delete</button>
+                `;
+                
+                todoList.appendChild(newTodo);
+                input.value = '';
+                updateStats();
+                
+                console.log('Added new todo:', text, '- This triggers incremental update');
+                
+                // Attach event listeners to new elements
+                attachTodoListeners(newTodo);
+            }
+        });
+
+        // Toggle dynamic content
+        function toggleDynamic() {
+            const dynContent = document.getElementById('dynamic-content');
+            dynamicVisible = !dynamicVisible;
+            dynContent.style.display = dynamicVisible ? 'block' : 'none';
+            document.getElementById('show-dynamic').textContent = 
+                dynamicVisible ? 'Hide Dynamic Content' : 'Show Dynamic Content';
+            
+            console.log('Dynamic content toggled - New elements:', dynamicVisible ? 'added' : 'removed');
+        }
+
+        // Add batch todos
+        function addBatchTodos() {
+            const todoList = document.getElementById('todo-list');
+            const tasks = [
+                'Review architecture',
+                'Optimize performance',
+                'Fix bug #123',
+                'Deploy to staging',
+                'Update dependencies'
+            ];
+            
+            tasks.forEach(task => {
+                todoCounter++;
+                const newTodo = document.createElement('div');
+                newTodo.className = 'todo-item';
+                newTodo.setAttribute('data-todo-id', todoCounter);
+                newTodo.setAttribute('role', 'listitem');
+                newTodo.innerHTML = `
+                    <input type="checkbox" class="todo-checkbox" id="todo-${todoCounter}" aria-label="Mark task ${todoCounter} complete">
+                    <span class="todo-text">${task}</span>
+                    <button class="todo-delete" aria-label="Delete task ${todoCounter}">Delete</button>
+                `;
+                todoList.appendChild(newTodo);
+                attachTodoListeners(newTodo);
+            });
+            
+            updateStats();
+            console.log('Batch added 5 todos - Testing incremental update with multiple elements');
+        }
+
+        // Clear completed todos
+        function clearCompleted() {
+            const completed = document.querySelectorAll('.todo-item.completed');
+            completed.forEach(item => item.remove());
+            updateStats();
+            console.log('Removed completed todos - Elements removed from DOM');
+        }
+
+        // Attach event listeners to todo items
+        function attachTodoListeners(todoItem) {
+            const checkbox = todoItem.querySelector('.todo-checkbox');
+            const deleteBtn = todoItem.querySelector('.todo-delete');
+            
+            checkbox.addEventListener('change', function() {
+                todoItem.classList.toggle('completed', this.checked);
+                updateStats();
+            });
+            
+            deleteBtn.addEventListener('click', function() {
+                todoItem.remove();
+                updateStats();
+                console.log('Todo deleted - Element removed from DOM');
+            });
+        }
+
+        // Update statistics
+        function updateStats() {
+            const total = document.querySelectorAll('.todo-item').length;
+            const completed = document.querySelectorAll('.todo-item.completed').length;
+            const pending = total - completed;
+            
+            document.getElementById('total-count').textContent = total;
+            document.getElementById('completed-count').textContent = completed;
+            document.getElementById('pending-count').textContent = pending;
+        }
+
+        // Initialize listeners for existing todos
+        document.querySelectorAll('.todo-item').forEach(attachTodoListeners);
+        
+        // Log initial state
+        console.log('Initial page loaded with', document.querySelectorAll('.todo-item').length, 'todos');
+    </script>
+</body>
+</html>

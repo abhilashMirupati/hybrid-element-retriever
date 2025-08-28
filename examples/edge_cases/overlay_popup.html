@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Overlay and Popup Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .main-content {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+        }
+        .action-buttons {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin: 30px 0;
+        }
+        .btn {
+            padding: 12px 20px;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .btn-primary {
+            background: #3498db;
+            color: white;
+        }
+        .btn-primary:hover {
+            background: #2980b9;
+        }
+        .btn-success {
+            background: #27ae60;
+            color: white;
+        }
+        .btn-danger {
+            background: #e74c3c;
+            color: white;
+        }
+        
+        /* Cookie Banner */
+        .cookie-banner {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: #2c3e50;
+            color: white;
+            padding: 20px;
+            display: none;
+            z-index: 1000;
+            box-shadow: 0 -2px 10px rgba(0,0,0,0.2);
+        }
+        .cookie-banner.show {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .cookie-text {
+            flex: 1;
+            margin-right: 20px;
+        }
+        .cookie-actions {
+            display: flex;
+            gap: 10px;
+        }
+        
+        /* Modal Overlay */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.7);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 2000;
+        }
+        .modal-overlay.show {
+            display: flex;
+        }
+        .modal {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            max-width: 500px;
+            width: 90%;
+            position: relative;
+        }
+        .modal-close {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: none;
+            border: none;
+            font-size: 24px;
+            cursor: pointer;
+            color: #999;
+        }
+        
+        /* Newsletter Popup */
+        .newsletter-popup {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%) scale(0);
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px;
+            border-radius: 15px;
+            z-index: 3000;
+            transition: transform 0.3s;
+            max-width: 400px;
+            width: 90%;
+        }
+        .newsletter-popup.show {
+            transform: translate(-50%, -50%) scale(1);
+        }
+        
+        /* Notification Toast */
+        .notification-toast {
+            position: fixed;
+            top: 20px;
+            right: -400px;
+            background: #f39c12;
+            color: white;
+            padding: 15px 20px;
+            border-radius: 5px;
+            transition: right 0.3s;
+            z-index: 4000;
+            max-width: 350px;
+        }
+        .notification-toast.show {
+            right: 20px;
+        }
+        
+        /* Full Screen Overlay */
+        .fullscreen-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(255,255,255,0.95);
+            display: none;
+            z-index: 5000;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+        }
+        .fullscreen-overlay.show {
+            display: flex;
+        }
+        
+        /* Target Elements (that get occluded) */
+        .target-section {
+            margin: 30px 0;
+            padding: 20px;
+            background: #ecf0f1;
+            border-radius: 8px;
+        }
+        .important-button {
+            background: #e67e22;
+            color: white;
+            padding: 15px 30px;
+            border: none;
+            border-radius: 5px;
+            font-size: 18px;
+            cursor: pointer;
+        }
+        .form-section {
+            margin: 20px 0;
+        }
+        .form-section input {
+            width: 100%;
+            padding: 10px;
+            margin: 5px 0;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="main-content">
+        <h1>Overlay and Popup Test Page</h1>
+        <p>This page tests various overlay scenarios that can occlude target elements</p>
+
+        <div class="action-buttons">
+            <button class="btn btn-primary" onclick="showCookieBanner()">Show Cookie Banner</button>
+            <button class="btn btn-primary" onclick="showModal()">Show Modal Dialog</button>
+            <button class="btn btn-primary" onclick="showNewsletter()">Show Newsletter Popup</button>
+            <button class="btn btn-primary" onclick="showNotification()">Show Notification</button>
+            <button class="btn btn-primary" onclick="showFullscreen()">Show Fullscreen Overlay</button>
+            <button class="btn btn-danger" onclick="showAllPopups()">Show All Popups!</button>
+        </div>
+
+        <div class="target-section">
+            <h2>Target Elements Section</h2>
+            <p>These elements should be accessible even when popups appear:</p>
+            
+            <button id="target-button-1" class="important-button" aria-label="Important action button">
+                Important Action
+            </button>
+            
+            <div class="form-section">
+                <input type="text" id="target-input" placeholder="Enter text here..." aria-label="Main input field">
+                <button id="submit-button" class="btn btn-success" aria-label="Submit form">Submit</button>
+            </div>
+            
+            <div style="margin-top: 20px;">
+                <select id="target-select" aria-label="Options dropdown">
+                    <option>Option 1</option>
+                    <option>Option 2</option>
+                    <option>Option 3</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="target-section">
+            <h2>Secondary Targets</h2>
+            <button id="target-button-2" class="btn btn-primary" aria-label="Secondary action">
+                Secondary Action
+            </button>
+            <button id="target-button-3" class="btn btn-success" aria-label="Tertiary action">
+                Tertiary Action
+            </button>
+        </div>
+    </div>
+
+    <!-- Cookie Banner -->
+    <div id="cookie-banner" class="cookie-banner" role="dialog" aria-label="Cookie consent">
+        <div class="cookie-text">
+            🍪 We use cookies to enhance your experience. By continuing to visit this site you agree to our use of cookies.
+        </div>
+        <div class="cookie-actions">
+            <button class="btn btn-primary" onclick="acceptCookies()" aria-label="Accept cookies">Accept</button>
+            <button class="btn" onclick="closeCookieBanner()" aria-label="Decline cookies">Decline</button>
+        </div>
+    </div>
+
+    <!-- Modal Overlay -->
+    <div id="modal-overlay" class="modal-overlay" role="dialog" aria-label="Modal dialog">
+        <div class="modal">
+            <button class="modal-close" onclick="closeModal()" aria-label="Close modal">&times;</button>
+            <h2>Important Message</h2>
+            <p>This modal is overlaying the main content. It needs to be closed to access elements behind it.</p>
+            <button class="btn btn-primary" onclick="closeModal()">Got it!</button>
+        </div>
+    </div>
+
+    <!-- Newsletter Popup -->
+    <div id="newsletter-popup" class="newsletter-popup" role="dialog" aria-label="Newsletter subscription">
+        <h3>Subscribe to our Newsletter!</h3>
+        <p>Get the latest updates delivered to your inbox.</p>
+        <input type="email" placeholder="Enter your email" style="width: 100%; padding: 10px; margin: 10px 0;">
+        <button class="btn" style="background: white; color: #764ba2;" onclick="closeNewsletter()">Subscribe</button>
+        <button class="btn" style="background: transparent; border: 1px solid white;" onclick="closeNewsletter()">No thanks</button>
+    </div>
+
+    <!-- Notification Toast -->
+    <div id="notification-toast" class="notification-toast" role="alert">
+        <strong>Hey!</strong> Don't forget to check out our special offers!
+        <button onclick="closeNotification()" style="float: right; background: none; border: none; color: white; cursor: pointer;">✕</button>
+    </div>
+
+    <!-- Fullscreen Overlay -->
+    <div id="fullscreen-overlay" class="fullscreen-overlay" role="dialog" aria-label="Fullscreen message">
+        <h1>⚠️ Important Update</h1>
+        <p>This is a fullscreen overlay that completely covers the page.</p>
+        <button class="btn btn-primary" onclick="closeFullscreen()">Continue to Site</button>
+    </div>
+
+    <script>
+        // Cookie Banner
+        function showCookieBanner() {
+            document.getElementById('cookie-banner').classList.add('show');
+            console.log('Cookie banner shown - may occlude bottom elements');
+        }
+        
+        function closeCookieBanner() {
+            document.getElementById('cookie-banner').classList.remove('show');
+        }
+        
+        function acceptCookies() {
+            closeCookieBanner();
+            console.log('Cookies accepted');
+        }
+        
+        // Modal
+        function showModal() {
+            document.getElementById('modal-overlay').classList.add('show');
+            console.log('Modal shown - overlaying entire page');
+        }
+        
+        function closeModal() {
+            document.getElementById('modal-overlay').classList.remove('show');
+        }
+        
+        // Newsletter
+        function showNewsletter() {
+            document.getElementById('newsletter-popup').classList.add('show');
+            console.log('Newsletter popup shown - center of screen');
+        }
+        
+        function closeNewsletter() {
+            document.getElementById('newsletter-popup').classList.remove('show');
+        }
+        
+        // Notification
+        function showNotification() {
+            document.getElementById('notification-toast').classList.add('show');
+            console.log('Notification shown - top right corner');
+            setTimeout(() => {
+                closeNotification();
+            }, 5000);
+        }
+        
+        function closeNotification() {
+            document.getElementById('notification-toast').classList.remove('show');
+        }
+        
+        // Fullscreen
+        function showFullscreen() {
+            document.getElementById('fullscreen-overlay').classList.add('show');
+            console.log('Fullscreen overlay shown - completely covers page');
+        }
+        
+        function closeFullscreen() {
+            document.getElementById('fullscreen-overlay').classList.remove('show');
+        }
+        
+        // Show all popups (chaos mode)
+        function showAllPopups() {
+            showCookieBanner();
+            setTimeout(() => showModal(), 500);
+            setTimeout(() => showNewsletter(), 1000);
+            setTimeout(() => showNotification(), 1500);
+            console.log('All popups shown - maximum occlusion!');
+        }
+        
+        // Auto-show cookie banner after 2 seconds (simulating real website)
+        setTimeout(() => {
+            showCookieBanner();
+        }, 2000);
+        
+        // Track target button clicks
+        document.getElementById('target-button-1').addEventListener('click', () => {
+            alert('Important action executed successfully!');
+        });
+        
+        document.getElementById('submit-button').addEventListener('click', () => {
+            const value = document.getElementById('target-input').value;
+            alert(`Form submitted with: ${value}`);
+        });
+        
+        // ESC key to close all overlays
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                closeCookieBanner();
+                closeModal();
+                closeNewsletter();
+                closeNotification();
+                closeFullscreen();
+                console.log('All overlays closed with ESC key');
+            }
+        });
+        
+        console.log('Overlay test page loaded - cookie banner will appear in 2 seconds');
+    </script>
+</body>
+</html>
