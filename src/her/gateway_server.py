@@ -2,6 +2,7 @@
 
 import logging
 import sys
+
 try:
     from py4j.java_gateway import JavaGateway, CallbackServerParameters
     from py4j.java_gateway import GatewayParameters
@@ -9,7 +10,11 @@ try:
 except ImportError:
     # Fallback for older py4j versions
     try:
-        from py4j.java_gateway import JavaGateway, CallbackServerParameters, GatewayParameters
+        from py4j.java_gateway import (
+            JavaGateway,
+            CallbackServerParameters,
+            GatewayParameters,
+        )
         from py4j import GatewayServer
     except ImportError:
         # Mock for testing when py4j is not available

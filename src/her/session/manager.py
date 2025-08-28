@@ -340,11 +340,11 @@ class SessionManager:
                 // Track the original methods
                 const originalPushState = history.pushState;
                 const originalReplaceState = history.replaceState;
-                
+
                 // Flag to track if we should re-index
                 window.__herNeedsReindex = false;
                 window.__herLastUrl = window.location.href;
-                
+
                 // Override pushState
                 history.pushState = function() {
                     originalPushState.apply(history, arguments);
@@ -352,7 +352,7 @@ class SessionManager:
                     window.__herLastUrl = window.location.href;
                     window.dispatchEvent(new Event('__herRouteChange'));
                 };
-                
+
                 // Override replaceState
                 history.replaceState = function() {
                     originalReplaceState.apply(history, arguments);
@@ -360,21 +360,21 @@ class SessionManager:
                     window.__herLastUrl = window.location.href;
                     window.dispatchEvent(new Event('__herRouteChange'));
                 };
-                
+
                 // Listen for popstate (back/forward)
                 window.addEventListener('popstate', () => {
                     window.__herNeedsReindex = true;
                     window.__herLastUrl = window.location.href;
                     window.dispatchEvent(new Event('__herRouteChange'));
                 });
-                
+
                 // Also track hash changes
                 window.addEventListener('hashchange', () => {
                     window.__herNeedsReindex = true;
                     window.__herLastUrl = window.location.href;
                     window.dispatchEvent(new Event('__herRouteChange'));
                 });
-                
+
                 console.log('HER: SPA tracking initialized');
             })();
             """

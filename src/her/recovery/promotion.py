@@ -94,7 +94,7 @@ class PromotionStore:
 
         cursor.execute(
             """
-            SELECT locator, context, success_count, failure_count, 
+            SELECT locator, context, success_count, failure_count,
                    score, last_used, metadata
             FROM promotions
         """
@@ -283,7 +283,7 @@ class PromotionStore:
 
         cursor.execute(
             """
-            INSERT OR REPLACE INTO promotions 
+            INSERT OR REPLACE INTO promotions
             (locator, context, success_count, failure_count, score, last_used, metadata)
             VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
@@ -387,14 +387,14 @@ class PromotionStore:
             ),
             "top_performers": self.get_best_locators(top_k=3),
         }
-    
+
     def get_boost(self, locator: str, context: str) -> float:
         """Get promotion boost for a locator.
-        
+
         Args:
             locator: The locator to check
             context: Context identifier
-            
+
         Returns:
             Boost value between 0.0 and 1.0
         """
@@ -404,17 +404,17 @@ class PromotionStore:
                 SELECT success_count FROM promotions
                 WHERE locator = ? AND context = ?
                 """,
-                (locator, context)
+                (locator, context),
             )
             row = cursor.fetchone()
             if row:
                 # Scale boost based on success count (max 1.0)
                 return min(row[0] * 0.1, 1.0)
             return 0.0
-    
+
     def record_success(self, locator: str, context: str):
         """Record a successful locator use.
-        
+
         Args:
             locator: The locator string
             context: The context (e.g., URL or page identifier)

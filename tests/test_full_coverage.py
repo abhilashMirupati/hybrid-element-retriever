@@ -1,7 +1,7 @@
 # PLACE THIS FILE AT: tests/test_full_coverage.py
 
 import pytest
-from src.her.rank.fusion import RankFusion
+from her.rank.fusion import RankFusion
 
 
 def test_rankfusion():
