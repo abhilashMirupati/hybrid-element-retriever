@@ -594,7 +594,8 @@ class EnhancedSelfHeal:
                     result["success"] = True
                     return result
             except Exception:
-                pass
+                # Continue to fallbacks if direct interaction fails
+                result["attempts"] += 1
         
         # Get fallback locators
         fallbacks = self.get_fallback_locators(primary_locator)

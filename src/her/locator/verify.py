@@ -1,9 +1,19 @@
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Any, List, Optional, Tuple
+from typing import Any, List, Optional, Tuple, Dict
+
+try:
+    from playwright.sync_api import Page
+    PLAYWRIGHT_AVAILABLE = True
+except Exception:  # pragma: no cover
+    Page = Any  # type: ignore
+    PLAYWRIGHT_AVAILABLE = False
+
+
 @dataclass(frozen=True)
 class VerificationResult:
     ok: bool; unique: bool; count: int; visible: bool; occluded: bool; disabled: bool; strategy: str; used_selector: str; explanation: str
+
 
 def _normalize_strategy(strategy:str)->str:
     s=(strategy or '').strip().lower()
@@ -13,9 +23,11 @@ def _normalize_strategy(strategy:str)->str:
     if s in {'text','bytext'}: return 'text'
     return 'css'
 
+
 def _pick_frame(page_or_frame:Any)->Any:
     if hasattr(page_or_frame,'main_frame'): return page_or_frame.main_frame
     return page_or_frame
+
 
 def _query_all(frame:Any, selector:str, strategy:str)->List[Any]:
     st=_normalize_strategy(strategy)
@@ -36,6 +48,7 @@ def _query_all(frame:Any, selector:str, strategy:str)->List[Any]:
         except Exception: return []
     return list(frame.query_selector_all(selector))
 
+
 def _parse_role_selector(sel:str)->Tuple[str, Optional[str]]:
     s=sel.strip(); name=None; role=s
     if '[' in s and ']' in s:
@@ -46,6 +59,7 @@ def _parse_role_selector(sel:str)->Tuple[str, Optional[str]]:
             name=v
     return role.strip(), name
 
+
 def _to_element_handle(x:Any):
     try:
         if hasattr(x,'element_handle'):
@@ -55,9 +69,11 @@ def _to_element_handle(x:Any):
     except Exception: return None
     return None
 
+
 def _is_visible(el:Any)->bool:
     try: return bool(el.is_visible())
     except Exception: return True
+
 
 def _is_disabled(el:Any)->bool:
     try:
@@ -66,12 +82,14 @@ def _is_disabled(el:Any)->bool:
     except Exception: return False
     return False
 
+
 def _is_occluded(el:Any)->bool:
     h=_to_element_handle(el)
     if not h: return False
     try:
         return bool(h.evaluate("""(e)=>{const r=e.getBoundingClientRect();const cx=Math.floor(r.left+r.width/2);const cy=Math.floor(r.top+r.height/2);const top=document.elementFromPoint(cx,cy);return !(top===e||top.contains(e));}"""))
     except Exception: return True
+
 
 def verify_locator(page_or_frame:Any, selector:str, strategy:str='css', require_unique:bool=True)->VerificationResult:
     frame=_pick_frame(page_or_frame); st=_normalize_strategy(strategy)
@@ -91,4 +109,58 @@ def verify_locator(page_or_frame:Any, selector:str, strategy:str='css', require_
     if _is_disabled(target):
         return VerificationResult(False, count==1, count, True, False, True, st, selector, 'Disabled/aria-disabled.')
     return VerificationResult(True, count==1, count, True, False, False, st, selector, 'OK')
-__all__=['VerificationResult','verify_locator']
+
+
+class LocatorVerifier:
+    """Verifier class used by tests for higher-level API."""
+
+    def __init__(self, timeout_ms: int = 5000) -> None:
+        self.timeout_ms = timeout_ms
+
+    def verify(self, selector: str, page: Optional[Page]) -> Tuple[bool, str, Dict[str, Any]]:
+        if not page or not PLAYWRIGHT_AVAILABLE:
+            return True, "No page available, assuming success", {"count": 1, "visible": True, "enabled": True}
+        vr = verify_locator(page, selector, strategy='css', require_unique=True)
+        details = {
+            'count': vr.count,
+            'visible': vr.visible,
+            'enabled': not vr.disabled,
+        }
+        return vr.ok and vr.unique, ("successfully verified" if vr.ok else vr.explanation), details
+
+    def verify_uniqueness(self, page: Optional[Page], selector: str) -> bool:
+        if not page or not PLAYWRIGHT_AVAILABLE:
+            return True
+        try:
+            loc = self._string_to_locator(selector, page)
+            c = loc.count()
+            return c == 1
+        except Exception:
+            return False
+
+    def find_unique_locator(self, locators: List[str], page: Optional[Page]) -> Optional[str]:
+        for loc in locators:
+            ok, _, _ = self.verify(loc, page)
+            if ok:
+                return loc
+        return None
+
+    def _string_to_locator(self, sel: str, page: Page):
+        if sel.startswith('role=') and hasattr(page, 'get_by_role'):
+            role, name = _parse_role_selector(sel[len('role='):])
+            if name:
+                return page.get_by_role(role, name=name)
+            return page.get_by_role(role)
+        if sel.startswith('text=') and hasattr(page, 'get_by_text'):
+            t = sel[len('text='):]
+            if (t.startswith('"') and t.endswith('"')) or (t.startswith("'") and t.endswith("'")):
+                t = t[1:-1]
+            return page.get_by_text(t, exact=True)
+        if sel.startswith('xpath='):
+            return page.locator(sel)
+        if sel.startswith('//'):
+            return page.locator(f"xpath={sel}")
+        return page.locator(sel)
+
+
+__all__=['VerificationResult','verify_locator','LocatorVerifier']

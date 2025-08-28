@@ -1,5 +1,29 @@
 """Descriptors package for element description and merging."""
 
 from .merge import merge_dom_ax
+from typing import Dict, Any
 
-__all__ = ["merge_dom_ax"]
+
+def normalize_descriptor(node: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize a raw node dict to a standard descriptor shape for tests."""
+    out = {}
+    out['tag'] = (node.get('tag') or node.get('tagName') or node.get('nodeName') or '').lower()
+    attrs = node.get('attributes') or {}
+    if isinstance(attrs, list):
+        # Convert [name,value,...] to dict
+        attrs_dict = {}
+        for i in range(0, len(attrs), 2):
+            if i+1 < len(attrs):
+                attrs_dict[str(attrs[i])] = attrs[i+1]
+        attrs = attrs_dict
+    out['attributes'] = attrs
+    out['id'] = attrs.get('id','') if isinstance(attrs, dict) else ''
+    classes = attrs.get('class','') if isinstance(attrs, dict) else ''
+    out['classes'] = classes.split() if isinstance(classes, str) else []
+    out['text'] = node.get('text','') or node.get('nodeValue','') or ''
+    out['type'] = attrs.get('type','') if isinstance(attrs, dict) else ''
+    out['placeholder'] = attrs.get('placeholder','') if isinstance(attrs, dict) else ''
+    return out
+
+
+__all__ = ["merge_dom_ax", "normalize_descriptor"]

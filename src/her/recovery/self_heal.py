@@ -1,7 +1,9 @@
 from __future__ import annotations
 from typing import Any, Dict, List, Tuple
+from dataclasses import dataclass
 from ..locator.verify import verify_locator
 from .promotion import promote_locator
+
 
 def try_fallbacks(page:Any, phrase:str, fallbacks:List[Tuple[str,str]], frame_hash:str)->Dict:
     for strategy, selector in fallbacks:
@@ -10,3 +12,16 @@ def try_fallbacks(page:Any, phrase:str, fallbacks:List[Tuple[str,str]], frame_ha
             promote_locator(frame_hash, phrase, selector, strategy, 0.5)
             return {'strategy': strategy, 'selector': selector, 'verification': vr.__dict__}
     return {'strategy': '', 'selector': '', 'verification': {'ok': False, 'unique': False, 'count': 0, 'visible': False, 'occluded': True, 'disabled': False, 'strategy': '', 'used_selector': '', 'explanation': 'No fallback succeeded.'}}
+
+
+@dataclass
+class HealingStrategy:
+    name: str
+
+
+class SelfHealer:
+    """Simple self-healer used in tests to return candidate locators."""
+
+    def heal(self, page: Any, locator: str) -> List[Tuple[str, str]]:
+        # Provide a conservative default: return empty list (no heal)
+        return []

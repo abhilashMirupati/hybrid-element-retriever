@@ -58,6 +58,7 @@ class SessionManager:
         self.index_interval = timedelta(seconds=index_interval_seconds)
         self.element_embedder = ElementEmbedder()
         self._page_to_session: Dict[Any, str] = {}
+        self._last_snapshot: Dict[str, Any] = {}
 
     def create_session(
         self,
@@ -205,6 +206,8 @@ class SessionManager:
 
         # Capture snapshot
         descriptors, dom_hash = capture_snapshot(page, session.frame_path)
+        # Save snapshot for external inspection
+        self._last_snapshot[session_id] = {"descriptors": descriptors, "dom_hash": dom_hash}
 
         # Update session
         session.element_descriptors = descriptors
@@ -230,6 +233,26 @@ class SessionManager:
         )
 
         return descriptors, dom_hash
+
+    # ---- Helpers for tests ----
+    def get_current_snapshot(self) -> Optional[Dict[str, Any]]:
+        """Return last captured snapshot for any session (single session use)."""
+        if not self.sessions:
+            return None
+        # Return snapshot of the first/only session
+        sid = next(iter(self.sessions.keys()))
+        return self._last_snapshot.get(sid)
+
+    def needs_reindex(self, session_id: str) -> bool:
+        """Compatibility helper used in tests to indicate DOM changed."""
+        session = self.sessions.get(session_id)
+        if not session:
+            return True
+        # Compare stored dom_hash vs snapshot dom_hash
+        snap = self._last_snapshot.get(session_id)
+        if not snap:
+            return True
+        return bool(detect_dom_change(session.dom_hash or '', snap.get('dom_hash','') or ''))
 
     def trigger_reindex_on_failure(
         self,

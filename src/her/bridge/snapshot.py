@@ -8,9 +8,8 @@ from typing import Any, Dict, List, Tuple, Optional
 logger = logging.getLogger(__name__)
 
 
-def _sha1(s: str) -> str:
-    """Generate SHA1 hash of a string."""
-    return hashlib.sha1(s.encode('utf-8')).hexdigest()
+def _sha256(s: str) -> str:
+    return hashlib.sha256(s.encode('utf-8')).hexdigest()
 
 
 def get_flat_snapshot(page: Any) -> Dict:
@@ -49,7 +48,7 @@ def get_flat_snapshot(page: Any) -> Dict:
                     ax_nodes = []
             
             html = fr.content()
-            dom_hash = _sha1(html)
+            dom_hash = _sha256(html)
             
             frames.append({
                 'frame_id': getattr(fr, 'name', '') if isinstance(getattr(fr, 'name', None), str) else getattr(fr, 'name', ''),
@@ -90,7 +89,7 @@ def capture_snapshot(page: Any, frame_path: Optional[str] = None) -> Tuple[List[
         
         # Get HTML content for hash
         html = frame.content()
-        dom_hash = _sha1(html)
+        dom_hash = _sha256(html)
         
         # Try to get CDP session for detailed capture
         descriptors = []
@@ -122,6 +121,25 @@ def capture_snapshot(page: Any, frame_path: Optional[str] = None) -> Tuple[List[
     except Exception as e:
         logger.error(f"Failed to capture snapshot: {e}")
         return [], ""
+
+
+def compute_dom_hash(descriptors: List[Dict[str, Any]]) -> str:
+    """Compute a stable hash from a list of descriptors for tests."""
+    import json as _json
+    try:
+        data = _json.dumps([{k: v for k, v in d.items() if k in ('tag','id','classes','text','role')} for d in descriptors], sort_keys=True)
+    except Exception:
+        data = str(descriptors)
+    return _sha256(data)
+
+
+def merge_dom_and_ax(dom_nodes: List[Dict[str, Any]], ax_nodes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Compat wrapper used in tests mapping to descriptors.merge.merge_dom_ax."""
+    try:
+        from ..descriptors.merge import merge_dom_ax
+        return merge_dom_ax(dom_nodes, ax_nodes)
+    except Exception:
+        return []
 
 
 def detect_dom_change(old_hash: str, new_hash: str) -> bool:
@@ -215,4 +233,4 @@ def _fallback_capture(frame: Any) -> List[Dict]:
     return descriptors
 
 
-__all__ = ["get_flat_snapshot", "capture_snapshot", "detect_dom_change"]
+__all__ = ["get_flat_snapshot", "capture_snapshot", "detect_dom_change", "compute_dom_hash", "merge_dom_and_ax"]

@@ -1,10 +1,96 @@
 from __future__ import annotations
-from typing import List, Dict
-ALPHA=1.0; BETA=0.5; GAMMA=0.2
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Dict, List, Tuple, Optional
+import json
 
-def fuse(cands:List[Dict])->List[Dict]:
-    out=[]
+ALPHA_DEFAULT=1.0; BETA_DEFAULT=0.5; GAMMA_DEFAULT=0.2
+
+
+@dataclass
+class FusionConfig:
+    alpha: float = ALPHA_DEFAULT
+    beta: float = BETA_DEFAULT
+    gamma: float = GAMMA_DEFAULT
+
+
+class RankFusion:
+    def __init__(self, config: Optional[FusionConfig] = None, promotion_store_path: Optional[Path] = None) -> None:
+        self.config = config or FusionConfig()
+        self.promotion_store_path = promotion_store_path
+        self.promotions: Dict[str, float] = {}
+        if promotion_store_path:
+            self._load_promotions()
+
+    # ---- promotion ----
+    def _load_promotions(self) -> None:
+        p = self.promotion_store_path
+        if p and Path(p).is_file():
+            try:
+                self.promotions = json.loads(Path(p).read_text(encoding='utf-8'))
+            except Exception:
+                self.promotions = {}
+
+    def _save_promotions(self) -> None:
+        p = self.promotion_store_path
+        if p:
+            try:
+                Path(p).write_text(json.dumps(self.promotions), encoding='utf-8')
+            except Exception:
+                pass
+
+    def _get_promotion_key(self, descriptor: Dict[str, Any], context: str) -> str:
+        # Prefer stable identifiers
+        bid = descriptor.get('backendNodeId') or descriptor.get('id') or descriptor.get('xpath') or descriptor.get('selector') or 'unknown'
+        return f"{context}|{bid}"
+
+    def promote(self, descriptor: Dict[str, Any], context: str, boost: float = 0.1) -> None:
+        k = self._get_promotion_key(descriptor, context)
+        self.promotions[k] = float(self.promotions.get(k, 0.0) + boost)
+        self._save_promotions()
+
+    def demote(self, descriptor: Dict[str, Any], context: str, penalty: float = 0.1) -> None:
+        k = self._get_promotion_key(descriptor, context)
+        self.promotions[k] = max(0.0, float(self.promotions.get(k, 0.0) - penalty))
+        self._save_promotions()
+
+    # ---- fusion ----
+    def fuse(self, semantic_scores: List[Tuple[Dict[str, Any], float]], heuristic_scores: List[Tuple[Dict[str, Any], float]], context: str = 'default', top_k: Optional[int] = None) -> List[Tuple[Dict[str, Any], float, Dict[str, Any]]]:
+        # Create lookup maps
+        sem = {id(desc): (desc, s) for desc, s in semantic_scores}
+        heu = {id(desc): (desc, s) for desc, s in heuristic_scores}
+
+        # Combine keys
+        keys = set(sem.keys()) | set(heu.keys())
+        out: List[Tuple[Dict[str, Any], float, Dict[str, Any]]] = []
+        for k in keys:
+            d = sem.get(k, (None, 0.0))[0] or heu.get(k, (None, 0.0))[0]
+            s_sem = float(sem.get(k, (None, 0.0))[1])
+            s_heu = float(heu.get(k, (None, 0.0))[1])
+            promo = float(self.promotions.get(self._get_promotion_key(d, context), 0.0))
+            fused = self.config.alpha * s_sem + self.config.beta * s_heu + self.config.gamma * promo
+            reasons = {
+                'semantic_score': s_sem,
+                'heuristic_score': s_heu,
+                'promotion_score': promo,
+                'fused_score': fused,
+                'explanation': 'weighted_sum'
+            }
+            out.append((d, fused, reasons))
+        out.sort(key=lambda t: t[1], reverse=True)
+        return out[:top_k] if top_k else out
+
+    def rank_candidates(self, candidates: List[Tuple[Dict[str, Any], float, float]]) -> List[Tuple[Dict[str, Any], float, Dict[str, Any]]]:
+        semantic_scores = [(d, s_sem) for d, s_sem, _ in candidates]
+        heuristic_scores = [(d, s_heu) for d, _, s_heu in candidates]
+        return self.fuse(semantic_scores, heuristic_scores, context='default')
+
+
+def fuse(cands: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Backward-compatible helper used in older code paths."""
+    out = []
     for c in cands:
-        s=ALPHA*float(c.get('semantic',0.0))+BETA*float(c.get('css',0.0))+GAMMA*float(c.get('promotion',0.0))
-        x=dict(c); x['score']=s; out.append(x)
-    out.sort(key=lambda d:d['score'], reverse=True); return out
+        s = ALPHA_DEFAULT * float(c.get('semantic', 0.0)) + BETA_DEFAULT * float(c.get('css', 0.0)) + GAMMA_DEFAULT * float(c.get('promotion', 0.0))
+        x = dict(c); x['score'] = s; out.append(x)
+    out.sort(key=lambda d: d['score'], reverse=True)
+    return out
