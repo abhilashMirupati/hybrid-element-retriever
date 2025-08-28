@@ -570,7 +570,8 @@ class EnhancedSelfHealer:
                 alternatives = strategy.apply(primary_locator)
                 fallbacks.extend(alternatives)
             except Exception:
-                pass
+                # Alternative generation failed, continue with other methods
+                continue
 
         # Remove duplicates while preserving order
         seen = set()

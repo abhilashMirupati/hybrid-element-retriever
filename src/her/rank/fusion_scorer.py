@@ -400,7 +400,8 @@ class FusionScorer:
             if opacity_val < 0.1:
                 return opacity_val
         except Exception:
-            pass
+            # Element might not have computed styles yet
+            return 1.0
 
         # Check if occluded
         if element.get("occluded", False):
@@ -435,8 +436,9 @@ class FusionScorer:
                 tabindex = int(attributes["tabindex"])
                 if tabindex >= 0:
                     score += 0.2
-            except:
-                pass
+            except Exception:
+                # Parent element might not be available
+                continue
 
         return min(1.0, score)
 
