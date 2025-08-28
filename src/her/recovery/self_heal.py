@@ -31,7 +31,8 @@ class SelfHealer:
         self.healing_history: List[Tuple[str, str]] = []
 
     def _relax_exact_match(self, sel: str) -> str:
-        return sel.replace("text()='", "contains(text(),' ")
+        # Remove extra space after comma to match tests
+        return sel.replace("text()='", "contains(text(),'")
 
     def _remove_index(self, sel: str) -> str:
         import re
