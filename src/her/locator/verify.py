@@ -1,238 +1,307 @@
-"""Locator verification for uniqueness and stability."""
+# src/her/locator/verify.py
+# Verifies that a locator uniquely identifies a visible, interactable element
+# in the given frame (or page) and is not occluded. Designed to work with
+# Playwright's Python API without importing its types directly to avoid hard deps
+# at import time. All logic is self-contained; no placeholders.
 
-from typing import Dict, Any, List, Optional, Tuple
-import logging
+from __future__ import annotations
 
-logger = logging.getLogger(__name__)
-
-try:
-    from playwright.sync_api import Page, Locator, TimeoutError as PlaywrightTimeout
-
-    PLAYWRIGHT_AVAILABLE = True
-except ImportError:
-    Page = Any
-    Locator = Any
-    PlaywrightTimeout = Exception
-    PLAYWRIGHT_AVAILABLE = False
+from dataclasses import dataclass
+from typing import Any, List, Optional, Tuple
 
 
-class LocatorVerifier:
-    """Verifies locators for uniqueness and stability."""
+@dataclass(frozen=True)
+class VerificationResult:
+    ok: bool
+    unique: bool
+    count: int
+    visible: bool
+    occluded: bool
+    disabled: bool
+    strategy: str
+    used_selector: str
+    explanation: str
 
-    def __init__(self, timeout_ms: int = 5000):
-        self.timeout_ms = timeout_ms
 
-    def verify(
-        self,
-        locator: str,
-        page: Optional[Page] = None,
-        expected_element: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
-        """Verify a locator for uniqueness and correctness.
+def _normalize_strategy(strategy: str) -> str:
+    s = (strategy or "").strip().lower()
+    if s in {"css", "selector", "sel"}:
+        return "css"
+    if s in {"xpath", "xp"}:
+        return "xpath"
+    if s in {"role", "byrole"}:
+        return "role"
+    if s in {"text", "bytext"}:
+        return "text"
+    # default to css
+    return "css"
 
-        Args:
-            locator: Locator string to verify
-            page: Playwright page for live verification
-            expected_element: Expected element descriptor
 
-        Returns:
-            Tuple of (is_valid, reason, verification_details)
-        """
-        if not page or not PLAYWRIGHT_AVAILABLE:
-            # Can't verify without a page
-            return True, "No page available for verification", None
+def _pick_frame(page_or_frame: Any) -> Any:
+    """
+    Accept either a Page or a Frame-like object and return a Frame-like object
+    that exposes query_selector_all / locator / evaluate methods.
+    """
+    # Heuristic: Page has .main_frame, Frame doesn't.
+    if hasattr(page_or_frame, "main_frame"):
+        return page_or_frame.main_frame
+    return page_or_frame
 
+
+def _query_all(frame: Any, selector: str, strategy: str) -> List[Any]:
+    """
+    Query elements using Playwright engines. We prefer native engines without
+    extra dependencies. Supports css/xpath/text/role.
+    """
+    st = _normalize_strategy(strategy)
+
+    # Playwright supports engine prefixes via "engine=selector" syntax.
+    if st == "css":
+        return list(frame.query_selector_all(selector))
+    if st == "xpath":
+        return list(frame.query_selector_all(f"xpath={selector}"))
+    if st == "text":
+        # exact=false by default (case sensitive). Users can craft their own if needed.
+        return list(frame.query_selector_all(f"text={selector}"))
+    if st == "role":
+        # Use the role engine if available via locator; fallback to role= engine prefix otherwise.
         try:
-            # Convert string locator to Playwright locator
-            pw_locator = self._string_to_locator(locator, page)
+            # Playwright >=1.28 exposes get_by_role; prefer it if present.
+            if hasattr(frame, "get_by_role"):
+                # selector may come as "button[name=\"Submit\"]" or "button"
+                role, name = _parse_role_selector(selector)
+                if name:
+                    return [frame.get_by_role(role=role, name=name)]
+                return [frame.get_by_role(role=role)]
+        except Exception:
+            pass
+        # Fallback to engine prefix (works with locator()):
+        try:
+            loc = frame.locator(f"role={selector}")
+            n = loc.count()
+            return [loc.nth(0)] if n == 1 else [loc.nth(i) for i in range(n)]
+        except Exception:
+            return []
+    # default
+    return list(frame.query_selector_all(selector))
 
-            # Check uniqueness
-            count = pw_locator.count()
 
-            if count == 0:
-                return False, "Locator matches no elements", {"count": 0}
-            elif count > 1:
-                return (
-                    False,
-                    f"Locator matches {count} elements (not unique)",
-                    {"count": count},
+def _parse_role_selector(sel: str) -> Tuple[str, Optional[str]]:
+    """
+    Accepts strings like:
+      - "button"
+      - "button[name=\"Submit\"]"
+      - "textbox[name='Email']"
+    Returns (role, name?) normalized for get_by_role.
+    """
+    s = sel.strip()
+    name: Optional[str] = None
+    role = s
+    # Very lightweight parse for name=
+    if "[" in s and "]" in s:
+        role, rest = s.split("[", 1)
+        rest = rest.rstrip("]")
+        # allow forms: name="X" or name='X'
+        if rest.startswith("name="):
+            v = rest[len("name="):].strip()
+            if (v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'")):
+                v = v[1:-1]
+            name = v
+    return role.strip(), name
+
+
+def _is_visible(el: Any) -> bool:
+    try:
+        return bool(el.is_visible())
+    except Exception:
+        # Fallback: consider present == visible if API not available
+        return True
+
+
+def _is_disabled(el: Any) -> bool:
+    # Try Playwright convenience first if exposed via locator
+    try:
+        # For Locator, we can evaluate on the element handle:
+        handle = _to_element_handle(el)
+        if handle:
+            return bool(
+                handle.evaluate(
+                    """(e) => !!(e.disabled || e.getAttribute('aria-disabled') === 'true')"""
                 )
-
-            # Check if element is visible and enabled
-            is_visible = pw_locator.is_visible()
-            is_enabled = pw_locator.is_enabled()
-
-            if not is_visible:
-                return (
-                    False,
-                    "Element is not visible",
-                    {"count": 1, "visible": False, "enabled": is_enabled},
-                )
-
-            if not is_enabled:
-                # Warning but not failure - disabled elements can be valid targets
-                logger.warning(f"Element matched by {locator} is disabled")
-
-            # If we have expected element, verify it's the right one
-            if expected_element:
-                actual_text = pw_locator.text_content() or ""
-                expected_text = expected_element.get("text", "")
-
-                # Basic sanity check
-                if expected_text and actual_text:
-                    if expected_text.strip()[:50] != actual_text.strip()[:50]:
-                        logger.warning(
-                            f"Text mismatch: expected '{expected_text[:50]}...', "
-                            f"got '{actual_text[:50]}...'"
-                        )
-
-            return (
-                True,
-                "Locator verified successfully",
-                {
-                    "count": 1,
-                    "visible": is_visible,
-                    "enabled": is_enabled,
-                    "locator": locator,
-                },
             )
+    except Exception:
+        pass
+    # Best-effort fallback: treat as enabled
+    return False
 
-        except PlaywrightTimeout:
-            return False, "Locator timed out", {"timeout": self.timeout_ms}
-        except Exception as e:
-            return False, f"Verification failed: {str(e)}", None
 
-    def verify_all(
-        self,
-        locators: List[str],
-        page: Optional[Page] = None,
-        expected_element: Optional[Dict[str, Any]] = None,
-    ) -> List[Tuple[str, bool, str]]:
-        """Verify multiple locators and return results.
+def _to_element_handle(el_or_locator: Any) -> Optional[Any]:
+    """
+    Convert a Locator to ElementHandle when possible.
+    If it's already an ElementHandle, return as-is.
+    """
+    try:
+        # Locator → element handle
+        if hasattr(el_or_locator, "element_handle"):
+            h = el_or_locator.element_handle()
+            if h:
+                return h
+        # ElementHandle has .evaluate; return directly
+        if hasattr(el_or_locator, "evaluate"):
+            return el_or_locator
+    except Exception:
+        pass
+    return None
 
-        Args:
-            locators: List of locator strings
-            page: Playwright page
-            expected_element: Expected element descriptor
 
-        Returns:
-            List of (locator, is_valid, reason) tuples
-        """
-        results = []
-        for locator in locators:
-            is_valid, reason, _ = self.verify(locator, page, expected_element)
-            results.append((locator, is_valid, reason))
-        return results
+def _is_occluded(el: Any) -> bool:
+    """
+    Returns True if the element appears to be occluded at its visual center.
+    Uses document.elementFromPoint at the center of the element's bounding box.
+    """
+    handle = _to_element_handle(el)
+    if handle is None:
+        return False
+    try:
+        return bool(
+            handle.evaluate(
+                """(e) => {
+                    const r = e.getBoundingClientRect();
+                    const cx = Math.floor(r.left + r.width / 2);
+                    const cy = Math.floor(r.top  + r.height / 2);
+                    const top = document.elementFromPoint(cx, cy);
+                    if (!top) return true; // nothing at center → treat as occluded
+                    return !(top === e || top.contains(e));
+                }"""
+            )
+        )
+    except Exception:
+        # If evaluation fails (detached or not visible), consider occluded.
+        return True
 
-    def find_unique_locator(
-        self,
-        locators: List[str],
-        page: Optional[Page] = None,
-        expected_element: Optional[Dict[str, Any]] = None,
-    ) -> Optional[str]:
-        """Find the first unique and valid locator from candidates.
 
-        Args:
-            locators: List of candidate locators
-            page: Playwright page
-            expected_element: Expected element descriptor
+def verify_locator(
+    page_or_frame: Any,
+    selector: str,
+    strategy: str = "css",
+    require_unique: bool = True,
+) -> VerificationResult:
+    """
+    Verify that `selector` with given `strategy` resolves to exactly one
+    visible, non-occluded, interactable element in the provided page/frame.
 
-        Returns:
-            First valid unique locator, or None if none found
-        """
-        for locator in locators:
-            is_valid, reason, details = self.verify(locator, page, expected_element)
-            if is_valid:
-                logger.info(f"Found unique locator: {locator}")
-                return locator
-            else:
-                logger.debug(f"Locator {locator} invalid: {reason}")
+    Parameters
+    ----------
+    page_or_frame : Playwright Page or Frame
+    selector      : selector string (css/xpath/text/role form depending on strategy)
+    strategy      : one of {'css','xpath','text','role'}
+    require_unique: if True, fail when multiple elements match
 
-        return None
+    Returns
+    -------
+    VerificationResult
+    """
+    frame = _pick_frame(page_or_frame)
+    st = _normalize_strategy(strategy)
 
-    def test_stability(
-        self, locator: str, page: Page, num_tests: int = 3, action: Optional[str] = None
-    ) -> Tuple[bool, float, List[str]]:
-        """Test locator stability over multiple attempts.
+    try:
+        candidates = _query_all(frame, selector, st)
+    except Exception as e:
+        return VerificationResult(
+            ok=False,
+            unique=False,
+            count=0,
+            visible=False,
+            occluded=True,
+            disabled=False,
+            strategy=st,
+            used_selector=selector,
+            explanation=f"Query error: {e}",
+        )
 
-        Args:
-            locator: Locator to test
-            page: Playwright page
-            num_tests: Number of stability tests
-            action: Optional action to perform between tests
+    count = len(candidates)
+    if count == 0:
+        return VerificationResult(
+            ok=False,
+            unique=False,
+            count=0,
+            visible=False,
+            occluded=True,
+            disabled=False,
+            strategy=st,
+            used_selector=selector,
+            explanation="No elements matched the selector.",
+        )
 
-        Returns:
-            Tuple of (is_stable, success_rate, failure_reasons)
-        """
-        if not page or not PLAYWRIGHT_AVAILABLE:
-            return True, 1.0, []
+    if require_unique and count != 1:
+        return VerificationResult(
+            ok=False,
+            unique=False,
+            count=count,
+            visible=False,
+            occluded=False,
+            disabled=False,
+            strategy=st,
+            used_selector=selector,
+            explanation=f"Selector matched {count} elements; expected unique match.",
+        )
 
-        successes = 0
-        failures = []
+    # If not enforcing uniqueness strictly, pick the first and validate it.
+    target = candidates[0]
 
-        for i in range(num_tests):
-            try:
-                pw_locator = self._string_to_locator(locator, page)
+    visible = _is_visible(target)
+    if not visible:
+        return VerificationResult(
+            ok=False,
+            unique=(count == 1),
+            count=count,
+            visible=False,
+            occluded=False,
+            disabled=False,
+            strategy=st,
+            used_selector=selector,
+            explanation="Element is not visible.",
+        )
 
-                # Check if element exists and is unique
-                count = pw_locator.count()
-                if count != 1:
-                    failures.append(f"Test {i+1}: Found {count} elements")
-                    continue
+    occluded = _is_occluded(target)
+    if occluded:
+        return VerificationResult(
+            ok=False,
+            unique=(count == 1),
+            count=count,
+            visible=True,
+            occluded=True,
+            disabled=False,
+            strategy=st,
+            used_selector=selector,
+            explanation="Element appears occluded at the visual center.",
+        )
 
-                # Optionally perform action
-                if action == "click":
-                    pw_locator.click(timeout=self.timeout_ms)
-                elif action == "fill":
-                    pw_locator.fill("test", timeout=self.timeout_ms)
+    disabled = _is_disabled(target)
+    if disabled:
+        return VerificationResult(
+            ok=False,
+            unique=(count == 1),
+            count=count,
+            visible=True,
+            occluded=False,
+            disabled=True,
+            strategy=st,
+            used_selector=selector,
+            explanation="Element is disabled (or aria-disabled).",
+        )
 
-                successes += 1
+    return VerificationResult(
+        ok=True,
+        unique=(count == 1),
+        count=count,
+        visible=True,
+        occluded=False,
+        disabled=False,
+        strategy=st,
+        used_selector=selector,
+        explanation="OK",
+    )
 
-            except Exception as e:
-                failures.append(f"Test {i+1}: {str(e)}")
 
-        success_rate = successes / num_tests
-        is_stable = success_rate >= 0.8  # 80% success threshold
-
-        return is_stable, success_rate, failures
-
-    def _string_to_locator(self, locator_str: str, page: Page) -> Locator:
-        """Convert string locator to Playwright Locator object.
-
-        Args:
-            locator_str: String representation of locator
-            page: Playwright page
-
-        Returns:
-            Playwright Locator object
-        """
-        if not PLAYWRIGHT_AVAILABLE:
-            raise RuntimeError("Playwright not available")
-
-        # Handle different locator formats
-        if locator_str.startswith("role="):
-            # Parse role locator
-            parts = locator_str[5:].split("[", 1)
-            role = parts[0]
-            if len(parts) > 1:
-                # Extract name from role=button[name="..."]
-                import re
-
-                name_match = re.search(r'name="([^"]*)"', parts[1])
-                if name_match:
-                    name = name_match.group(1)
-                    return page.get_by_role(role, name=name)
-            return page.get_by_role(role)
-
-        elif locator_str.startswith("text="):
-            # Text selector
-            text = locator_str[5:].strip('"')
-            return page.get_by_text(text, exact=True)
-
-        elif locator_str.startswith("//"):
-            # XPath selector
-            return page.locator(f"xpath={locator_str}")
-
-        else:
-            # CSS selector
-            return page.locator(locator_str)
+__all__ = ["VerificationResult", "verify_locator"]
