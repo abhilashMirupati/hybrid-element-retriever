@@ -1,0 +1,68 @@
+{
+  "models": {
+    "query_embedder": {
+      "name": "e5-small",
+      "hf_id": "intfloat/e5-small",
+      "type": "sentence-transformers",
+      "format": "onnx",
+      "embedding_dim": 384,
+      "max_seq_length": 512,
+      "purpose": "Encode natural language queries for semantic search",
+      "files": {
+        "model": "e5-small.onnx",
+        "tokenizer": "tokenizer.json",
+        "config": "config.json"
+      },
+      "size_mb": 133,
+      "download_url": "https://huggingface.co/intfloat/e5-small",
+      "fallback": "minilm"
+    },
+    "element_embedder": {
+      "name": "markuplm-base",
+      "hf_id": "microsoft/markuplm-base",
+      "type": "layout-lm",
+      "format": "onnx",
+      "embedding_dim": 768,
+      "max_seq_length": 512,
+      "purpose": "Encode HTML elements with structural awareness",
+      "files": {
+        "model": "markuplm-base.onnx",
+        "tokenizer": "tokenizer.json",
+        "config": "config.json"
+      },
+      "size_mb": 438,
+      "download_url": "https://huggingface.co/microsoft/markuplm-base"
+    },
+    "fallback_embedder": {
+      "name": "all-MiniLM-L6-v2",
+      "hf_id": "sentence-transformers/all-MiniLM-L6-v2",
+      "type": "sentence-transformers",
+      "format": "onnx",
+      "embedding_dim": 384,
+      "max_seq_length": 256,
+      "purpose": "Lightweight fallback for fast inference",
+      "files": {
+        "model": "minilm.onnx",
+        "tokenizer": "tokenizer.json",
+        "config": "config.json"
+      },
+      "size_mb": 91,
+      "download_url": "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2"
+    }
+  },
+  "cache": {
+    "location": "~/.cache/her/models",
+    "max_size_mb": 1000,
+    "auto_download": true,
+    "verify_checksums": true
+  },
+  "performance": {
+    "batch_size": 32,
+    "num_threads": 4,
+    "use_gpu": false,
+    "quantization": "dynamic",
+    "optimization_level": 99
+  },
+  "version": "1.0.0",
+  "last_updated": "2024-01-01"
+}
