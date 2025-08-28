@@ -119,7 +119,7 @@ class LocatorVerifier:
 
     def verify(self, selector: str, page: Optional[Page]) -> Tuple[bool, str, Dict[str, Any]]:
         if not page or not PLAYWRIGHT_AVAILABLE:
-            return True, "No page available, assuming success", {"count": 1, "visible": True, "enabled": True}
+            return False, "No page available", {"count": 0, "visible": False, "enabled": False}
         vr = verify_locator(page, selector, strategy='css', require_unique=True)
         details = {
             'count': vr.count,

@@ -17,8 +17,8 @@ class QueryEmbedder:
       - attributes: cache, resolver, dim
     """
 
-    def __init__(self, cache: Optional[EmbeddingCache] = None, resolver: Optional[ONNXModelResolver] = None) -> None:
-        self.cache = cache or EmbeddingCache()
+    def __init__(self, cache: Optional[EmbeddingCache] = None, resolver: Optional[ONNXModelResolver] = None, cache_enabled: bool = True) -> None:
+        self.cache = (cache or EmbeddingCache()) if cache_enabled else None
         self.resolver = resolver or get_query_resolver()
         self.dim = int(self.resolver.embedding_dim)
 
@@ -27,11 +27,12 @@ class QueryEmbedder:
 
     def embed(self, text: str) -> np.ndarray:
         key = self._key(text)
-        hit = self.cache.get(key)
+        hit = self.cache.get(key) if self.cache is not None else None
         if hit is not None:
             return hit.astype('float32')
         vec = self.resolver.embed(text).astype('float32')
-        self.cache.put(key, vec)
+        if self.cache is not None:
+            self.cache.put(key, vec)
         return vec
 
     def embed_batch(self, texts: List[str]) -> List[np.ndarray]:

@@ -85,6 +85,13 @@ class RankFusion:
         heuristic_scores = [(d, s_heu) for d, _, s_heu in candidates]
         return self.fuse(semantic_scores, heuristic_scores, context='default')
 
+    def update_weights(self, alpha: float, beta: float, gamma: float) -> None:
+        # Normalize to sum to 1
+        total = float(alpha + beta + gamma) or 1.0
+        self.config.alpha = float(alpha) / total
+        self.config.beta = float(beta) / total
+        self.config.gamma = float(gamma) / total
+
 
 def fuse(cands: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Backward-compatible helper used in older code paths."""

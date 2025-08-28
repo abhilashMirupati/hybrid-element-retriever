@@ -7,7 +7,7 @@ from typing import Dict, Any
 def normalize_descriptor(node: Dict[str, Any]) -> Dict[str, Any]:
     """Normalize a raw node dict to a standard descriptor shape for tests."""
     out = {}
-    out['tag'] = (node.get('tag') or node.get('tagName') or node.get('nodeName') or '').lower()
+    out['tagName'] = (node.get('tag') or node.get('tagName') or node.get('nodeName') or '').lower()
     attrs = node.get('attributes') or {}
     if isinstance(attrs, list):
         # Convert [name,value,...] to dict
@@ -23,6 +23,10 @@ def normalize_descriptor(node: Dict[str, Any]) -> Dict[str, Any]:
     out['text'] = node.get('text','') or node.get('nodeValue','') or ''
     out['type'] = attrs.get('type','') if isinstance(attrs, dict) else ''
     out['placeholder'] = attrs.get('placeholder','') if isinstance(attrs, dict) else ''
+    # flatten data- attributes
+    for k, v in (attrs.items() if isinstance(attrs, dict) else []):
+        if k.startswith('data-'):
+            out[k] = v
     return out
 
 

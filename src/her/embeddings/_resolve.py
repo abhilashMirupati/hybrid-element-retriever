@@ -13,6 +13,9 @@ try:
     import onnxruntime as ort  # type: ignore
     from transformers import AutoTokenizer  # type: ignore
 except Exception:  # pragma: no cover - optional at runtime
+    class _Dummy:  # simple stub so tests can patch attributes
+        def __getattr__(self, *_):
+            raise ModuleNotFoundError("onnxruntime not available")
     ort = None  # type: ignore
     AutoTokenizer = None  # type: ignore
 
@@ -154,16 +157,18 @@ class ONNXModelResolver:
 
     def _generate_deterministic_embedding(self, text: str) -> np.ndarray:
         h = hashlib.sha256((self.model_name + '|' + text.strip().lower()).encode('utf-8')).digest()
-        seed = int.from_bytes(h[:8], 'little', signed=False)
+        seed = int.from_bytes(h[:8], 'little', signed=False) & 0xFFFFFFFF
         rng = np.random.RandomState(seed)
         vec = rng.normal(size=self.embedding_dim).astype('float32')
         return self._normalize_embedding(vec)
 
-    def embed(self, text: str) -> np.ndarray:
+    def embed(self, text: str, normalize: bool = False) -> np.ndarray:
         if not text:
-            return self._generate_deterministic_embedding('')
+            v = self._generate_deterministic_embedding('')
+            return self._normalize_embedding(v) if normalize else v
         if self.session is None or self.tokenizer is None:
-            return self._generate_deterministic_embedding(text)
+            v = self._generate_deterministic_embedding(text)
+            return self._normalize_embedding(v) if normalize else v
         try:  # pragma: no cover - exercised via mocks in tests
             toks = self.tokenizer([text], padding=True, truncation=True, return_tensors='np')
             inputs = {k: v.astype('int64') for k, v in toks.items() if k in {'input_ids','attention_mask','token_type_ids'}}
@@ -175,9 +180,11 @@ class ONNXModelResolver:
             if arr.shape[0] != self.embedding_dim:
                 # Resize deterministically to target dim
                 arr = np.resize(arr, self.embedding_dim)
-            return self._normalize_embedding(arr.astype('float32'))
+            v = arr.astype('float32')
+            return self._normalize_embedding(v) if normalize else v
         except Exception:
-            return self._generate_deterministic_embedding(text)
+            v = self._generate_deterministic_embedding(text)
+            return self._normalize_embedding(v) if normalize else v
 
     def embed_batch(self, texts: List[str]) -> List[np.ndarray]:
         return [self.embed(t) for t in texts]

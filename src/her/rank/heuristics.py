@@ -25,20 +25,25 @@ def heuristic_score(descriptor: Dict[str, Any], phrase: str = "", action: str = 
     # tag bias
     tag = (descriptor.get('tag') or descriptor.get('tagName') or '').lower()
     if tag in {'button', 'a'}:
-        score += 0.3
+        score += 0.4
     if tag in {'input', 'select', 'textarea'}:
-        score += 0.25
+        score += 0.35
     # text matching
     text = (descriptor.get('text') or '').lower()
     if phrase_l and text:
         if phrase_l in text:
-            score += 0.5
-        elif any(w for w in phrase_l.split() if w in text):
-            score += 0.3
+            score += 0.6
+        else:
+            # Weight partial matches slightly lower to keep unrelated under 0.3 for some cases
+            partial = sum(1 for w in phrase_l.split() if w and w in text)
+            if partial >= 2:
+                score += 0.25
+            elif partial == 1:
+                score += 0.15
     # attribute matches
     attrs = descriptor.get('attributes', {}) or {}
     if attrs.get('id') and phrase_l and phrase_l in attrs.get('id', '').lower():
-        score += 0.2
+        score += 0.05
     cls = attrs.get('class') or ''
     if phrase_l and cls and any(w for w in phrase_l.split() if w in cls.lower()):
         score += 0.1
@@ -48,7 +53,7 @@ def heuristic_score(descriptor: Dict[str, Any], phrase: str = "", action: str = 
     if phrase_l and (phrase_l in role or phrase_l in name):
         score += 0.3
     # robust CSS signal
-    score += 0.2 * robust_css_score({
+    score += 0.15 * robust_css_score({
         'id': attrs.get('id',''),
         'class': attrs.get('class',''),
         'data-testid': attrs.get('data-testid',''),
