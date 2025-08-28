@@ -147,7 +147,7 @@ def merge_dom_and_ax(dom_nodes: List[Dict[str, Any]], ax_nodes: List[Dict[str, A
                     if int(n.get('nodeType', 0)) == 1:
                         tag = (n.get('nodeName') or '').lower()
                         if tag:
-                            out.append({'tagName': tag})
+                            out.append({'tag': tag})
                 except Exception:
                     continue
             return out

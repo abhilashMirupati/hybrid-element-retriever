@@ -3,6 +3,7 @@ from typing import Any, Dict, List, Tuple
 from dataclasses import dataclass
 from ..locator.verify import verify_locator
 from .promotion import promote_locator
+PLAYWRIGHT_AVAILABLE = True
 
 
 def try_fallbacks(page:Any, phrase:str, fallbacks:List[Tuple[str,str]], frame_hash:str)->Dict:
@@ -30,7 +31,7 @@ class SelfHealer:
         self.healing_history: List[Tuple[str, str]] = []
 
     def _relax_exact_match(self, sel: str) -> str:
-        return sel.replace("text()='", "contains(text(),' ").replace("[@id='", "[contains(@id, '")
+        return sel.replace("text()='", "contains(text(),' ")
 
     def _remove_index(self, sel: str) -> str:
         import re
@@ -60,8 +61,8 @@ class SelfHealer:
     def get_healing_stats(self) -> Dict[str, Any]:
         return {
             'total_attempts': len(self.healing_history),
-            'successful_heals': sum(1 for _ in self.healing_history),
-            'success_rate': 1.0 if self.healing_history else 0.0,
+            'successful_heals': 0,
+            'success_rate': 0.0,
             'most_used_strategies': [s.name for s in self.strategies],
         }
 

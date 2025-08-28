@@ -153,7 +153,7 @@ class SessionManager:
             return True
 
         # Check URL change
-        if page and PLAYWRIGHT_AVAILABLE:
+        if page:
             current_url = page.url
             if current_url != session.url:
                 logger.debug(f"URL changed: {session.url} -> {current_url}")

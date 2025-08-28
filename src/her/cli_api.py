@@ -120,8 +120,22 @@ class HybridClient:
             self.executor = ActionExecutor(headless=self.headless, timeout_ms=self.timeout_ms)
         except Exception:
             # Allow tests to run without Playwright installed
+            class _DummyPage:
+                def __init__(self) -> None:
+                    self.url = ""
+                    self.frames = []
+                    self.main_frame = self
+                def goto(self, url: str):
+                    self.url = url
+                def wait_for_load_state(self, *_, **__):
+                    return None
+                def evaluate(self, *_, **__):
+                    return []
+                def query_selector(self, *_, **__):
+                    return None
             class _DummyExec:
-                page = None
+                def __init__(self):
+                    self.page = _DummyPage()
                 def close(self):
                     return None
             self.executor = _DummyExec()
@@ -140,8 +154,20 @@ class HybridClient:
         try:
             self.executor = ActionExecutor(headless=self.headless, timeout_ms=self.timeout_ms)
         except Exception:
+            class _DummyPage2:
+                def __init__(self) -> None:
+                    self.url = ""
+                    self.frames = []
+                    self.main_frame = self
+                def goto(self, url: str):
+                    self.url = url
+                def wait_for_load_state(self, *_, **__):
+                    return None
+                def evaluate(self, *_, **__):
+                    return []
             class _DummyExec2:
-                page = None
+                def __init__(self):
+                    self.page = _DummyPage2()
             self.executor = _DummyExec2()
         return self.executor.page
     
@@ -244,8 +270,8 @@ class HybridClient:
             candidates = self._find_candidates(intent.target_phrase, descriptors)
             if not candidates:
                 return {
-                    'status': 'failure', 'method': intent.action, 'confidence': float(getattr(intent,'confidence',0.0) or 0.0),
-                    'dom_hash': dom_hash or ("0" * 64), 'framePath': 'main', 'semantic_locator': None, 'used_locator': None,
+                    'status': 'fail', 'success': False, 'method': intent.action, 'confidence': float(getattr(intent,'confidence',0.0) or 0.0),
+                    'dom_hash': dom_hash or ("0" * 64), 'framePath': 'main', 'semantic_locator': '', 'used_locator': '',
                     'n_best': [], 'overlay_events': [], 'retries': {'attempts': 0, 'final_method': intent.action},
                     'explanation': 'No valid locator found'
                 }
@@ -263,7 +289,7 @@ class HybridClient:
 
             # Execute
             ar = self._execute_with_recovery(intent.action, locator or '', intent.args, candidates)
-            status = 'success' if ar.success else 'failure'
+            status = 'ok' if ar.success else 'fail'
             used = getattr(ar, 'locator', None) or locator or None
             overlays = []
             for attr in ('overlay_events', 'dismissed_overlays'):
@@ -278,12 +304,13 @@ class HybridClient:
                     continue
             res = {
                 'status': status,
+                'success': (status == 'ok'),
                 'method': intent.action,
                 'confidence': float(getattr(intent, 'confidence', 0.0) or 0.0),
                 'dom_hash': dom_hash or ("0" * 64),
                 'framePath': 'main',
                 'semantic_locator': locator or '',
-                'used_locator': used,
+                'used_locator': used or '',
                 'n_best': [{'selector': l} for l in (locators or [])],
                 'overlay_events': list(overlays),
                 'retries': {'attempts': int(getattr(ar, 'retries', 0) or 0), 'final_method': intent.action},

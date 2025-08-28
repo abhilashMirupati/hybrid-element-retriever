@@ -134,6 +134,7 @@ class IntentParser:
             ),
             (re.compile(r"^verify\s+(.+)$", re.I), "assert", None),
             (re.compile(r"^assert\s+(.+)$", re.I), "assert", None),
+            (re.compile(r"^check\s+(.+)$", re.I), "assert", None),
             # Clear action
             (re.compile(r"^clear\s+(.+)$", re.I), "clear", None),
             # Submit action

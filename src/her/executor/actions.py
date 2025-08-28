@@ -35,7 +35,7 @@ class ActionResult:
 class ActionExecutor:
     """Thin executor around Playwright used by CLI API and tests."""
 
-    def __init__(self, headless: bool = True, timeout_ms: int = 30000) -> None:
+    def __init__(self, headless: bool = True, timeout_ms: int = 30000, **kwargs) -> None:
         self.headless = headless
         self.timeout_ms = timeout_ms
         self.playwright = None
