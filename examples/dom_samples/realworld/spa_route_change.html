@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SPA with Route Changes - Real World Example</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #f5f5f5;
+        }
+        
+        /* Navigation */
+        nav {
+            background: #2c3e50;
+            padding: 0 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .nav-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: flex;
+            align-items: center;
+            height: 60px;
+        }
+        
+        .nav-brand {
+            color: white;
+            font-size: 20px;
+            font-weight: 600;
+            margin-right: 40px;
+        }
+        
+        .nav-links {
+            display: flex;
+            gap: 20px;
+            flex: 1;
+        }
+        
+        .nav-link {
+            color: rgba(255, 255, 255, 0.8);
+            text-decoration: none;
+            padding: 8px 12px;
+            border-radius: 4px;
+            transition: all 0.2s;
+            cursor: pointer;
+        }
+        
+        .nav-link:hover,
+        .nav-link.active {
+            color: white;
+            background: rgba(255, 255, 255, 0.1);
+        }
+        
+        /* Main content */
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+        
+        .page {
+            display: none;
+            animation: fadeIn 0.3s ease;
+        }
+        
+        .page.active {
+            display: block;
+        }
+        
+        /* Product grid */
+        .product-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+        
+        .product-card {
+            background: white;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        .product-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+        
+        .product-image {
+            width: 100%;
+            height: 200px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 18px;
+        }
+        
+        .product-info {
+            padding: 15px;
+        }
+        
+        .product-name {
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+        
+        .product-price {
+            color: #27ae60;
+            font-size: 20px;
+            font-weight: bold;
+            margin-bottom: 12px;
+        }
+        
+        .add-to-cart {
+            width: 100%;
+            padding: 10px;
+            background: #3498db;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        
+        .add-to-cart:hover {
+            background: #2980b9;
+        }
+        
+        /* Cart page */
+        .cart-items {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            margin-top: 20px;
+        }
+        
+        .cart-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px;
+            border-bottom: 1px solid #eee;
+        }
+        
+        .cart-item:last-child {
+            border-bottom: none;
+        }
+        
+        .cart-total {
+            text-align: right;
+            padding: 20px;
+            font-size: 24px;
+            font-weight: bold;
+            color: #2c3e50;
+        }
+        
+        .checkout-btn {
+            display: block;
+            width: 200px;
+            margin: 20px 0 20px auto;
+            padding: 12px 24px;
+            background: #27ae60;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        
+        .checkout-btn:hover {
+            background: #229954;
+        }
+        
+        /* Loading indicator */
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+        
+        .loading-spinner {
+            display: inline-block;
+            width: 40px;
+            height: 40px;
+            border: 4px solid rgba(0,0,0,0.1);
+            border-top-color: #3498db;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        /* Search bar */
+        .search-container {
+            margin: 20px 0;
+        }
+        
+        .search-input {
+            width: 100%;
+            max-width: 400px;
+            padding: 12px 20px;
+            border: 1px solid #ddd;
+            border-radius: 24px;
+            font-size: 16px;
+            transition: border-color 0.2s;
+        }
+        
+        .search-input:focus {
+            outline: none;
+            border-color: #3498db;
+        }
+        
+        /* Notification */
+        .notification {
+            position: fixed;
+            top: 80px;
+            right: 20px;
+            background: #27ae60;
+            color: white;
+            padding: 15px 20px;
+            border-radius: 4px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            transform: translateX(400px);
+            transition: transform 0.3s ease;
+            z-index: 1000;
+        }
+        
+        .notification.show {
+            transform: translateX(0);
+        }
+    </style>
+</head>
+<body>
+    <nav>
+        <div class="nav-container">
+            <div class="nav-brand">ShopHub</div>
+            <div class="nav-links">
+                <a class="nav-link active" data-route="home">Home</a>
+                <a class="nav-link" data-route="products">Products</a>
+                <a class="nav-link" data-route="cart">Cart <span id="cartCount">(0)</span></a>
+                <a class="nav-link" data-route="account">Account</a>
+            </div>
+        </div>
+    </nav>
+    
+    <div class="container">
+        <!-- Home Page -->
+        <div id="home" class="page active">
+            <h1>Welcome to ShopHub</h1>
+            <p style="margin: 20px 0; color: #666;">
+                Discover amazing products at unbeatable prices. Start shopping now!
+            </p>
+            <button class="add-to-cart" onclick="navigateTo('products')">
+                Browse Products
+            </button>
+        </div>
+        
+        <!-- Products Page -->
+        <div id="products" class="page">
+            <h1>Our Products</h1>
+            
+            <div class="search-container">
+                <input 
+                    type="text" 
+                    class="search-input" 
+                    placeholder="Search products..."
+                    id="productSearch"
+                    aria-label="Search products"
+                >
+            </div>
+            
+            <div id="productGrid" class="product-grid">
+                <div class="loading">
+                    <div class="loading-spinner"></div>
+                    <p>Loading products...</p>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Cart Page -->
+        <div id="cart" class="page">
+            <h1>Shopping Cart</h1>
+            
+            <div class="cart-items" id="cartItems">
+                <p style="text-align: center; color: #999; padding: 40px;">
+                    Your cart is empty
+                </p>
+            </div>
+            
+            <div class="cart-total" id="cartTotal">Total: $0.00</div>
+            
+            <button class="checkout-btn" id="checkoutBtn" style="display: none;">
+                Proceed to Checkout
+            </button>
+        </div>
+        
+        <!-- Account Page -->
+        <div id="account" class="page">
+            <h1>My Account</h1>
+            <div style="background: white; border-radius: 8px; padding: 30px; margin-top: 20px;">
+                <h2>Profile Information</h2>
+                <form id="profileForm" style="margin-top: 20px;">
+                    <div style="margin-bottom: 20px;">
+                        <label style="display: block; margin-bottom: 8px; color: #555;">
+                            Full Name
+                        </label>
+                        <input 
+                            type="text" 
+                            value="John Doe"
+                            style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;"
+                        >
+                    </div>
+                    <div style="margin-bottom: 20px;">
+                        <label style="display: block; margin-bottom: 8px; color: #555;">
+                            Email Address
+                        </label>
+                        <input 
+                            type="email" 
+                            value="john.doe@example.com"
+                            style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;"
+                        >
+                    </div>
+                    <button type="submit" class="add-to-cart">
+                        Update Profile
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Notification -->
+    <div class="notification" id="notification"></div>
+    
+    <script>
+        // SPA Router
+        let currentRoute = 'home';
+        const cart = [];
+        
+        function navigateTo(route) {
+            // Update URL without page reload
+            history.pushState({ route }, '', `#${route}`);
+            showPage(route);
+        }
+        
+        function showPage(route) {
+            // Hide all pages
+            document.querySelectorAll('.page').forEach(page => {
+                page.classList.remove('active');
+            });
+            
+            // Show selected page
+            const page = document.getElementById(route);
+            if (page) {
+                page.classList.add('active');
+                currentRoute = route;
+                
+                // Update nav active state
+                document.querySelectorAll('.nav-link').forEach(link => {
+                    link.classList.remove('active');
+                    if (link.dataset.route === route) {
+                        link.classList.add('active');
+                    }
+                });
+                
+                // Load page-specific content
+                if (route === 'products') {
+                    loadProducts();
+                } else if (route === 'cart') {
+                    updateCartDisplay();
+                }
+            }
+        }
+        
+        // Handle browser back/forward
+        window.addEventListener('popstate', (event) => {
+            const route = event.state?.route || 'home';
+            showPage(route);
+        });
+        
+        // Nav link handlers
+        document.querySelectorAll('.nav-link').forEach(link => {
+            link.addEventListener('click', (e) => {
+                e.preventDefault();
+                navigateTo(link.dataset.route);
+            });
+        });
+        
+        // Load products dynamically
+        function loadProducts() {
+            const grid = document.getElementById('productGrid');
+            
+            // Simulate API call delay
+            setTimeout(() => {
+                const products = [
+                    { id: 1, name: 'Laptop Pro', price: 999.99 },
+                    { id: 2, name: 'Wireless Mouse', price: 29.99 },
+                    { id: 3, name: 'USB-C Hub', price: 49.99 },
+                    { id: 4, name: 'Mechanical Keyboard', price: 149.99 },
+                    { id: 5, name: 'Monitor 27"', price: 399.99 },
+                    { id: 6, name: 'Webcam HD', price: 79.99 }
+                ];
+                
+                grid.innerHTML = products.map(product => `
+                    <div class="product-card">
+                        <div class="product-image">Product ${product.id}</div>
+                        <div class="product-info">
+                            <div class="product-name">${product.name}</div>
+                            <div class="product-price">$${product.price}</div>
+                            <button class="add-to-cart" onclick="addToCart(${product.id}, '${product.name}', ${product.price})">
+                                Add to Cart
+                            </button>
+                        </div>
+                    </div>
+                `).join('');
+            }, 500);
+        }
+        
+        // Add to cart
+        function addToCart(id, name, price) {
+            cart.push({ id, name, price });
+            updateCartCount();
+            showNotification(`${name} added to cart!`);
+        }
+        
+        // Update cart count
+        function updateCartCount() {
+            document.getElementById('cartCount').textContent = `(${cart.length})`;
+        }
+        
+        // Update cart display
+        function updateCartDisplay() {
+            const cartItems = document.getElementById('cartItems');
+            const cartTotal = document.getElementById('cartTotal');
+            const checkoutBtn = document.getElementById('checkoutBtn');
+            
+            if (cart.length === 0) {
+                cartItems.innerHTML = '<p style="text-align: center; color: #999; padding: 40px;">Your cart is empty</p>';
+                checkoutBtn.style.display = 'none';
+            } else {
+                cartItems.innerHTML = cart.map((item, index) => `
+                    <div class="cart-item">
+                        <div>
+                            <strong>${item.name}</strong>
+                            <div style="color: #666; font-size: 14px;">Item #${item.id}</div>
+                        </div>
+                        <div>
+                            <span style="margin-right: 20px;">$${item.price}</span>
+                            <button onclick="removeFromCart(${index})" style="background: #e74c3c; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer;">
+                                Remove
+                            </button>
+                        </div>
+                    </div>
+                `).join('');
+                
+                const total = cart.reduce((sum, item) => sum + item.price, 0);
+                cartTotal.textContent = `Total: $${total.toFixed(2)}`;
+                checkoutBtn.style.display = 'block';
+            }
+        }
+        
+        // Remove from cart
+        function removeFromCart(index) {
+            const item = cart[index];
+            cart.splice(index, 1);
+            updateCartCount();
+            updateCartDisplay();
+            showNotification(`${item.name} removed from cart`);
+        }
+        
+        // Show notification
+        function showNotification(message) {
+            const notification = document.getElementById('notification');
+            notification.textContent = message;
+            notification.classList.add('show');
+            
+            setTimeout(() => {
+                notification.classList.remove('show');
+            }, 3000);
+        }
+        
+        // Checkout handler
+        document.getElementById('checkoutBtn').addEventListener('click', () => {
+            showNotification('Proceeding to checkout...');
+            // In real app, would navigate to checkout page
+        });
+        
+        // Profile form handler
+        document.getElementById('profileForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+            showNotification('Profile updated successfully!');
+        });
+        
+        // Search handler
+        document.getElementById('productSearch').addEventListener('input', (e) => {
+            console.log('Searching for:', e.target.value);
+            // In real app, would filter products
+        });
+        
+        // Initialize based on URL hash
+        const initialRoute = window.location.hash.slice(1) || 'home';
+        showPage(initialRoute);
+    </script>
+</body>
+</html>

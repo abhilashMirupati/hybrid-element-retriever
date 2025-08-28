@@ -1,0 +1,78 @@
+{
+  "intents": [
+    {
+      "id": "shadow_1",
+      "description": "Edit user profile",
+      "step": "Click Edit Profile button in the user profile component",
+      "expected_element": {
+        "type": "button",
+        "text": "Edit Profile",
+        "attributes": ["editProfile", "edit-btn"],
+        "context": "inside user-profile shadow DOM"
+      }
+    },
+    {
+      "id": "shadow_2",
+      "description": "Enter email in custom input",
+      "step": "Type 'test@example.com' in the Email Address field",
+      "expected_element": {
+        "type": "input[type=email]",
+        "attributes": ["custom-input", "Enter your email"],
+        "context": "inside custom-input shadow DOM"
+      }
+    },
+    {
+      "id": "shadow_3",
+      "description": "Click View Details in action card",
+      "step": "Click View Details button for Project Alpha",
+      "expected_element": {
+        "type": "button",
+        "text": "View Details",
+        "attributes": ["type=primary"],
+        "context": "nested shadow DOM, action-card > action-button"
+      }
+    },
+    {
+      "id": "shadow_4",
+      "description": "Click Share button",
+      "step": "Click the Share button in the action card",
+      "expected_element": {
+        "type": "button",
+        "text": "Share",
+        "attributes": ["type=secondary"],
+        "context": "nested shadow DOM, middle button"
+      }
+    },
+    {
+      "id": "shadow_5",
+      "description": "Click Delete button",
+      "step": "Click Delete button in the project card",
+      "expected_element": {
+        "type": "button",
+        "text": "Delete",
+        "attributes": ["type=danger"],
+        "context": "nested shadow DOM, rightmost button"
+      }
+    },
+    {
+      "id": "shadow_6",
+      "description": "Select date in date picker",
+      "step": "Click on the date input field to open date picker",
+      "expected_element": {
+        "type": "input[type=date]",
+        "attributes": ["date-input", "min", "max"],
+        "context": "inside date-picker shadow DOM"
+      }
+    },
+    {
+      "id": "shadow_7",
+      "description": "Focus on custom input",
+      "step": "Click on the custom input field to enter data",
+      "expected_element": {
+        "type": "input",
+        "attributes": ["custom-input", "required"],
+        "context": "shadow DOM component with validation"
+      }
+    }
+  ]
+}

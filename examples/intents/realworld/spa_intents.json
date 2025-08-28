@@ -1,0 +1,102 @@
+{
+  "intents": [
+    {
+      "id": "spa_1",
+      "description": "Navigate to products page",
+      "step": "Click on Products in the navigation",
+      "expected_element": {
+        "type": "link",
+        "text": "Products",
+        "attributes": ["nav-link", "data-route=products"],
+        "context": "top navigation bar"
+      }
+    },
+    {
+      "id": "spa_2",
+      "description": "Search for products",
+      "step": "Type 'laptop' in the product search box",
+      "expected_element": {
+        "type": "input",
+        "attributes": ["productSearch", "Search products", "search-input"],
+        "context": "products page"
+      }
+    },
+    {
+      "id": "spa_3",
+      "description": "Add laptop to cart",
+      "step": "Click Add to Cart button for Laptop Pro",
+      "expected_element": {
+        "type": "button",
+        "text": "Add to Cart",
+        "attributes": ["add-to-cart"],
+        "context": "Laptop Pro product card"
+      }
+    },
+    {
+      "id": "spa_4",
+      "description": "Navigate to cart",
+      "step": "Click on Cart in the navigation menu",
+      "expected_element": {
+        "type": "link",
+        "text": "Cart",
+        "attributes": ["nav-link", "data-route=cart"],
+        "context": "top navigation, shows item count"
+      }
+    },
+    {
+      "id": "spa_5",
+      "description": "Remove item from cart",
+      "step": "Click Remove button for the first item in cart",
+      "expected_element": {
+        "type": "button",
+        "text": "Remove",
+        "attributes": ["background: #e74c3c"],
+        "context": "cart item row"
+      }
+    },
+    {
+      "id": "spa_6",
+      "description": "Proceed to checkout",
+      "step": "Click Proceed to Checkout button",
+      "expected_element": {
+        "type": "button",
+        "text": "Proceed to Checkout",
+        "attributes": ["checkoutBtn", "checkout-btn"],
+        "context": "cart page, bottom right"
+      }
+    },
+    {
+      "id": "spa_7",
+      "description": "Update profile",
+      "step": "Click Update Profile button in account settings",
+      "expected_element": {
+        "type": "button",
+        "text": "Update Profile",
+        "attributes": ["add-to-cart"],
+        "context": "account page, profile form"
+      }
+    },
+    {
+      "id": "spa_8",
+      "description": "Browse products from home",
+      "step": "Click Browse Products button on the homepage",
+      "expected_element": {
+        "type": "button",
+        "text": "Browse Products",
+        "attributes": ["add-to-cart"],
+        "context": "home page welcome section"
+      }
+    },
+    {
+      "id": "spa_9",
+      "description": "Add wireless mouse to cart",
+      "step": "Add the Wireless Mouse to shopping cart",
+      "expected_element": {
+        "type": "button",
+        "text": "Add to Cart",
+        "attributes": ["add-to-cart"],
+        "context": "Wireless Mouse product card, $29.99"
+      }
+    }
+  ]
+}

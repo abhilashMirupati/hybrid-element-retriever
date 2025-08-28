@@ -1,26 +1,33 @@
-# Install ONNX models for HER (Windows PowerShell version)
+# Install ONNX models for HER (Windows PowerShell)
 
 $ErrorActionPreference = "Stop"
 
 Write-Host "Installing ONNX models for Hybrid Element Retriever..." -ForegroundColor Green
 
 # Get script directory
-$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$ModelDir = Join-Path $ScriptDir "..\src\her\models"
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$modelDir = Join-Path $scriptDir "..\src\her\models"
 
 # Create models directory
-New-Item -ItemType Directory -Force -Path $ModelDir | Out-Null
+if (!(Test-Path $modelDir)) {
+    New-Item -ItemType Directory -Force -Path $modelDir | Out-Null
+}
 
 # Check if Python is available
 try {
-    python --version | Out-Null
+    $pythonCmd = Get-Command python -ErrorAction SilentlyContinue
+    if ($null -eq $pythonCmd) {
+        $pythonCmd = Get-Command python3 -ErrorAction Stop
+    }
 } catch {
     Write-Host "Error: Python 3 is required" -ForegroundColor Red
     exit 1
 }
 
+$pythonExe = $pythonCmd.Source
+
 # Create Python script to download and export models
-$ExportScript = @'
+$exportScript = @'
 #!/usr/bin/env python3
 """Export Hugging Face models to ONNX format."""
 
@@ -48,7 +55,7 @@ def export_models(model_dir):
         print("Installing required packages...")
         import subprocess
         subprocess.check_call([sys.executable, "-m", "pip", "install", 
-                              "torch", "transformers", "onnx", "onnxruntime",
+                              "torch", "transformers", "onnx", "onnxruntime", 
                               "sentencepiece", "protobuf"])
         import torch
         import transformers
@@ -68,7 +75,7 @@ def export_models(model_dir):
             "embedding_dim": 384
         },
         {
-            "name": "markuplm-base", 
+            "name": "markuplm-base",
             "model_id": "microsoft/markuplm-base",
             "task": "element_embedding",
             "output": model_dir / "markuplm-base.onnx",
@@ -117,7 +124,7 @@ def export_models(model_dir):
             
             # Prepare dummy input
             dummy_text = "This is a sample text for model export"
-            dummy_input = tokenizer(dummy_text, return_tensors="pt",
+            dummy_input = tokenizer(dummy_text, return_tensors="pt", 
                                    padding=True, truncation=True, max_length=512)
             
             # Set model to eval mode
@@ -219,15 +226,15 @@ if __name__ == "__main__":
 '@
 
 # Save script to temp file
-$TempScript = Join-Path $env:TEMP "export_models.py"
-$ExportScript | Out-File -FilePath $TempScript -Encoding UTF8
+$tempScript = [System.IO.Path]::GetTempFileName() + ".py"
+Set-Content -Path $tempScript -Value $exportScript -Encoding UTF8
 
 # Run the export script
 Write-Host "Exporting models to ONNX format..." -ForegroundColor Yellow
-python $TempScript $ModelDir
+& $pythonExe $tempScript $modelDir
 
 # Clean up
-Remove-Item $TempScript -Force
+Remove-Item -Path $tempScript -Force
 
 Write-Host "Model installation complete!" -ForegroundColor Green
-Write-Host "Models are stored in: $ModelDir" -ForegroundColor Cyan
+Write-Host "Models are stored in: $modelDir" -ForegroundColor Cyan

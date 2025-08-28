@@ -1,54 +1,64 @@
 # Hybrid Element Retriever (HER) - Production Ready
 
-[![CI](https://github.com/your-org/her/actions/workflows/ci.yml/badge.svg)](https://github.com/your-org/her/actions/workflows/ci.yml)
-[![Coverage](https://codecov.io/gh/your-org/her/branch/main/graph/badge.svg)](https://codecov.io/gh/your-org/her)
+[![CI](https://github.com/abhilashMirupati/hybrid-element-retriever/actions/workflows/ci.yml/badge.svg)](https://github.com/abhilashMirupati/hybrid-element-retriever/actions/workflows/ci.yml)
+[![Coverage](https://codecov.io/gh/abhilashMirupati/hybrid-element-retriever/branch/main/graph/badge.svg)](https://codecov.io/gh/abhilashMirupati/hybrid-element-retriever)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-**HER** is a production-ready system that converts natural language instructions into precise XPath/CSS locators for web automation. It combines semantic understanding with DOM analysis to reliably identify UI elements across complex web applications.
+**HER** is a production-ready system that converts natural language instructions into precise, unique, and resilient XPath/CSS locators for web automation. It combines semantic understanding with DOM analysis to reliably identify and interact with UI elements across complex web applications, including those with shadow DOM, iframes, SPAs, and dynamic content.
 
 ## 🚀 Key Features
 
-- **Natural Language Processing**: Convert instructions like "click the login button" into precise locators
-- **Multi-Model Fusion**: ONNX-based MiniLM/E5 for queries, MarkupLM for element understanding
-- **Advanced DOM Analysis**: Full CDP integration with shadow DOM and iframe support
-- **Self-Healing Locators**: Automatic recovery with fallback strategies and DOM resnapshot
-- **Two-Tier Caching**: LRU memory cache + SQLite persistence for optimal performance
-- **Production Hardened**: Overlay detection, occlusion guards, SPA support, post-action verification
-- **Cross-Platform**: Ubuntu and Windows CI/CD, Java wrapper via Py4J
+- **Natural Language Processing**: Convert plain English steps into accurate locators
+- **Multi-Model Architecture**: ONNX-optimized E5-small for query embeddings, MarkupLM-base for element understanding
+- **Advanced DOM Handling**: Full CDP integration with shadow DOM piercing and iframe traversal
+- **Self-Healing Locators**: Automatic recovery with fallback strategies and stateless re-snapshot
+- **Performance Optimized**: Two-tier caching (LRU + SQLite), DOM delta detection, early-exit fusion
+- **Production Hardened**: Overlay auto-dismissal, occlusion detection, SPA route tracking, post-action verification
+- **Enterprise Ready**: Strict JSON outputs, comprehensive test coverage (80%+), Ubuntu + Windows CI/CD
 
 ## 📦 Installation
 
 ### Quick Start
 
 ```bash
-# Install from PyPI
-pip install hybrid-element-retriever
+# Install package
+pip install hybrid-element-retriever[ml]
+
+# Install Playwright browser
+python -m playwright install chromium
 
 # Install ONNX models
-her-install-models
+bash scripts/install_models.sh  # Linux/Mac
+# or
+powershell scripts/install_models.ps1  # Windows
 
 # Verify installation
-her version
+her --help
 ```
 
 ### Development Setup
 
 ```bash
 # Clone repository
-git clone https://github.com/your-org/her.git
-cd her
+git clone https://github.com/abhilashMirupati/hybrid-element-retriever.git
+cd hybrid-element-retriever
 
-# Install in development mode
-pip install -e ".[dev,ml]"
+# Install with all dependencies
+pip install -e ".[dev,ml,java]"
 
-# Install models
-./scripts/install_models.sh  # Linux/Mac
-# or
-./scripts/install_models.ps1  # Windows
+# Install Playwright
+python -m playwright install chromium
 
-# Run tests
-pytest tests --cov=src --cov-report=term
+# Install models (creates ONNX exports)
+./scripts/install_models.sh
+
+# Run tests with coverage
+pytest tests --cov=src --cov-fail-under=80
+
+# Build distributions
+python -m build  # Python wheel/sdist
+cd java && mvn package  # Java JAR
 ```
 
 ## 🎯 Usage
@@ -56,15 +66,15 @@ pytest tests --cov=src --cov-report=term
 ### Command Line Interface
 
 ```bash
-# Execute an action
-her act "click the login button" --url https://example.com
+# Execute action with natural language
+her act "Click the Sign In button" --url https://example.com
 
-# Query for elements
-her query "all submit buttons" --url https://example.com --limit 5
+# Query for elements (returns strict JSON)
+her query "Find all input fields" --url https://example.com
 
 # Manage cache
-her cache --stats
-her cache --clear
+her cache --stats  # Show statistics
+her cache --clear  # Clear all caches
 ```
 
 ### Python API
@@ -73,44 +83,77 @@ her cache --clear
 from her.cli_api import HybridClient
 
 # Initialize client
-client = HybridClient(headless=True, timeout_ms=30000)
+client = HybridClient(
+    headless=True,           # Run browser headlessly
+    timeout_ms=30000,        # Action timeout
+    promotion_enabled=True   # Enable locator promotion
+)
 
-# Execute action
-result = client.act("Enter username into login field", url="https://example.com")
-print(f"Success: {result['success']}")
-print(f"Locator used: {result['used_locator']}")
+try:
+    # Execute action - returns strict JSON with no empty fields
+    result = client.act(
+        "Enter 'user@example.com' in the email field",
+        url="https://example.com"
+    )
+    
+    if result['success']:
+        print(f"✓ Action completed using: {result['used_locator']}")
+        print(f"  Duration: {result['duration_ms']}ms")
+        
+        # Check if overlays were dismissed
+        if 'dismissed_overlays' in result:
+            print(f"  Auto-dismissed {len(result['dismissed_overlays'])} overlays")
+    
+    # Query for elements
+    query_result = client.query(
+        "Find all clickable buttons",
+        url="https://example.com"
+    )
+    
+    # Results are guaranteed to have no None/empty values
+    for item in query_result[:3]:
+        print(f"Confidence: {item['confidence']:.2f}")
+        print(f"Selector: {item['selector']}")
+        print(f"Element: {item['element']['tag']} - {item['element'].get('text', '')}")
 
-# Query elements
-elements = client.query("navigation links", url="https://example.com")
-for elem in elements[:3]:
-    print(f"Score: {elem['score']:.3f} - {elem['selector']}")
-
-# Clean up
-client.close()
+finally:
+    client.close()
 ```
 
 ### Java Integration
 
 ```java
 import com.hybridclient.her.HybridClientJ;
+import java.util.Map;
 
-public class Example {
+public class HERExample {
     public static void main(String[] args) {
         HybridClientJ client = new HybridClientJ();
         
-        // Execute action
-        Map<String, Object> result = client.act(
-            "Click the submit button", 
-            "https://example.com"
-        );
-        
-        // Query elements
-        List<String> xpaths = client.findXPaths(
-            "input fields", 
-            "https://example.com"
-        );
-        
-        client.shutdown();
+        try {
+            // Execute action
+            Map<String, Object> result = client.act(
+                "Click the login button",
+                "https://example.com"
+            );
+            
+            if ((Boolean) result.get("success")) {
+                System.out.println("Action successful!");
+                System.out.println("Locator: " + result.get("used_locator"));
+            }
+            
+            // Query elements
+            Map<String, Object> queryResult = client.query(
+                "Find search box",
+                "https://example.com"
+            );
+            
+            System.out.println("Found element with confidence: " + 
+                              queryResult.get("confidence"));
+            
+        } finally {
+            client.shutdown();
+        }
     }
 }
 ```
@@ -119,153 +162,128 @@ public class Example {
 
 ### Core Components
 
-1. **CDP Bridge** (`src/her/bridge/`)
-   - Full DOM + Accessibility tree capture
-   - Shadow DOM piercing
-   - Frame/iframe isolation
-   - Delta detection for re-indexing
+- **Embeddings Module** (`src/her/embeddings/`)
+  - ONNX model resolution with deterministic fallback
+  - E5-small for query embeddings (384-dim)
+  - MarkupLM-base for element embeddings (768-dim)
+  - SHA256-based fallback when models unavailable
 
-2. **Fusion Scorer** (`src/her/rank/`)
-   - Semantic similarity (α=1.0)
-   - CSS/heuristic scoring (β=0.5)
-   - Promotion scoring (γ=0.2)
-   - Visibility and position modifiers
+- **Bridge Module** (`src/her/bridge/`)
+  - CDP integration for DOM/AX tree extraction
+  - Shadow DOM piercing and iframe traversal
+  - DOM hash computation for change detection
+  - Wait-for-stable logic before snapshots
 
-3. **Self-Healing** (`src/her/recovery/`)
-   - Fallback locator generation
-   - DOM resnapshot on failure
-   - Promotion store for winners
-   - Strategy-based recovery
+- **Ranking & Fusion** (`src/her/rank/`)
+  - Semantic similarity scoring (α=1.0)
+  - CSS robustness scoring (β=0.5)
+  - Promotion boost scoring (γ=0.2)
+  - Heuristic weighting for role/name/attributes
 
-4. **Session Manager** (`src/her/session/`)
-   - SPA route change detection
-   - Auto re-indexing on DOM changes
-   - Multi-frame support
-   - History tracking
+- **Locator Synthesis** (`src/her/locator/`)
+  - Semantic-first locator generation
+  - CSS selector fallback
+  - Contextual XPath for disambiguation
+  - Uniqueness verification per frame
 
-5. **Action Executor** (`src/her/executor/`)
-   - Overlay dismissal
-   - Occlusion detection
-   - Scroll into view
-   - Post-action verification
+- **Executor** (`src/her/executor/`)
+  - Scroll-into-view and settle logic
+  - Occlusion detection via elementFromPoint
+  - Automatic overlay/banner dismissal
+  - Post-action verification (value/URL/DOM changes)
+
+- **Recovery & Self-Heal** (`src/her/recovery/`)
+  - Fallback locator chains
+  - Stateless DOM re-snapshot on failure
+  - SQLite promotion persistence
+  - Winner tracking and score adjustment
 
 ## 🧪 Testing
 
-The system includes comprehensive tests with 80%+ coverage:
+The test suite includes comprehensive real-world examples:
 
+- **Login with Modal**: Modal popup handling, form interaction
+- **SPA Route Changes**: DOM delta detection, re-indexing triggers
+- **Shadow DOM Components**: Nested shadow root traversal
+- **Iframe Forms**: Cross-frame element detection
+- **Edge Cases**: Ambiguous elements, delayed loading, stale references
+
+Run tests:
 ```bash
-# Run all tests
-pytest tests/
+# All tests with coverage
+pytest tests --cov=src --cov-fail-under=80
 
-# Run with coverage
-pytest tests/ --cov=src --cov-report=html
-
-# Run specific test suite
-pytest tests/test_realworld_examples.py -v
-
-# Run performance tests
-pytest tests/test_realworld_examples.py::TestPerformance -v
+# Specific test categories
+pytest tests/test_examples.py -v  # Real-world examples
+pytest tests/test_embeddings.py   # Embedding tests
+pytest tests/test_recovery.py     # Self-heal tests
 ```
 
-### Real-World Test Scenarios
+## 🚢 CI/CD
 
-- **Login with Overlays**: Cookie banners, modal popups
-- **SPA Navigation**: Dynamic content, route changes
-- **Shadow DOM/iFrames**: Nested components, payment forms
-- **Multiple Matches**: Disambiguation strategies
-- **Post-Action Verification**: Value setting, state changes
+GitHub Actions workflow with matrix testing:
 
-## 🔧 Configuration
-
-### Environment Variables
-
-```bash
-# Model directories
-export HER_MODELS_DIR=/path/to/models
-export HER_CACHE_DIR=/path/to/cache
-export HER_LOG_LEVEL=INFO
-
-# Performance tuning
-export HER_MEMORY_CACHE_SIZE=1000
-export HER_DISK_CACHE_SIZE_MB=100
-```
-
-### Configuration File
-
-See `src/her/config.py` for all configurable parameters:
-
-- Fusion weights (α, β, γ)
-- Cache sizes
-- Timeouts
-- Browser settings
-- Auto-indexing thresholds
+- **OS**: Ubuntu + Windows
+- **Python**: 3.9, 3.10, 3.11
+- **Checks**:
+  - `black --check` (formatting)
+  - `flake8` (linting)
+  - `mypy` (type checking)
+  - `pytest --cov-fail-under=80` (tests + coverage)
+  - `python -m build` (wheel + sdist)
+  - `mvn package` (Java JAR)
 
 ## 📊 Performance
 
-- **Locator Generation**: < 100ms average
-- **DOM Snapshot**: < 500ms for large DOMs
-- **Self-Healing**: < 200ms with cache hit
-- **Cache Hit Rate**: > 90% in production
-- **Memory Usage**: < 500MB typical
+Target performance metrics:
+- Simple DOM (<1000 elements): <200ms
+- Complex DOM (>5000 elements): <800ms
+- Cache hit rate: >70% after warm-up
+- Locator uniqueness: 100% guaranteed
+- Self-heal success rate: >85%
 
-## 🚢 Deployment
+## 🔒 Security
 
-### Docker
-
-```dockerfile
-FROM python:3.10-slim
-
-WORKDIR /app
-COPY . .
-
-RUN pip install -e .
-RUN her-install-models
-
-CMD ["her", "--help"]
-```
-
-### CI/CD
-
-The project includes GitHub Actions workflows for:
-
-- **Linting**: Black, Flake8, MyPy
-- **Testing**: Ubuntu + Windows, Python 3.9-3.11
-- **Coverage**: 80%+ requirement with Codecov
-- **Artifacts**: Wheel, sdist, JAR
+- No credentials stored in code
+- Secure iframe communication
+- Input sanitization for XPath/CSS
+- Rate limiting on cache operations
+- Audit logging for all actions
 
 ## 📚 Documentation
 
-- [Setup Guide](SETUP_GUIDE.md) - Detailed installation instructions
-- [Quick Reference](QUICK_REFERENCE.md) - Common commands and patterns
-- [API Documentation](docs/api.md) - Complete API reference
-- [Examples](examples/) - Real-world DOM samples and intents
+- [SETUP_GUIDE.md](SETUP_GUIDE.md) - Detailed setup instructions
+- [CHANGELOG.md](CHANGELOG.md) - Version history
+- [RISKS.md](RISKS.md) - Risk assessment and mitigations
+- [API Reference](docs/api.md) - Complete API documentation
 
 ## 🤝 Contributing
 
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
-
 1. Fork the repository
-2. Create a feature branch
-3. Add tests for new functionality
-4. Ensure all tests pass
-5. Submit a pull request
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Ensure all tests pass (`pytest tests`)
+4. Verify formatting (`black src tests`)
+5. Commit changes (`git commit -m 'Add amazing feature'`)
+6. Push to branch (`git push origin feature/amazing-feature`)
+7. Open a Pull Request
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License - see [LICENSE](LICENSE) file for details.
 
 ## 🙏 Acknowledgments
 
-- ONNX Runtime team for efficient model inference
-- Playwright team for excellent browser automation
-- Hugging Face for pre-trained models
+- Hugging Face for E5 and MarkupLM models
+- Playwright team for browser automation
+- ONNX Runtime for inference optimization
+- Py4J for Java-Python bridge
 
 ## 📞 Support
 
-- **Issues**: [GitHub Issues](https://github.com/your-org/her/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/your-org/her/discussions)
-- **Email**: support@her-project.org
+For issues, questions, or contributions:
+- GitHub Issues: [Report bugs or request features](https://github.com/abhilashMirupati/hybrid-element-retriever/issues)
+- Documentation: [Full documentation](https://github.com/abhilashMirupati/hybrid-element-retriever/wiki)
 
 ---
 
-**HER** - Turning natural language into precise web automation, reliably and at scale.
+**Status**: ✅ Production Ready | **Version**: 1.0.0 | **Coverage**: 80%+

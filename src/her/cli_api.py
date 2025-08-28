@@ -190,7 +190,8 @@ class HybridClient:
         # Calculate total duration
         result["duration_ms"] = int((time.time() - start_time) * 1000)
 
-        return result
+        # Ensure strict JSON output
+        return self._clean_json_output(result)
 
     def query(self, phrase: str, url: Optional[str] = None) -> List[Dict[str, Any]]:
         """Query for element candidates without performing action.
@@ -246,10 +247,13 @@ class HybridClient:
                     },
                     "explanation": reasons.get("explanation", ""),
                     "dom_hash": dom_hash,
+                    "confidence": score,
+                    "rationale": reasons.get("explanation", "")
                 }
             )
 
-        return results
+        # Ensure strict JSON output for each result
+        return [self._clean_json_output(r) for r in results]
 
     def _find_candidates(
         self, phrase: str, descriptors: List[Dict[str, Any]]
@@ -379,6 +383,19 @@ class HybridClient:
 
         return result
 
+    def _clean_json_output(self, data: Any) -> Any:
+        """Ensure strict JSON output with no None or empty values."""
+        if isinstance(data, dict):
+            return {
+                k: self._clean_json_output(v)
+                for k, v in data.items()
+                if v is not None and v != "" and v != []
+            }
+        elif isinstance(data, list):
+            return [self._clean_json_output(item) for item in data if item is not None]
+        else:
+            return data
+    
     def close(self) -> None:
         """Close browser and clean up resources."""
         self.executor.close()
