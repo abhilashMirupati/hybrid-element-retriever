@@ -1,240 +1,194 @@
-# Install ONNX models for HER (Windows PowerShell)
+# scripts/install_models.ps1
+# Installs and exports required ONNX models for HER on Windows, then writes MODEL_INFO.json.
+# Models:
+#   - intfloat/e5-small        (query embeddings; task: feature-extraction)
+#   - microsoft/markuplm-base  (element embeddings; task: feature-extraction)
+#
+# Output directory:
+#   repo_root/src/her/models/
+#
+# Requires Python. The script will install needed Python packages if missing:
+#   transformers, tokenizers, huggingface_hub, onnxruntime, optimum[onnxruntime]
+# Falls back to python module exporter if optimum-cli is not on PATH.
 
+Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-Write-Host "Installing ONNX models for Hybrid Element Retriever..." -ForegroundColor Green
+# -------- locate repo root & models dir --------
+$ScriptDir = Split-Path -LiteralPath $PSCommandPath -Parent
+$RepoRoot  = Resolve-Path -LiteralPath (Join-Path $ScriptDir "..")
+$ModelsDir = Join-Path $RepoRoot "src/her/models"
+$CacheDir  = $env:HER_HF_CACHE_DIR
+if (-not $CacheDir) { $CacheDir = Join-Path $RepoRoot ".cache/hf" }
 
-# Get script directory
-$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$modelDir = Join-Path $scriptDir "..\src\her\models"
+New-Item -ItemType Directory -Force -Path $ModelsDir | Out-Null
+New-Item -ItemType Directory -Force -Path $CacheDir  | Out-Null
 
-# Create models directory
-if (!(Test-Path $modelDir)) {
-    New-Item -ItemType Directory -Force -Path $modelDir | Out-Null
+# -------- config --------
+$E5Id        = "intfloat/e5-small"
+$E5Task      = "feature-extraction"
+$E5Out       = Join-Path $ModelsDir "e5-small-onnx"
+
+$MarkupId    = "microsoft/markuplm-base"
+$MarkupTask  = "feature-extraction"
+$MarkupOut   = Join-Path $ModelsDir "markuplm-base-onnx"
+
+$ModelInfoPath = Join-Path $ModelsDir "MODEL_INFO.json"
+
+# Respect offline if set
+if (-not $env:HF_HUB_OFFLINE) { $env:HF_HUB_OFFLINE = "0" }
+$env:TRANSFORMERS_CACHE = $CacheDir
+$env:HF_HOME            = $CacheDir
+$env:HF_HUB_ENABLE_HF_TRANSFER = "1"
+
+# -------- helpers --------
+function Get-PythonCmd {
+    if (Get-Command py -ErrorAction SilentlyContinue) { return "py" }
+    elseif (Get-Command python -ErrorAction SilentlyContinue) { return "python" }
+    elseif (Get-Command python3 -ErrorAction SilentlyContinue) { return "python3" }
+    throw "Python not found. Please install Python 3."
 }
 
-# Check if Python is available
-try {
-    $pythonCmd = Get-Command python -ErrorAction SilentlyContinue
-    if ($null -eq $pythonCmd) {
-        $pythonCmd = Get-Command python3 -ErrorAction Stop
+$Py = Get-PythonCmd
+
+function Test-PythonImport($module) {
+    $code = @"
+import importlib, sys
+sys.exit(0 if importlib.util.find_spec('$module') is not None else 1)
+"@
+    $tmp = [System.IO.Path]::GetTempFileName() + ".py"
+    Set-Content -LiteralPath $tmp -Value $code -Encoding UTF8
+    try {
+        & $Py $tmp | Out-Null
+        return $LASTEXITCODE -eq 0
+    } finally {
+        Remove-Item -LiteralPath $tmp -ErrorAction SilentlyContinue
     }
-} catch {
-    Write-Host "Error: Python 3 is required" -ForegroundColor Red
-    exit 1
 }
 
-$pythonExe = $pythonCmd.Source
+function Pip-InstallIfMissing($module, $package=$null) {
+    if (-not (Test-PythonImport $module)) {
+        if (-not $package) { $package = $module }
+        Write-Host "Installing $package ..."
+        & $Py -m pip install --upgrade $package
+        if ($LASTEXITCODE -ne 0) { throw "pip install failed for $package" }
+    }
+}
 
-# Create Python script to download and export models
-$exportScript = @'
-#!/usr/bin/env python3
-"""Export Hugging Face models to ONNX format."""
+function Has-Command($name) {
+    return $null -ne (Get-Command $name -ErrorAction SilentlyContinue)
+}
 
+# -------- preflight --------
+# ensure pip is usable
+& $Py -m pip --version | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "pip not available for Python." }
+
+# install optimum + runtime + transformers stack if missing
+Pip-InstallIfMissing "transformers" "transformers>=4.40.0"
+Pip-InstallIfMissing "tokenizers" "tokenizers>=0.15.0"
+Pip-InstallIfMissing "huggingface_hub" "huggingface_hub>=0.22.0"
+Pip-InstallIfMissing "onnxruntime" "onnxruntime>=1.16.0"
+Pip-InstallIfMissing "optimum" "optimum[onnxruntime]>=1.17.0"
+
+$UseCli = $true
+if (-not (Has-Command "optimum-cli")) {
+    $UseCli = $false
+}
+
+# -------- export function using optimum --------
+function Invoke-PythonScript($code, $args) {
+    $tmp = [System.IO.Path]::GetTempFileName() + ".py"
+    Set-Content -LiteralPath $tmp -Value $code -Encoding UTF8
+    try {
+        & $Py $tmp @args
+        if ($LASTEXITCODE -ne 0) { throw "Python script failed." }
+    } finally {
+        Remove-Item -LiteralPath $tmp -ErrorAction SilentlyContinue
+    }
+}
+
+function Export-Model($hfId, $task, $outDir) {
+    if (Test-Path -LiteralPath (Join-Path $outDir "model.onnx")) {
+        Write-Host "✓ Skipping export for $hfId (already exists at $outDir)"
+        return
+    }
+    if (Test-Path -LiteralPath $outDir) {
+        Remove-Item -Recurse -Force -LiteralPath $outDir
+    }
+    New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+
+    Write-Host "→ Exporting $hfId to ONNX ($task) → $outDir"
+    if ($UseCli) {
+        optimum-cli export onnx --model "$hfId" --task "$task" --cache_dir "$CacheDir" "$outDir"
+        if ($LASTEXITCODE -ne 0) { throw "optimum-cli export failed for $hfId" }
+    } else {
+        $exportPy = @"
 import sys
-import os
-import json
-from pathlib import Path
-from datetime import datetime
-
-def export_models(model_dir):
-    """Export models to ONNX format."""
-    model_dir = Path(model_dir)
-    model_dir.mkdir(parents=True, exist_ok=True)
-    
-    print("Checking for required packages...")
-    
-    # Check for required packages
-    try:
-        import torch
-        import transformers
-        import onnx
-        import onnxruntime
-    except ImportError as e:
-        print(f"Missing required package: {e}")
-        print("Installing required packages...")
-        import subprocess
-        subprocess.check_call([sys.executable, "-m", "pip", "install", 
-                              "torch", "transformers", "onnx", "onnxruntime", 
-                              "sentencepiece", "protobuf"])
-        import torch
-        import transformers
-        import onnx
-        import onnxruntime
-    
-    from transformers import AutoModel, AutoTokenizer
-    
-    # Model configurations
-    models = [
-        {
-            "name": "e5-small",
-            "model_id": "intfloat/e5-small",
-            "task": "query_embedding",
-            "output": model_dir / "e5-small.onnx",
-            "tokenizer_output": model_dir / "e5-small-tokenizer",
-            "embedding_dim": 384
-        },
-        {
-            "name": "markuplm-base",
-            "model_id": "microsoft/markuplm-base",
-            "task": "element_embedding",
-            "output": model_dir / "markuplm-base.onnx",
-            "tokenizer_output": model_dir / "markuplm-base-tokenizer",
-            "embedding_dim": 768
-        }
-    ]
-    
-    model_info = {
-        "created": datetime.utcnow().isoformat(),
-        "models": {}
+from optimum.exporters.onnx import main as onnx_export_main
+hf_id, task, out_dir, cache_dir = sys.argv[1:5]
+args = ["export", "onnx", "--model", hf_id, "--task", task, "--cache_dir", cache_dir, out_dir]
+onnx_export_main(args)
+"@
+        Invoke-PythonScript $exportPy @($hfId, $task, $outDir, $CacheDir)
     }
-    
-    for config in models:
-        output_path = config["output"]
-        tokenizer_path = config["tokenizer_output"]
-        
-        print(f"\nProcessing {config['name']}...")
-        
-        # Record model info
-        model_info["models"][config["name"]] = {
-            "huggingface_id": config["model_id"],
-            "task": config["task"],
-            "onnx_path": output_path.name,
-            "tokenizer_path": tokenizer_path.name,
-            "embedding_dim": config["embedding_dim"],
-            "exported": False,
-            "error": None
-        }
-        
-        if output_path.exists() and tokenizer_path.exists():
-            print(f"Model already exists: {output_path}")
-            model_info["models"][config["name"]]["exported"] = True
-            continue
-        
-        print(f"Downloading {config['name']} from {config['model_id']}...")
-        
-        try:
-            # Load model and tokenizer
-            model = AutoModel.from_pretrained(config["model_id"])
-            tokenizer = AutoTokenizer.from_pretrained(config["model_id"])
-            
-            # Save tokenizer
-            print(f"Saving tokenizer to: {tokenizer_path}")
-            tokenizer.save_pretrained(str(tokenizer_path))
-            
-            # Prepare dummy input
-            dummy_text = "This is a sample text for model export"
-            dummy_input = tokenizer(dummy_text, return_tensors="pt", 
-                                   padding=True, truncation=True, max_length=512)
-            
-            # Set model to eval mode
-            model.eval()
-            
-            # Export to ONNX
-            print(f"Exporting to ONNX: {output_path}")
-            
-            # Get the model output for dynamic axes
-            with torch.no_grad():
-                model_output = model(**dummy_input)
-            
-            # Determine output names based on model output
-            if hasattr(model_output, "last_hidden_state"):
-                output_names = ["last_hidden_state"]
-            elif hasattr(model_output, "pooler_output"):
-                output_names = ["pooler_output"]
-            else:
-                output_names = ["output"]
-            
-            torch.onnx.export(
-                model,
-                tuple(dummy_input.values()),
-                str(output_path),
-                input_names=list(dummy_input.keys()),
-                output_names=output_names,
-                dynamic_axes={
-                    "input_ids": {0: "batch_size", 1: "sequence"},
-                    "attention_mask": {0: "batch_size", 1: "sequence"},
-                    output_names[0]: {0: "batch_size"}
-                },
-                opset_version=11,
-                do_constant_folding=True,
-                export_params=True
-            )
-            
-            print(f"Successfully exported: {output_path}")
-            
-            # Verify the model
-            print(f"Verifying ONNX model...")
-            onnx_model = onnx.load(str(output_path))
-            onnx.checker.check_model(onnx_model)
-            
-            # Test with ONNX Runtime
-            session = onnxruntime.InferenceSession(str(output_path))
-            
-            # Prepare inputs for ONNX runtime
-            ort_inputs = {
-                k: v.numpy() for k, v in dummy_input.items()
-                if k in [inp.name for inp in session.get_inputs()]
-            }
-            
-            # Run inference
-            ort_outputs = session.run(None, ort_inputs)
-            print(f"Model verified successfully! Output shape: {ort_outputs[0].shape}")
-            
-            model_info["models"][config["name"]]["exported"] = True
-            
-        except Exception as e:
-            error_msg = str(e)
-            print(f"Warning: Failed to export {config['name']}: {error_msg}")
-            print("The system will use deterministic fallback embeddings.")
-            
-            model_info["models"][config["name"]]["exported"] = False
-            model_info["models"][config["name"]]["error"] = error_msg
-            
-            # Create placeholder files to prevent re-download attempts
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            output_path.touch()
-            tokenizer_path.mkdir(parents=True, exist_ok=True)
-            (tokenizer_path / "tokenizer_config.json").write_text("{}")
-    
-    # Write MODEL_INFO.json
-    model_info_path = model_dir / "MODEL_INFO.json"
-    print(f"\nWriting model info to: {model_info_path}")
-    with open(model_info_path, 'w') as f:
-        json.dump(model_info, f, indent=2)
-    
-    print("\nModel installation complete!")
-    print("Note: If models failed to export, the system will use deterministic fallback embeddings.")
-    
-    # Print summary
-    print("\n" + "="*50)
-    print("SUMMARY")
-    print("="*50)
-    for name, info in model_info["models"].items():
-        status = "✓ Exported" if info["exported"] else "✗ Fallback"
-        print(f"{name}: {status}")
-        if not info["exported"] and info["error"]:
-            print(f"  Error: {info['error'][:100]}...")
 
-if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        model_dir = sys.argv[1]
-    else:
-        model_dir = Path(__file__).parent.parent / "src" / "her" / "models"
-    
-    export_models(model_dir)
-'@
+    $primary = Join-Path $outDir "model.onnx"
+    if (-not (Test-Path -LiteralPath $primary)) {
+        $cand = Get-ChildItem -LiteralPath $outDir -Filter *.onnx -File | Select-Object -First 1
+        if ($null -eq $cand) { throw "No ONNX graph produced for $hfId in $outDir" }
+        Move-Item -LiteralPath $cand.FullName -Destination $primary -Force
+        Write-Host "✓ Normalized primary ONNX to $primary"
+    } else {
+        Write-Host "✓ Exported model.onnx at $outDir"
+    }
+}
 
-# Save script to temp file
-$tempScript = [System.IO.Path]::GetTempFileName() + ".py"
-Set-Content -Path $tempScript -Value $exportScript -Encoding UTF8
+# -------- tokenizer/config/processor copy --------
+$copyAssetsPy = @"
+import sys, os, shutil
+from transformers import AutoTokenizer, AutoConfig, AutoProcessor
+hf_id, out_dir = sys.argv[1:3]
+os.makedirs(out_dir, exist_ok=True)
+try:
+    tok = AutoTokenizer.from_pretrained(hf_id, use_fast=True)
+    tok.save_pretrained(out_dir)
+except Exception:
+    pass
+try:
+    cfg = AutoConfig.from_pretrained(hf_id)
+    cfg.save_pretrained(out_dir)
+except Exception:
+    pass
+try:
+    proc = AutoProcessor.from_pretrained(hf_id)
+    proc.save_pretrained(out_dir)
+except Exception:
+    pass
+"@
 
-# Run the export script
-Write-Host "Exporting models to ONNX format..." -ForegroundColor Yellow
-& $pythonExe $tempScript $modelDir
+function Copy-Assets($hfId, $outDir) {
+    Invoke-PythonScript $copyAssetsPy @($hfId, $outDir)
+}
 
-# Clean up
-Remove-Item -Path $tempScript -Force
+# -------- exports --------
+Export-Model -hfId $E5Id     -task $E5Task     -outDir $E5Out
+Export-Model -hfId $MarkupId -task $MarkupTask -outDir $MarkupOut
 
-Write-Host "Model installation complete!" -ForegroundColor Green
-Write-Host "Models are stored in: $modelDir" -ForegroundColor Cyan
+Copy-Assets -hfId $E5Id     -outDir $E5Out
+Copy-Assets -hfId $MarkupId -outDir $MarkupOut
+
+# -------- MODEL_INFO.json --------
+$info = @"
+{
+  "generated_at": "$(Get-Date -AsUTC -Format s)Z",
+  "models": [
+    { "name": "e5-small",      "hf_id": "$E5Id",     "task": "$E5Task",     "path": "src/her/models/$(Split-Path -Leaf $E5Out)" },
+    { "name": "markuplm-base", "hf_id": "$MarkupId", "task": "$MarkupTask", "path": "src/her/models/$(Split-Path -Leaf $MarkupOut)" }
+  ]
+}
+"@
+Set-Content -LiteralPath $ModelInfoPath -Value $info -Encoding UTF8
+Write-Host "Wrote $ModelInfoPath"
+
+Write-Host "✅ Models installed to: $ModelsDir"
