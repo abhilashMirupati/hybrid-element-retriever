@@ -18,6 +18,16 @@ class Intent:
     constraints: Optional[Dict[str, Any]] = None
     confidence: float = 1.0
 
+    # Test convenience: subscriptable like a dict
+    def __getitem__(self, key: str):
+        mapping = {
+            'action': self.action,
+            'target': self.target_phrase,
+            'args': self.args,
+            'confidence': self.confidence,
+        }
+        return mapping[key]
+
 
 class IntentParser:
     """Parse natural language steps into structured intents."""

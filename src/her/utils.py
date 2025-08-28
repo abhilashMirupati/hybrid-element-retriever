@@ -70,8 +70,6 @@ def truncate_text(text: Any, max_length: int) -> str:
         return text
 
     if max_length <= 3:
-        # Return truncated marker of exact length to avoid forbidden ellipsis
-        return (text[:max_length]).rstrip()
+        return "..."
 
-    # Append a single unicode ellipsis-like marker without using three dots
-    return text[: max_length - 1] + "…"
+    return text[: max_length - 1] + "..."
