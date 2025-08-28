@@ -21,6 +21,7 @@ from .executor.actions import ActionError, click, fill, check, wait_for_idle
 from .recovery.enhanced_self_heal import EnhancedSelfHeal
 from .cache.two_tier import get_global_cache
 from .utils import truncate_text
+from .handlers.complex_scenarios import ComplexScenarioHandler
 
 # Configure logging
 logging.basicConfig(
@@ -111,6 +112,7 @@ class HybridClient:
         self.browser: Optional[Browser] = None
         self.page: Optional[Page] = None
         self.session_id: Optional[str] = None
+        self.complex_handler: Optional[ComplexScenarioHandler] = None
         
         logger.info(f"HybridClient initialized (headless={headless}, auto_index={auto_index})")
     
@@ -131,6 +133,10 @@ class HybridClient:
                 self.page,
                 auto_index=self.auto_index
             )
+            
+            # Initialize complex scenario handler
+            self.complex_handler = ComplexScenarioHandler(self.page)
+            
             logger.debug(f"Page created with session {self.session_id}")
         
         return self.page
@@ -155,6 +161,11 @@ class HybridClient:
             if url:
                 page.goto(url)
                 wait_for_idle(page)
+                
+                # Prepare page for automation
+                if self.complex_handler:
+                    self.complex_handler.prepare_page_for_automation()
+                
                 logger.debug(f"Navigated to {url}")
             
             # Get session
@@ -347,6 +358,138 @@ class HybridClient:
             
         except Exception as e:
             logger.error(f"Act failed: {e}", exc_info=True)
+            return ActionResult(
+                success=False,
+                error=str(e)
+            ).to_dict()
+    
+    def act_complex(
+        self,
+        step: str,
+        url: Optional[str] = None,
+        handle_dynamic: bool = True,
+        handle_frames: bool = True,
+        handle_shadow: bool = True,
+        handle_spa: bool = True,
+        max_retries: int = 3
+    ) -> Dict:
+        """Execute action with full complex scenario handling.
+        
+        Args:
+            step: Natural language action description
+            url: Optional URL to navigate to first
+            handle_dynamic: Handle dynamic content
+            handle_frames: Search in iframes
+            handle_shadow: Search in shadow DOM
+            handle_spa: Handle SPA navigation
+            max_retries: Maximum retry attempts
+            
+        Returns:
+            Dictionary with action result
+        """
+        try:
+            logger.info(f"Complex Act: '{step}' at {url or 'current page'}")
+            
+            # Parse intent
+            intent = self.intent_parser.parse(step)
+            logger.debug(f"Parsed intent: action={intent.action}, target={intent.target_phrase}")
+            
+            # Ensure browser and complex handler
+            page = self._ensure_browser()
+            
+            if url:
+                page.goto(url)
+                
+                # Prepare page
+                if self.complex_handler:
+                    self.complex_handler.prepare_page_for_automation()
+            
+            # Handle dynamic content if needed
+            if handle_dynamic and self.complex_handler:
+                self.complex_handler.dynamic_handler.wait_for_dom_stable()
+            
+            # Query for target element with frame/shadow support
+            query_result = self.query(intent.target_phrase, None)
+            
+            if not query_result.get("ok") or not query_result.get("elements"):
+                # Try with complex handler
+                if self.complex_handler:
+                    success = self.complex_handler.handle_element_interaction(
+                        selector=intent.target_phrase,
+                        action=intent.action,
+                        value=intent.args,
+                        handle_stale=True,
+                        handle_frames=handle_frames,
+                        handle_shadow=handle_shadow,
+                        wait_stable=handle_dynamic
+                    )
+                    
+                    if success:
+                        return ActionResult(
+                            success=True,
+                            locator=intent.target_phrase,
+                            details={
+                                "action": intent.action,
+                                "method": "complex_handler"
+                            }
+                        ).to_dict()
+                
+                raise ActionError(f"No elements found for: {intent.target_phrase}")
+            
+            # Get best element
+            best_element = query_result["elements"][0]
+            locator = best_element["selector"]
+            strategy = best_element["strategy"]
+            
+            # Use complex handler for execution
+            if self.complex_handler:
+                # Create element getter for stale handling
+                def element_getter():
+                    if strategy == "css":
+                        return page.query_selector(locator)
+                    elif strategy == "xpath":
+                        return page.query_selector(f"xpath={locator}")
+                    else:
+                        return page.locator(locator).first
+                
+                # Define action executor
+                def perform_action(element):
+                    if intent.action == "click":
+                        element.click()
+                    elif intent.action in ["type", "fill"]:
+                        element.fill(intent.args or "")
+                    elif intent.action == "check":
+                        element.check()
+                    elif intent.action == "select":
+                        element.select_option(intent.args or "")
+                    else:
+                        element.click()
+                
+                # Execute with stale protection
+                self.complex_handler.stale_handler.safe_execute(
+                    element_getter,
+                    perform_action
+                )
+                
+                # Handle SPA navigation if needed
+                if handle_spa:
+                    self.complex_handler.spa_handler.wait_for_spa_navigation(timeout=3.0)
+                
+                return ActionResult(
+                    success=True,
+                    locator=locator,
+                    details={
+                        "action": intent.action,
+                        "confidence": best_element["score"],
+                        "method": "complex_with_protection"
+                    }
+                ).to_dict()
+            
+            # Fallback to standard execution
+            return self.act(step, url)
+            
+        except Exception as e:
+            logger.error(f"Complex act failed: {e}", exc_info=True)
             return ActionResult(
                 success=False,
                 error=str(e)
