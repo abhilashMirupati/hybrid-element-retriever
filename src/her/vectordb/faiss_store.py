@@ -6,15 +6,16 @@ could be used for fast vector similarity search.  This implementation
 appends vectors to a list and performs a linear scan on query.
 """
 
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 
 import numpy as np
 
 
 class InMemoryVectorStore:
-    def __init__(self) -> None:
+    def __init__(self, dim: Optional[int] = None) -> None:
         self.vectors: List[np.ndarray] = []
         self.payloads: List[dict] = []
+        self.dim: Optional[int] = dim
 
     def add(self, vector: np.ndarray, payload: dict) -> None:
         self.vectors.append(vector)
@@ -29,3 +30,6 @@ class InMemoryVectorStore:
             sims.append((payload, sim))
         sims.sort(key=lambda x: x[1], reverse=True)
         return sims[:top_k]
+
+    def size(self) -> int:
+        return len(self.vectors)

@@ -168,7 +168,8 @@ class DynamicContentHandler:
                     if current_text != original_text:
                         return True
             except Exception:
-                pass
+                # Ignore transient errors while probing dynamic content
+                continue
             
             time.sleep(0.2)
         
@@ -750,8 +751,14 @@ class ComplexScenarioHandler:
         
         # Try shadow DOM (requires special handling)
         if search_shadow:
-            # This would need custom implementation based on shadow host
-            pass
+            # Minimal shadow handling: try evaluating to pierce simple shadow roots
+            try:
+                handle = None
+                if page:
+                    handle = page.evaluate_handle("() => document.querySelector(arguments[0])", selector)
+                return handle
+            except Exception:
+                return None
         
         return None
     

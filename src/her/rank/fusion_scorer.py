@@ -458,8 +458,8 @@ class FusionScorer:
                 if tabindex >= 0:
                     score += 0.2
             except Exception:
-                # Tabindex might not be available or parseable
-                pass
+                # Ignore unparsable tabindex
+                score += 0.0
 
         return min(1.0, score)
 

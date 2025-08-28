@@ -16,8 +16,15 @@ class LocatorSynthesizer(_LocatorSynthesizer):
         # Convert simple descriptor to complex format if needed
         element = self._normalize_descriptor(descriptor)
 
-        # Call parent synthesize
-        return super().synthesize(element, context=None)
+        # Call parent synthesize and convert to simple list of selector strings
+        locs = super().synthesize(element, context=None)
+        out: List[str] = []
+        for loc in locs:
+            if isinstance(loc, dict) and 'selector' in loc:
+                out.append(loc['selector'])
+            elif isinstance(loc, str):
+                out.append(loc)
+        return out
 
     def _normalize_descriptor(self, descriptor: Dict[str, Any]) -> Dict[str, Any]:
         """Normalize descriptor to expected format."""

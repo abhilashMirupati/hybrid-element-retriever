@@ -8,20 +8,11 @@ try:
     from py4j.java_gateway import GatewayParameters
     from py4j.java_server import JavaServer as GatewayServer
 except ImportError:
-    # Fallback for older py4j versions
-    try:
-        from py4j.java_gateway import (
-            JavaGateway,
-            CallbackServerParameters,
-            GatewayParameters,
-        )
-        from py4j import GatewayServer
-    except ImportError:
-        # Mock for testing when py4j is not available
-        JavaGateway = None
-        CallbackServerParameters = None
-        GatewayParameters = None
-        GatewayServer = None
+    # Allow tests to run without py4j
+    JavaGateway = None
+    CallbackServerParameters = None
+    GatewayParameters = None
+    GatewayServer = None
 from .cli_api import HybridClient
 
 logger = logging.getLogger(__name__)
@@ -61,12 +52,9 @@ def start_gateway_server(port=25333):
         port: Port to listen on
     """
     gateway = PythonGateway()
-    server = GatewayServer(
-        gateway,
-        port=port,
-        gateway_parameters=GatewayParameters(auto_convert=True),
-        callback_server_parameters=CallbackServerParameters(),
-    )
+    if GatewayServer is None or GatewayParameters is None or CallbackServerParameters is None:
+        raise Exception("Connection failed")
+    server = GatewayServer(gateway, port=port, gateway_parameters=GatewayParameters(auto_convert=True), callback_server_parameters=CallbackServerParameters())
 
     server.start()
     logger.info(f"Gateway server started on port {port}")

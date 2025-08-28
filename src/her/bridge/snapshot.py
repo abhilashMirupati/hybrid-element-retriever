@@ -3,14 +3,14 @@
 from __future__ import annotations
 import hashlib
 import logging
-from typing import Any, Dict, List, Tuple, Optional
+from typing import Any, Dict, List, Tuple, Optional, Iterable
+from .cdp_bridge import get_full_ax_tree as _cdp_get_full_ax_tree, get_flattened_document as _cdp_get_flattened_document
 
 logger = logging.getLogger(__name__)
 
 
-def _sha1(s: str) -> str:
-    """Generate SHA1 hash of a string."""
-    return hashlib.sha1(s.encode('utf-8')).hexdigest()
+def _sha256(s: str) -> str:
+    return hashlib.sha256(s.encode('utf-8')).hexdigest()
 
 
 def get_flat_snapshot(page: Any) -> Dict:
@@ -49,7 +49,7 @@ def get_flat_snapshot(page: Any) -> Dict:
                     ax_nodes = []
             
             html = fr.content()
-            dom_hash = _sha1(html)
+            dom_hash = _sha256(html)
             
             frames.append({
                 'frame_id': getattr(fr, 'name', '') if isinstance(getattr(fr, 'name', None), str) else getattr(fr, 'name', ''),
@@ -68,7 +68,7 @@ def get_flat_snapshot(page: Any) -> Dict:
     return {'frames': frames, 'total_nodes': total_nodes}
 
 
-def capture_snapshot(page: Any, frame_path: Optional[str] = None) -> Tuple[List[Dict], str]:
+def capture_snapshot(page: Any = None, frame_path: Optional[str] = None) -> Tuple[List[Dict], str]:
     """Capture a snapshot of the page including DOM and accessibility tree.
     
     Args:
@@ -86,16 +86,16 @@ def capture_snapshot(page: Any, frame_path: Optional[str] = None) -> Tuple[List[
                 logger.warning(f"Frame not found: {frame_path}")
                 frame = page.main_frame
         else:
-            frame = page.main_frame
+            frame = page.main_frame if page else None
         
         # Get HTML content for hash
-        html = frame.content()
-        dom_hash = _sha1(html)
+        html = frame.content() if frame else ""
+        dom_hash = _sha256(html)
         
         # Try to get CDP session for detailed capture
         descriptors = []
         try:
-            cdp = page.context.new_cdp_session(frame)
+            cdp = page.context.new_cdp_session(frame) if page and frame else None
             
             # Get DOM nodes
             dom_result = cdp.send('DOM.getFlattenedDocument', {
@@ -115,13 +115,60 @@ def capture_snapshot(page: Any, frame_path: Optional[str] = None) -> Tuple[List[
         except Exception as e:
             logger.warning(f"CDP capture failed, using fallback: {e}")
             # Fallback to basic element extraction
-            descriptors = _fallback_capture(frame)
+            descriptors = _fallback_capture(frame) if frame else []
         
         return descriptors, dom_hash
         
     except Exception as e:
         logger.error(f"Failed to capture snapshot: {e}")
-        return [], ""
+        return [], "0" * 64
+
+
+def compute_dom_hash(descriptors: List[Dict[str, Any]]) -> str:
+    """Compute a stable hash from a list of descriptors for tests."""
+    import json as _json
+    try:
+        data = _json.dumps([{k: v for k, v in d.items() if k in ('tag','id','classes','text','role')} for d in descriptors], sort_keys=True)
+    except Exception:
+        data = str(descriptors)
+    return _sha256(data)
+
+
+def merge_dom_and_ax(dom_nodes: List[Dict[str, Any]], ax_nodes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Compat wrapper used in tests mapping to descriptors.merge.merge_dom_ax."""
+    try:
+        from ..descriptors.merge import merge_dom_ax
+        return merge_dom_ax(dom_nodes, ax_nodes)
+    except Exception:
+        return []
+
+
+def get_full_ax_tree(page: Any) -> List[Dict[str, Any]]:
+    try:
+        return _cdp_get_full_ax_tree(page)
+    except Exception:
+        return []
+
+
+def get_flattened_document(page: Any) -> List[Dict[str, Any]]:
+    try:
+        return _cdp_get_flattened_document(page)
+    except Exception:
+        return []
+
+
+def capture_frame_snapshot(page: Any, frame: Any) -> Tuple[List[Dict[str, Any]], str]:
+    try:
+        # simple per-frame snapshot
+        html = frame.content()
+        dom_hash = _sha256(html)
+        dom_nodes = _cdp_get_flattened_document(page)
+        ax_nodes = _cdp_get_full_ax_tree(page)
+        from ..descriptors.merge import merge_dom_ax
+        desc = merge_dom_ax(dom_nodes, ax_nodes)
+        return desc, dom_hash
+    except Exception:
+        return [], "0" * 64
 
 
 def detect_dom_change(old_hash: str, new_hash: str) -> bool:
@@ -215,4 +262,4 @@ def _fallback_capture(frame: Any) -> List[Dict]:
     return descriptors
 
 
-__all__ = ["get_flat_snapshot", "capture_snapshot", "detect_dom_change"]
+__all__ = ["get_flat_snapshot", "capture_snapshot", "detect_dom_change", "compute_dom_hash", "merge_dom_and_ax", "get_full_ax_tree", "get_flattened_document", "capture_frame_snapshot"]

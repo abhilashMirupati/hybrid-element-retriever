@@ -1,34 +1,45 @@
 from __future__ import annotations
-import hashlib
-from typing import List, Sequence
+from typing import List, Optional
 import numpy as np
-try:
-    import onnxruntime as ort
-    from transformers import AutoTokenizer
-except Exception:
-    ort=None; AutoTokenizer=None  # type: ignore
-from ._resolve import ensure_model_available, resolve_file, E5_SMALL_NAME
+
+from .cache import EmbeddingCache
+from ._resolve import get_query_resolver, ONNXModelResolver
+from ..utils import sha1_of  # type: ignore
+
+
 class QueryEmbedder:
-    def __init__(self)->None:
-        self.model_dir=ensure_model_available(E5_SMALL_NAME)
-        self.onnx_path=resolve_file(E5_SMALL_NAME,'model.onnx')
-        self._session=None; self._tokenizer=None
-        if ort and AutoTokenizer:
-            try:
-                self._session=ort.InferenceSession(str(self.onnx_path), providers=['CPUExecutionProvider'])
-                self._tokenizer=AutoTokenizer.from_pretrained(self.model_dir)
-            except Exception:
-                self._session=None; self._tokenizer=None
-    def _hash_embed(self, text:str, dim:int=384)->List[float]:
-        h=hashlib.sha256(text.strip().lower().encode('utf-8')).digest()
-        rng=np.random.RandomState(int.from_bytes(h[:8],'little',signed=False))
-        v=rng.normal(size=dim).astype('float32'); v/= (np.linalg.norm(v)+1e-9); return v.tolist()
-    def embed(self, texts:Sequence[str])->List[List[float]]:
-        if not texts: return []
-        if self._session is None or self._tokenizer is None:
-            return [self._hash_embed(t) for t in texts]
-        toks=self._tokenizer(list(texts), padding=True, truncation=True, return_tensors='np')
-        inputs={k:v.astype('int64') for k,v in toks.items() if k in {'input_ids','attention_mask','token_type_ids'}}
-        if 'token_type_ids' not in inputs: inputs['token_type_ids']=np.zeros_like(inputs['input_ids'], dtype='int64')
-        outs=self._session.run(None, inputs); x=outs[0] if isinstance(outs, list) else outs
-        arr=x.mean(axis=1); arr=arr/(np.linalg.norm(arr,axis=1,keepdims=True)+1e-9); return arr.astype('float32').tolist()
+    """Query embedder that uses ONNX resolver with two-tier cache.
+
+    Exposes methods used by tests:
+      - embed(text) -> np.ndarray
+      - embed_batch(texts) -> List[np.ndarray]
+      - similarity(vec1, vec2) -> float
+      - attributes: cache, resolver, dim
+    """
+
+    def __init__(self, cache: Optional[EmbeddingCache] = None, resolver: Optional[ONNXModelResolver] = None, cache_enabled: bool = True) -> None:
+        self.cache = (cache or EmbeddingCache()) if cache_enabled else None
+        self.resolver = resolver or get_query_resolver()
+        self.dim = int(self.resolver.embedding_dim)
+
+    def _key(self, text: str) -> str:
+        return f"q|{sha1_of(text)}|{self.dim}"
+
+    def embed(self, text: str) -> np.ndarray:
+        key = self._key(text)
+        hit = self.cache.get(key) if self.cache is not None else None
+        if hit is not None:
+            return hit.astype('float32')
+        vec = self.resolver.embed(text).astype('float32')
+        if self.cache is not None:
+            self.cache.put(key, vec)
+        return vec
+
+    def embed_batch(self, texts: List[str]) -> List[np.ndarray]:
+        return [self.embed(t) for t in texts]
+
+    @staticmethod
+    def similarity(vec1: np.ndarray, vec2: np.ndarray) -> float:
+        v1 = vec1.astype('float32'); v2 = vec2.astype('float32')
+        denom = float(np.linalg.norm(v1) * np.linalg.norm(v2))
+        return float(np.dot(v1, v2) / denom) if denom != 0 else 0.0

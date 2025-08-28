@@ -1,34 +1,64 @@
 from __future__ import annotations
-import hashlib
-from typing import List, Sequence
+from typing import Dict, Any, List, Optional
 import numpy as np
-try:
-    import onnxruntime as ort
-    from transformers import AutoTokenizer
-except Exception:
-    ort=None; AutoTokenizer=None  # type: ignore
-from ._resolve import ensure_model_available, resolve_file, MARKUPLM_BASE_NAME
+
+from .cache import EmbeddingCache
+from ._resolve import get_element_resolver, ONNXModelResolver
+from ..utils import sha1_of  # type: ignore
+
+
 class ElementEmbedder:
-    def __init__(self)->None:
-        self.model_dir=ensure_model_available(MARKUPLM_BASE_NAME)
-        self.onnx_path=resolve_file(MARKUPLM_BASE_NAME,'model.onnx')
-        self._session=None; self._tokenizer=None
-        if ort and AutoTokenizer:
-            try:
-                self._session=ort.InferenceSession(str(self.onnx_path), providers=['CPUExecutionProvider'])
-                self._tokenizer=AutoTokenizer.from_pretrained(self.model_dir)
-            except Exception:
-                self._session=None; self._tokenizer=None
-    def _hash_embed(self, text:str, dim:int=384)->List[float]:
-        h=hashlib.sha256(('elm|'+text.strip().lower()).encode('utf-8')).digest()
-        rng=np.random.RandomState(int.from_bytes(h[:8],'little',signed=False))
-        v=rng.normal(size=dim).astype('float32'); v/= (np.linalg.norm(v)+1e-9); return v.tolist()
-    def embed(self, texts:Sequence[str])->List[List[float]]:
-        if not texts: return []
-        if self._session is None or self._tokenizer is None:
-            return [self._hash_embed(t) for t in texts]
-        toks=self._tokenizer(list(texts), padding=True, truncation=True, return_tensors='np')
-        inputs={k:v.astype('int64') for k,v in toks.items() if k in {'input_ids','attention_mask','token_type_ids'}}
-        if 'token_type_ids' not in inputs: inputs['token_type_ids']=np.zeros_like(inputs['input_ids'], dtype='int64')
-        outs=self._session.run(None, inputs); x=outs[0] if isinstance(outs, list) else outs
-        arr=x.mean(axis=1); arr=arr/(np.linalg.norm(arr,axis=1,keepdims=True)+1e-9); return arr.astype('float32').tolist()
+    """Element embedder that converts descriptors to text then embeds.
+
+    API used by tests:
+      - embed(element_dict) -> np.ndarray
+      - embed_batch(list_of_elements) -> List[np.ndarray]
+      - _element_to_text(element_dict) -> str
+    """
+
+    def __init__(self, cache: Optional[EmbeddingCache] = None, resolver: Optional[ONNXModelResolver] = None, cache_enabled: bool = True) -> None:
+        self.cache = (cache or EmbeddingCache()) if cache_enabled else None
+        self.resolver = resolver or get_element_resolver()
+        self.dim = int(self.resolver.embedding_dim)
+
+    def _key(self, text: str) -> str:
+        return f"e|{sha1_of(text)}|{self.dim}"
+
+    def _element_to_text(self, element: Dict[str, Any]) -> str:
+        parts: List[str] = []
+        tag = element.get('tag') or element.get('tagName') or '*'
+        parts.append(f"tag:{tag}")
+        for k in ('id','name','type','role','text','placeholder','href'):
+            v = element.get(k)
+            if v:
+                parts.append(f"{k}:{v}")
+        # Attributes map
+        attrs = element.get('attributes', {}) or {}
+        for k in ('aria-label','data-testid','data-test','data-qa','class'):
+            v = attrs.get(k)
+            if v:
+                parts.append(f"{k}:{v}")
+        # ARIA
+        aria = element.get('aria', {}) or {}
+        for k, v in aria.items():
+            if v:
+                parts.append(f"aria-{k}:{v}")
+        # classes list
+        classes = element.get('classes') or []
+        if classes:
+            parts.append("classes:"+"|".join(classes))
+        return " ".join(parts)
+
+    def embed(self, element: Dict[str, Any]) -> np.ndarray:
+        text = self._element_to_text(element)
+        key = self._key(text)
+        hit = self.cache.get(key) if self.cache is not None else None
+        if hit is not None:
+            return hit.astype('float32')
+        vec = self.resolver.embed(text).astype('float32')
+        if self.cache is not None:
+            self.cache.put(key, vec)
+        return vec
+
+    def embed_batch(self, elements: List[Dict[str, Any]]) -> List[np.ndarray]:
+        return [self.embed(e) for e in elements]

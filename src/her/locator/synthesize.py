@@ -12,6 +12,8 @@ class LocatorSynthesizer:
     
     def __init__(self):
         """Initialize the locator synthesizer."""
+        self.prefer_css = True
+        self.max_candidates = 5
         self.strategies = [
             self._by_id,
             self._by_data_testid,
@@ -25,7 +27,7 @@ class LocatorSynthesizer:
             self._by_css_attribute,
         ]
     
-    def synthesize(self, descriptor: Dict[str, Any]) -> List[Dict[str, str]]:
+    def synthesize(self, descriptor: Dict[str, Any]) -> List[str]:
         """Generate multiple locators for an element descriptor.
         
         Args:
@@ -34,38 +36,37 @@ class LocatorSynthesizer:
         Returns:
             List of locator dictionaries with 'selector' and 'strategy' keys
         """
-        locators = []
+        locators: List[str] = []
         
         for strategy in self.strategies:
             try:
                 result = strategy(descriptor)
                 if result:
                     if isinstance(result, list):
-                        locators.extend(result)
+                        for r in result:
+                            sel = r["selector"] if isinstance(r, dict) else r
+                            locators.append(sel)
                     else:
-                        locators.append(result)
+                        sel = result["selector"] if isinstance(result, dict) else result
+                        locators.append(sel)
             except Exception as e:
                 logger.debug(f"Strategy {strategy.__name__} failed: {e}")
         
         # Remove duplicates while preserving order
         seen = set()
-        unique_locators = []
-        for loc in locators:
-            key = (loc["selector"], loc["strategy"])
-            if key not in seen:
-                seen.add(key)
-                unique_locators.append(loc)
-        
-        return unique_locators[:10]  # Return top 10 locators
+        unique: List[str] = []
+        for sel in locators:
+            if sel not in seen:
+                seen.add(sel)
+                unique.append(sel)
+        # Enforce max candidates
+        return unique[: self.max_candidates]
     
     def _by_id(self, desc: Dict) -> Optional[Dict]:
         """Generate locator by ID."""
         element_id = desc.get("id")
         if element_id:
-            return [
-                {"selector": f"#{element_id}", "strategy": "css"},
-                {"selector": f"//*[@id='{element_id}']", "strategy": "xpath"}
-            ]
+            return [f"#{element_id}", f"//*[@id='{element_id}']"]
         return None
     
     def _by_data_testid(self, desc: Dict) -> Optional[List[Dict]]:
@@ -76,14 +77,8 @@ class LocatorSynthesizer:
         for attr in ["data-testid", "data-test", "data-qa", "data-cy"]:
             if attr in attrs:
                 value = attrs[attr]
-                locators.append({
-                    "selector": f"[{attr}='{value}']",
-                    "strategy": "css"
-                })
-                locators.append({
-                    "selector": f"//*[@{attr}='{value}']",
-                    "strategy": "xpath"
-                })
+                locators.append(f"[{attr}='{value}']")
+                locators.append(f"//*[@{attr}='{value}']")
         
         return locators if locators else None
     
@@ -92,10 +87,7 @@ class LocatorSynthesizer:
         name = desc.get("name") or desc.get("attributes", {}).get("name")
         if name:
             tag = desc.get("tag", "*")
-            return [
-                {"selector": f"{tag}[name='{name}']", "strategy": "css"},
-                {"selector": f"//{tag}[@name='{name}']", "strategy": "xpath"}
-            ]
+            return [f"{tag}[name='{name}']", f"//{tag}[@name='{name}']"]
         return None
     
     def _by_class(self, desc: Dict) -> Optional[Dict]:
@@ -104,10 +96,7 @@ class LocatorSynthesizer:
         if classes and len(classes) > 0:
             # Use the most specific class
             class_name = classes[0]
-            return [
-                {"selector": f".{class_name}", "strategy": "css"},
-                {"selector": f"//*[contains(@class, '{class_name}')]", "strategy": "xpath"}
-            ]
+            return [f".{class_name}", f"//*[contains(@class, '{class_name}')]" ]
         return None
     
     def _by_text(self, desc: Dict) -> Optional[Dict]:
@@ -117,11 +106,7 @@ class LocatorSynthesizer:
             tag = desc.get("tag", "*")
             # Escape quotes in text
             text_escaped = text.replace("'", "\\'")
-            return [
-                {"selector": f"{tag}:has-text('{text_escaped}')", "strategy": "css"},
-                {"selector": f"//{tag}[text()='{text}']", "strategy": "xpath"},
-                {"selector": f"//{tag}[contains(text(), '{text}')]", "strategy": "xpath"}
-            ]
+            return [f"{tag}:has-text('{text_escaped}')", f"//{tag}[text()='{text}']", f"//{tag}[contains(text(), '{text}')]" ]
         return None
     
     def _by_role(self, desc: Dict) -> Optional[Dict]:
@@ -130,11 +115,8 @@ class LocatorSynthesizer:
         if role:
             name = desc.get("name") or desc.get("text", "")
             if name:
-                return [{
-                    "selector": f"[role='{role}'][aria-label='{name}']",
-                    "strategy": "css"
-                }]
-            return [{"selector": f"[role='{role}']", "strategy": "css"}]
+                return [f"role={role}[name=\"{name}\"]", f"[role='{role}'][aria-label='{name}']"]
+            return [f"role={role}", f"[role='{role}']"]
         return None
     
     def _by_aria_label(self, desc: Dict) -> Optional[Dict]:
@@ -142,10 +124,7 @@ class LocatorSynthesizer:
         attrs = desc.get("attributes", {})
         aria_label = attrs.get("aria-label") or desc.get("aria", {}).get("label")
         if aria_label:
-            return [
-                {"selector": f"[aria-label='{aria_label}']", "strategy": "css"},
-                {"selector": f"//*[@aria-label='{aria_label}']", "strategy": "xpath"}
-            ]
+            return [f"[aria-label='{aria_label}']", f"//*[@aria-label='{aria_label}']"]
         return None
     
     def _by_xpath_text(self, desc: Dict) -> Optional[Dict]:
@@ -153,10 +132,7 @@ class LocatorSynthesizer:
         text = desc.get("text", "").strip()
         tag = desc.get("tag", "*")
         if text:
-            return [{
-                "selector": f"//{tag}[normalize-space()='{text}']",
-                "strategy": "xpath"
-            }]
+            return [f"//{tag}[normalize-space()='{text}']"]
         return None
     
     def _by_xpath_contains(self, desc: Dict) -> Optional[Dict]:
@@ -166,10 +142,7 @@ class LocatorSynthesizer:
             # Use first few words for partial match
             words = text.split()[:3]
             partial = " ".join(words)
-            return [{
-                "selector": f"//*[contains(normalize-space(), '{partial}')]",
-                "strategy": "xpath"
-            }]
+            return [f"//*[contains(normalize-space(), '{partial}')]"]
         return None
     
     def _by_css_attribute(self, desc: Dict) -> Optional[List[Dict]]:
@@ -183,17 +156,43 @@ class LocatorSynthesizer:
             if attr in attrs and attrs[attr]:
                 value = attrs[attr]
                 if tag:
-                    locators.append({
-                        "selector": f"{tag}[{attr}='{value}']",
-                        "strategy": "css"
-                    })
+                    locators.append(f"{tag}[{attr}='{value}']")
                 else:
-                    locators.append({
-                        "selector": f"[{attr}='{value}']",
-                        "strategy": "css"
-                    })
+                    locators.append(f"[{attr}='{value}']")
         
         return locators if locators else None
+
+    # Test helpers
+    def _is_stable_id(self, value: str) -> bool:
+        v = value or ""
+        if any(tok for tok in ["ember", "react-select", "__private"] if tok in v):
+            return False
+        # hex-like long strings
+        import re
+        if re.fullmatch(r"[a-fA-F0-9]{8,}", v):
+            return False
+        return True
+
+    def _is_meaningful_class(self, value: str) -> bool:
+        v = (value or "").lower()
+        if len(v) < 3:
+            return False
+        utility_prefixes = ("mt-", "text-", "col-", "fa-")
+        if v.startswith(utility_prefixes):
+            return False
+        return True
+
+    def explain_locator(self, selector: str) -> str:
+        s = selector or ""
+        if s.startswith("role="):
+            return "role-based selector"
+        if s.startswith("#"):
+            return "ID based selector"
+        if s.startswith("text=") or ":has-text(" in s:
+            return "text selector"
+        if s.startswith("//"):
+            return "XPath selector"
+        return "CSS selector"
 
 
 def choose_best(candidates: List[Dict]) -> Dict:
