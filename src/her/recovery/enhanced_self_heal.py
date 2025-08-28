@@ -361,7 +361,7 @@ class DOMResnapshotStrategy(HealingStrategy):
         return candidates
 
 
-class EnhancedSelfHealer:
+class EnhancedSelfHeal:
     """Enhanced self-healing system with multiple strategies and DOM resnapshot."""
 
     def __init__(self, cache_healed: bool = True):
@@ -552,6 +552,95 @@ class EnhancedSelfHealer:
             logger.debug(f"Locator test failed for {locator}: {e}")
             return False
 
+    def heal_and_execute(
+        self,
+        page: Page,
+        primary_locator: str,
+        action: str = "click",
+        args: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Execute action with self-healing fallback.
+        
+        Args:
+            page: Playwright page instance
+            primary_locator: Primary locator that failed
+            action: Action to perform
+            args: Arguments for the action
+            
+        Returns:
+            Dictionary with execution results
+        """
+        # This is the main healing method - delegates to internal implementation
+        # The actual implementation is complex and spread across multiple methods
+        
+        result = {
+            "success": False,
+            "used_locator": primary_locator,
+            "attempts": 1,
+            "healed": False
+        }
+        
+        # Try primary locator first
+        if self._test_locator(page, primary_locator):
+            try:
+                element = page.query_selector(primary_locator)
+                if element:
+                    if action == "click":
+                        element.click()
+                    elif action == "fill" and args:
+                        element.fill(args)
+                    elif action == "check":
+                        element.check()
+                    result["success"] = True
+                    return result
+            except Exception:
+                pass
+        
+        # Get fallback locators
+        fallbacks = self.get_fallback_locators(primary_locator)
+        
+        # Try each fallback
+        for fallback in fallbacks:
+            if self._test_locator(page, fallback):
+                try:
+                    element = page.query_selector(fallback)
+                    if element:
+                        if action == "click":
+                            element.click()
+                        elif action == "fill" and args:
+                            element.fill(args)
+                        elif action == "check":
+                            element.check()
+                        
+                        result["success"] = True
+                        result["used_locator"] = fallback
+                        result["healed"] = True
+                        result["attempts"] += 1
+                        
+                        # Cache successful healing
+                        if self.cache_healed:
+                            self.healed_cache[primary_locator] = fallback
+                        
+                        return result
+                except Exception:
+                    result["attempts"] += 1
+                    continue
+        
+        return result
+    
+    def generate_fallbacks(self, primary_locator: str, count: int = 5) -> List[str]:
+        """Generate fallback locators for a primary locator.
+        
+        Args:
+            primary_locator: The primary locator
+            count: Number of fallbacks to generate
+            
+        Returns:
+            List of fallback locators
+        """
+        # Alias for get_fallback_locators for compatibility
+        return self.get_fallback_locators(primary_locator, count)
+    
     def get_fallback_locators(self, primary_locator: str, count: int = 3) -> List[str]:
         """Generate fallback locators proactively.
 
@@ -570,7 +659,8 @@ class EnhancedSelfHealer:
                 alternatives = strategy.apply(primary_locator)
                 fallbacks.extend(alternatives)
             except Exception:
-                pass
+                # Alternative generation failed, continue with other methods
+                continue
 
         # Remove duplicates while preserving order
         seen = set()
@@ -582,6 +672,7 @@ class EnhancedSelfHealer:
 
         return unique_fallbacks[:count]
 
+    
     def get_stats(self) -> Dict[str, Any]:
         """Get healing statistics."""
         if not self.healing_history:
@@ -608,3 +699,7 @@ class EnhancedSelfHealer:
                 1 for r in self.healing_history if r.strategy_used == "cached"
             ),
         }
+
+
+# Alias for compatibility
+EnhancedSelfHealer = EnhancedSelfHeal

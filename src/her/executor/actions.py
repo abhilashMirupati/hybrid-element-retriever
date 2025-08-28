@@ -1,7 +1,9 @@
 from __future__ import annotations
 import time
 from typing import Any, Optional
-class ActionError(Exception): ...
+class ActionError(Exception):
+    """Exception raised when an action fails to execute."""
+    pass
 
 def _scroll_into_view(el: Any) -> None:
     try:
@@ -50,6 +52,8 @@ def wait_for_idle(page: Any, timeout: float=5.0) -> None:
     while time.time()<deadline:
         try:
             if page.evaluate('() => document.readyState')=='complete': return
-        except Exception: pass
+        except Exception:
+            # Page might be navigating or closed, continue waiting
+            continue
         time.sleep(0.1)
 __all__=['ActionError','click','fill','check','wait_for_idle']

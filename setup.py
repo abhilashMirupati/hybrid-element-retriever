@@ -27,17 +27,26 @@ setup(
     install_requires=[
         'numpy>=1.20.0',
         'pydantic>=1.8.0',
+        'playwright>=1.30.0',
     ],
     extras_require={
-        'playwright': ['playwright>=1.30.0'],
         'ml': [
+            'transformers>=4.30.0',
             'onnxruntime>=1.10.0',
+            'optimum[onnxruntime]>=1.10.0',
             'faiss-cpu>=1.7.0',
+        ],
+        'java': [
+            'py4j>=0.10.9',
         ],
         'dev': [
             'pytest>=6.0.0',
+            'pytest-cov>=3.0.0',
+            'pytest-asyncio>=0.18.0',
             'black>=22.0.0',
             'flake8>=4.0.0',
+            'mypy>=0.900',
+            'types-requests>=2.28.0',
         ],
     },
     entry_points={

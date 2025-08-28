@@ -28,7 +28,9 @@ def _query_all(frame:Any, selector:str, strategy:str)->List[Any]:
                 role,name=_parse_role_selector(selector)
                 if name: return [frame.get_by_role(role=role, name=name)]
                 return [frame.get_by_role(role=role)]
-        except Exception: pass
+        except Exception:
+            # Role-based selector might not be supported, try alternative approach
+            pass
         try:
             loc=frame.locator(f"role={selector}"); n=loc.count(); return [loc.nth(0)] if n==1 else [loc.nth(i) for i in range(n)]
         except Exception: return []
