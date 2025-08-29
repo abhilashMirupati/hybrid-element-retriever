@@ -111,11 +111,11 @@ class ActionExecutor:
         "[data-testid*='delete']"
     ]
     
-    def __init__(self, page: Any, timeout: float = 15.0, network_idle_ms: int = 500):
+    def __init__(self, page: Any = None, timeout: float = 15.0, network_idle_ms: int = 500):
         """Initialize action executor.
         
         Args:
-            page: Playwright page or similar
+            page: Playwright page or similar (optional)
             timeout: Maximum wait time in seconds
             network_idle_ms: Network idle window in milliseconds
         """

@@ -37,6 +37,31 @@ class LocatorSynthesizer:
         Returns:
             List of locator dictionaries with 'selector' and 'strategy' keys
         """
+        # Handle special cases first
+        
+        # Check for contentEditable
+        if descriptor.get('contentEditable') == 'true' or descriptor.get('contenteditable') == 'true':
+            tag = descriptor.get('tag', 'div')
+            locators = [
+                f"{tag}[contenteditable='true']",
+                f"//{tag}[@contenteditable='true']"
+            ]
+            if descriptor.get('id'):
+                locators.insert(0, f"#{descriptor['id']}")
+            return locators[:self.max_candidates]
+        
+        # Check for onclick handlers
+        if descriptor.get('onclick'):
+            onclick = str(descriptor['onclick'])[:20]  # Truncate long values
+            tag = descriptor.get('tag', '*')
+            locators = [
+                f"{tag}[onclick*='{onclick}']",
+                f"//{tag}[contains(@onclick, '{onclick}')]"
+            ]
+            if descriptor.get('id'):
+                locators.insert(0, f"#{descriptor['id']}")
+            return locators[:self.max_candidates]
+        
         locators: List[str] = []
         
         for strategy in self.strategies:

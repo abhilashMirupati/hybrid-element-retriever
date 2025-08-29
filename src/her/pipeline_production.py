@@ -69,6 +69,12 @@ class ProductionPipeline:
         """
         start_time = time.time()
         
+        # Handle None inputs gracefully
+        if query is None:
+            query = ""
+        if descriptors is None:
+            descriptors = []
+        
         # Check cache first
         cache_key = self._get_cache_key(query, descriptors)
         cached = self.cache.get(cache_key)
