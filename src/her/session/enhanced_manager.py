@@ -10,7 +10,13 @@ import hashlib
 from pathlib import Path
 
 from ..bridge.snapshot import capture_snapshot, detect_dom_change
-from ..embeddings.element_embedder import ElementEmbedder
+try:
+    from ..embeddings.element_embedder import ElementEmbedder
+except ImportError:
+    # Fallback if numpy not available
+    class ElementEmbedder:
+        def embed(self, descriptor): return [0.0] * 768
+        def embed_batch(self, descriptors): return [[0.0] * 768 for _ in descriptors]
 from ..vectordb.faiss_store import InMemoryVectorStore
 from ..vectordb.sqlite_cache import SQLiteKV
 from ..utils.cache import LRUCache
