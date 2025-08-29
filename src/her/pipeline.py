@@ -316,6 +316,7 @@ class HERPipeline:
                 # Lower threshold for better matching
                 if score >= self.config.similarity_threshold * 0.5:  # More lenient
                     scored_candidates.append((desc, score))
+                    logger.debug(f"Embedding score for {desc.get('dataTestId')}: {score:.3f}")
                     
             except Exception as e:
                 logger.debug(f"Failed to score element: {e}")
@@ -325,35 +326,196 @@ class HERPipeline:
                 if 'submit' in query.lower() and ('submit' in text or tag == 'button'):
                     scored_candidates.append((desc, 0.6))
         
-        # If no candidates, try keyword matching
-        if not scored_candidates:
-            query_lower = query.lower()
-            for desc in descriptors:
-                text = str(desc.get('text', '')).lower()
-                tag = str(desc.get('tag', '')).lower()
-                elem_id = str(desc.get('id', '')).lower()
-                
-                score = 0.0
-                # Check text match
-                if any(word in text for word in query_lower.split()):
-                    score += 0.4
-                # Check tag relevance
-                if 'button' in query_lower and tag == 'button':
-                    score += 0.3
-                if 'input' in query_lower and tag == 'input':
-                    score += 0.3
-                if 'link' in query_lower and tag == 'a':
-                    score += 0.3
-                # Check ID match
-                if any(word in elem_id for word in query_lower.split()):
-                    score += 0.3
-                
-                if score > 0:
-                    scored_candidates.append((desc, min(score, 1.0)))
+        # Always run enhanced keyword matching for better accuracy
+        query_lower = query.lower()
+        query_words = query_lower.split()
+        
+        # Calculate enhanced scores for all descriptors
+        enhanced_scores = {}
+        for desc in descriptors:
+            score = self._calculate_match_score(query_lower, query_words, desc, intent)
+            enhanced_scores[id(desc)] = score
+            # Debug output
+            if 'phone' in query_lower or 'laptop' in query_lower:
+                logger.debug(f"Enhanced score for {desc.get('dataTestId', 'unknown')}: {score:.3f}")
+        
+        # Merge with existing candidates or create new ones
+        final_candidates = []
+        seen_descs = set()
+        
+        # Update existing candidates with enhanced scores
+        for desc, embedding_score in scored_candidates:
+            desc_id = id(desc)
+            enhanced_score = enhanced_scores.get(desc_id, 0)
+            # For better accuracy, prefer enhanced score when available and meaningful
+            if enhanced_score > 0:
+                final_score = enhanced_score  # Use enhanced score directly
+            else:
+                final_score = embedding_score
+            final_candidates.append((desc, final_score))
+            seen_descs.add(desc_id)
+        
+        # Add any descriptors that weren't in scored_candidates
+        for desc in descriptors:
+            desc_id = id(desc)
+            if desc_id not in seen_descs:
+                enhanced_score = enhanced_scores.get(desc_id, 0)
+                if enhanced_score > 0.2:  # Threshold for inclusion
+                    final_candidates.append((desc, enhanced_score))
+        
+        scored_candidates = final_candidates
         
         # Sort by score and return top candidates
         scored_candidates.sort(key=lambda x: x[1], reverse=True)
         return scored_candidates[:self.config.max_candidates]
+    
+    def _calculate_match_score(
+        self,
+        query_lower: str,
+        query_words: List[str],
+        desc: Dict[str, Any],
+        intent: Dict[str, Any]
+    ) -> float:
+        """Calculate enhanced match score between query and element."""
+        score = 0.0
+        
+
+        
+        # Extract element properties
+        text = str(desc.get('text', '')).lower()
+        tag = str(desc.get('tag', '')).lower()
+        elem_id = str(desc.get('id', '')).lower()
+        elem_type = str(desc.get('type', '')).lower()
+        placeholder = str(desc.get('placeholder', '')).lower()
+        aria_label = str(desc.get('ariaLabel', '')).lower()
+        name = str(desc.get('name', '')).lower()
+        data_testid = str(desc.get('dataTestId', '')).lower()
+        
+        # Enhanced matching for specific patterns
+        
+        # 1. Email field detection
+        if 'email' in query_lower:
+            if elem_type == 'email':
+                score += 0.9  # Strong match
+            elif 'email' in elem_id or 'email' in name or 'email' in data_testid:
+                score += 0.8
+            elif 'email' in placeholder or 'email' in aria_label:
+                score += 0.7
+            elif tag == 'input' and ('mail' in elem_id or 'mail' in name):
+                score += 0.6
+        
+        # 2. Password field detection
+        if 'password' in query_lower:
+            if elem_type == 'password':
+                score += 0.9
+            elif 'password' in elem_id or 'password' in name or 'password' in data_testid:
+                score += 0.8
+            elif 'password' in placeholder or 'password' in aria_label:
+                score += 0.7
+        
+        # 3. Button detection
+        if 'button' in query_lower or 'click' in query_lower or 'add' in query_lower or 'buy' in query_lower:
+            if tag == 'button':
+                score += 0.4
+
+                # Check button text
+                button_text_lower = text.lower()
+                # Check for action phrases - don't double count
+                # Only add text bonus if it's a strong phrase match
+                if 'add to cart' in button_text_lower and 'cart' in query_lower:
+                    score += 0.3  # Reduced bonus for action match
+
+                elif 'buy now' in button_text_lower and 'buy' in query_lower:
+                    score += 0.3
+
+            elif tag == 'a' and 'link' in query_lower:
+                score += 0.4
+                for word in query_words:
+                    if word in text:
+                        score += 0.3
+        
+        # 4. Form field detection
+        if 'field' in query_lower or 'input' in query_lower or 'enter' in query_lower:
+            if tag in ['input', 'textarea', 'select']:
+                score += 0.3
+                # Check field type/name relevance
+                for word in query_words:
+                    if word not in ['field', 'input', 'enter', 'in', 'the']:
+                        if word in elem_type or word in name or word in elem_id:
+                            score += 0.4
+                        elif word in placeholder or word in aria_label:
+                            score += 0.3
+                        elif word in data_testid:
+                            score += 0.5
+        
+        # 5. Text content matching
+        if text:
+            matching_words = sum(1 for word in query_words if word in text)
+            if matching_words > 0:
+                score += (matching_words / len(query_words)) * 0.5
+        
+        # 6. Action verb matching
+        action = intent.get('action', '').lower()
+        if action:
+            if action == 'click' and tag in ['button', 'a']:
+                score += 0.2
+            elif action == 'type' and tag in ['input', 'textarea']:
+                score += 0.2
+            elif action == 'select' and tag == 'select':
+                score += 0.3
+        
+        # 7. Specific word matching in attributes
+        important_words = [w for w in query_words if len(w) > 3 and w not in 
+                          ['click', 'enter', 'type', 'select', 'field', 'button', 'input', 'the', 'into']]
+        
+        # Also check product-specific attributes
+        attrs = desc.get('attributes', {})
+        data_product = str(attrs.get('data-product', '')).lower()
+        
+        # First check for exact product match
+        product_words = ['laptop', 'phone', 'tablet', 'watch', 'camera', 'tv']
+        for prod_word in product_words:
+            if prod_word in query_lower:
+
+                
+                # Check if this is the RIGHT product
+                if prod_word in data_product:
+                    score += 0.6  # Strong boost for exact product match
+
+                elif prod_word in data_testid:
+                    score += 0.5  # Good match in test ID
+
+                
+                # ALSO check for WRONG product (not else!)
+                for other_prod in product_words:
+                    if other_prod != prod_word and (other_prod in data_product or other_prod in data_testid):
+                        score -= 2.0  # VERY strong penalty for wrong product
+
+        
+        for word in important_words:
+            if word in elem_id:
+                score += 0.3
+            if word in name:
+                score += 0.3
+            if word in data_testid:
+                score += 0.4
+            if word in aria_label:
+                score += 0.25
+            if word in placeholder:
+                score += 0.2
+        
+        # 8. Exact phrase matching
+        if len(query_words) > 1:
+            # Check for exact phrase in text
+            if query_lower in text:
+                score += 0.5
+            # Check for partial phrase
+            elif any(f"{w1} {w2}" in text for w1, w2 in zip(query_words[:-1], query_words[1:])):
+                score += 0.3
+        
+
+        
+        return max(0.0, min(score, 1.0))  # Clamp to [0, 1]
     
     def _generate_xpath(
         self, 
