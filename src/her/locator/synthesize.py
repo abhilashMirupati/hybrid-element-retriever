@@ -15,15 +15,15 @@ class LocatorSynthesizer:
         self.prefer_css = True
         self.max_candidates = 5
         self.strategies = [
+            self._by_data_testid,  # Prioritize data-testid FIRST
+            self._by_aria_label,   # Important for icon-only buttons
             self._by_id,
-            self._by_data_testid,
+            self._by_role,         # Important for accessibility
             self._by_name,
             # Prioritize attribute-based selectors earlier to include important attributes within top 5
             self._by_css_attribute,
             self._by_class,
             self._by_text,
-            self._by_role,
-            self._by_aria_label,
             self._by_xpath_text,
             self._by_xpath_contains,
         ]
@@ -73,6 +73,13 @@ class LocatorSynthesizer:
     def _by_data_testid(self, desc: Dict) -> Optional[List[Dict]]:
         """Generate locator by data-testid attributes."""
         locators = []
+        
+        # Check direct dataTestId field first (highest priority)
+        if desc.get("dataTestId"):
+            value = desc["dataTestId"]
+            locators.append(f"[data-testid=\"{value}\"]")
+            locators.append(f"//*[@data-testid='{value}']")
+            
         attrs = dict(desc.get("attributes", {}) or {})
         data_map = dict(desc.get("data", {}) or {})
         
@@ -134,11 +141,24 @@ class LocatorSynthesizer:
         return None
     
     def _by_aria_label(self, desc: Dict) -> Optional[Dict]:
-        """Generate locator by aria-label."""
-        attrs = desc.get("attributes", {})
-        aria_label = attrs.get("aria-label") or desc.get("aria", {}).get("label")
+        """Generate locator by aria-label (important for icon-only buttons)."""
+        # Check direct ariaLabel field first
+        aria_label = desc.get("ariaLabel")
+        
+        if not aria_label:
+            attrs = desc.get("attributes", {})
+            aria_label = attrs.get("aria-label") or desc.get("aria", {}).get("label")
+        
         if aria_label:
-            return [f"[aria-label=\"{aria_label}\"]", f"//*[@aria-label='{aria_label}']"]
+            tag = desc.get("tag", "")
+            locators = [
+                f"[aria-label=\"{aria_label}\"]",
+                f"//*[@aria-label='{aria_label}']"
+            ]
+            # Add tag-specific version if tag is known
+            if tag:
+                locators.insert(0, f"{tag}[aria-label=\"{aria_label}\"]")
+            return locators
         return None
     
     def _by_xpath_text(self, desc: Dict) -> Optional[Dict]:
