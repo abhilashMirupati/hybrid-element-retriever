@@ -1,0 +1,5 @@
+[
+  {"xpath":"//*[@aria-label='email']"},
+  {"xpath":"//*[@data-testid='user-field']"},
+  {"xpath":"//*[@aria-label='password']"}
+]

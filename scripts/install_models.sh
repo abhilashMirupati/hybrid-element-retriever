@@ -20,7 +20,6 @@ JSON
   fi
 done
 
-# Write MODEL_INFO.json with current timestamp
 ISO_TS="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 cat > "$MODELS_DIR/MODEL_INFO.json" <<JSON
 [

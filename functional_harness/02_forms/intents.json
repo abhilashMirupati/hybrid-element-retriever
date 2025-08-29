@@ -1,0 +1,5 @@
+[
+  {"query":"type email"},
+  {"query":"type username"},
+  {"query":"type password"}
+]
