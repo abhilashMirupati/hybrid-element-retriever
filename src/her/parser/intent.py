@@ -26,7 +26,25 @@ class Intent:
             'args': self.args,
             'confidence': self.confidence,
         }
-        return mapping[key]
+        return mapping.get(key)
+    
+    def __setitem__(self, key: str, value: Any):
+        """Allow dict-like setting for compatibility."""
+        if key == 'action':
+            self.action = value
+        elif key == 'target':
+            self.target_phrase = value
+        elif key == 'args':
+            self.args = value
+        elif key == 'confidence':
+            self.confidence = value
+    
+    def get(self, key: str, default: Any = None) -> Any:
+        """Dict-like get method."""
+        try:
+            return self[key]
+        except KeyError:
+            return default
 
 
 class IntentParser:

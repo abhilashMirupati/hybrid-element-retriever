@@ -355,6 +355,10 @@ class TwoTierCache:
 
         return None
 
+    def set(self, key: str, value: Any, metadata: Optional[Dict[str, Any]] = None) -> None:
+        """Store value in cache (alias for put)."""
+        self.put(key, value, metadata)
+    
     def put(
         self, key: str, value: Any, metadata: Optional[Dict[str, Any]] = None
     ) -> None:

@@ -437,11 +437,14 @@ class ResilienceManager:
             elif "timeout" in error_str:
                 logger.info("Attempting recovery from timeout")
                 # Check if page is still responsive
-                try:
-                    page.evaluate("1")
+                if page:
+                    try:
+                        page.evaluate("1")
+                        return {"action": "retry", "reason": "timeout"}
+                    except:
+                        return {"action": "restart", "reason": "page_unresponsive"}
+                else:
                     return {"action": "retry", "reason": "timeout"}
-                except:
-                    return {"action": "restart", "reason": "page_unresponsive"}
             
             # Handle navigation
             elif "navigation" in error_str:
