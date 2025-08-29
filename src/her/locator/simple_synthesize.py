@@ -17,7 +17,7 @@ class LocatorSynthesizer(_LocatorSynthesizer):
         element = self._normalize_descriptor(descriptor)
 
         # Call parent synthesize and convert to simple list of selector strings
-        locs = super().synthesize(element, context=None)
+        locs = super().synthesize(element)
         out: List[str] = []
         for loc in locs:
             if isinstance(loc, dict) and 'selector' in loc:
