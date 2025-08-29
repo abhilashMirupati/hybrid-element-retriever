@@ -759,11 +759,18 @@ class HERPipeline:
     def _compute_dom_hash(self, descriptors: List[Dict[str, Any]]) -> str:
         """Compute hash of DOM descriptors."""
         try:
+            # Allow passing a dict with 'elements'
+            if isinstance(descriptors, dict):
+                elems = descriptors.get('elements') or []
+            else:
+                elems = descriptors
             # Create stable hash from descriptors
             hash_input = ""
-            for desc in descriptors:
-                hash_input += f"{desc.get('tag', '')}{desc.get('id', '')}{desc.get('text', '')}"
-            
+            for desc in elems:
+                try:
+                    hash_input += f"{desc.get('id','')}{desc.get('tag','')}{desc.get('text','')}"
+                except Exception:
+                    hash_input += str(desc)
             return hashlib.sha256(hash_input.encode()).hexdigest()
         except Exception:
             return "0" * 64
