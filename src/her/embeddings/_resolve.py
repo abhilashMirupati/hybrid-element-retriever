@@ -3,7 +3,12 @@ import json, os, hashlib
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-import numpy as np
+try:
+    import numpy as np
+    NUMPY_AVAILABLE = True
+except ImportError:
+    NUMPY_AVAILABLE = False
+    np = None  # type: ignore
 
 _MODELS_INFO_NAME='MODEL_INFO.json'
 _E5_DIR='e5-small-onnx'

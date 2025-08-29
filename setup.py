@@ -1,68 +1,80 @@
-#!/usr/bin/env python
-"""Minimal setup.py for Hybrid Element Retriever."""
+"""Setup script for Hybrid Element Retriever."""
 
 from setuptools import setup, find_packages
-import os
+from pathlib import Path
 
 # Read README for long description
-here = os.path.abspath(os.path.dirname(__file__))
-try:
-    with open(os.path.join(here, 'README.md'), encoding='utf-8') as f:
-        long_description = f.read()
-except:
-    long_description = 'Hybrid Element Retriever - Natural language web automation'
+readme_file = Path(__file__).parent / "README.md"
+long_description = readme_file.read_text(encoding="utf-8") if readme_file.exists() else ""
+
+# Read requirements
+requirements_file = Path(__file__).parent / "requirements.txt"
+requirements = []
+if requirements_file.exists():
+    requirements = [
+        line.strip() 
+        for line in requirements_file.read_text().splitlines() 
+        if line.strip() and not line.startswith("#")
+    ]
+
+# Read dev requirements
+dev_requirements_file = Path(__file__).parent / "requirements-dev.txt"
+dev_requirements = []
+if dev_requirements_file.exists():
+    dev_requirements = [
+        line.strip() 
+        for line in dev_requirements_file.read_text().splitlines() 
+        if line.strip() and not line.startswith("#")
+    ]
 
 setup(
-    name='hybrid-element-retriever',
-    version='0.1.0',
-    description='Natural language to XPath/CSS selector conversion',
+    name="hybrid-element-retriever",
+    version="1.0.0",
+    author="HER Team",
+    author_email="her@example.com",
+    description="Production-ready natural language element location for web automation",
     long_description=long_description,
-    long_description_content_type='text/markdown',
-    author='Your Name',
-    author_email='your.email@example.com',
-    url='https://github.com/yourusername/hybrid-element-retriever',
-    packages=find_packages(where='src'),
-    package_dir={'': 'src'},
-    python_requires='>=3.9',
-    install_requires=[
-        'numpy>=1.20.0',
-        'pydantic>=1.8.0',
-        'playwright>=1.30.0',
+    long_description_content_type="text/markdown",
+    url="https://github.com/yourusername/her",
+    project_urls={
+        "Bug Tracker": "https://github.com/yourusername/her/issues",
+        "Documentation": "https://her.readthedocs.io",
+        "Source Code": "https://github.com/yourusername/her",
+    },
+    packages=find_packages(where="src"),
+    package_dir={"": "src"},
+    package_data={
+        "her": [
+            "models/.gitkeep",
+            "*.json",
+        ],
+    },
+    include_package_data=True,
+    classifiers=[
+        "Development Status :: 5 - Production/Stable",
+        "Intended Audience :: Developers",
+        "Topic :: Software Development :: Testing",
+        "Topic :: Software Development :: Libraries :: Python Modules",
+        "License :: OSI Approved :: MIT License",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Operating System :: OS Independent",
     ],
+    python_requires=">=3.8",
+    install_requires=requirements,
     extras_require={
-        'ml': [
-            'transformers>=4.30.0',
-            'onnxruntime>=1.10.0',
-            'optimum[onnxruntime]>=1.10.0',
-            'faiss-cpu>=1.7.0',
-        ],
-        'java': [
-            'py4j>=0.10.9',
-        ],
-        'dev': [
-            'pytest>=6.0.0',
-            'pytest-cov>=3.0.0',
-            'pytest-asyncio>=0.18.0',
-            'black>=22.0.0',
-            'flake8>=4.0.0',
-            'mypy>=0.900',
-            'types-requests>=2.28.0',
-        ],
+        "dev": dev_requirements,
+        "playwright": ["playwright>=1.30.0"],
+        "all": requirements + dev_requirements + ["playwright>=1.30.0"],
     },
     entry_points={
-        'console_scripts': [
-            'her=her.cli:main',
-            'her-demo=examples.demo:main',
+        "console_scripts": [
+            "her=her.cli:main",
+            "her-gateway=her.gateway_server:main",
         ],
     },
-    classifiers=[
-        'Development Status :: 3 - Alpha',
-        'Intended Audience :: Developers',
-        'Topic :: Software Development :: Testing',
-        'License :: OSI Approved :: MIT License',
-        'Programming Language :: Python :: 3',
-        'Programming Language :: Python :: 3.9',
-        'Programming Language :: Python :: 3.10',
-        'Programming Language :: Python :: 3.11',
-    ],
+    zip_safe=False,
 )

@@ -26,7 +26,25 @@ class Intent:
             'args': self.args,
             'confidence': self.confidence,
         }
-        return mapping[key]
+        return mapping.get(key)
+    
+    def __setitem__(self, key: str, value: Any):
+        """Allow dict-like setting for compatibility."""
+        if key == 'action':
+            self.action = value
+        elif key == 'target':
+            self.target_phrase = value
+        elif key == 'args':
+            self.args = value
+        elif key == 'confidence':
+            self.confidence = value
+    
+    def get(self, key: str, default: Any = None) -> Any:
+        """Dict-like get method."""
+        try:
+            return self[key]
+        except KeyError:
+            return default
 
 
 class IntentParser:
@@ -273,22 +291,37 @@ class IntentParser:
         """
         step_lower = step.lower()
 
-        # Check for action keywords
-        if any(word in step_lower for word in ["click", "press", "tap", "push"]):
-            action = "click"
-        elif any(word in step_lower for word in ["type", "enter", "input", "fill"]):
-            action = "type"
-        elif any(word in step_lower for word in ["select", "choose", "pick"]):
-            action = "select"
-        elif any(word in step_lower for word in ["hover", "mouse over"]):
-            action = "hover"
-        elif any(word in step_lower for word in ["wait", "pause"]):
-            action = "wait"
-        elif any(word in step_lower for word in ["verify", "check", "assert"]):
-            action = "assert"
-        else:
-            # Default to click
-            action = "click"
+        # Expanded action keywords for better recognition
+        action_patterns = {
+            "click": ["click", "press", "tap", "push", "hit"],
+            "type": ["type", "enter", "input", "write", "fill"],
+            "select": ["select", "choose", "pick", "dropdown"],
+            "search": ["search", "find", "look", "query", "locate"],
+            "navigate": ["navigate", "go", "open", "visit", "browse"],
+            "scroll": ["scroll", "swipe", "pan"],
+            "hover": ["hover", "mouse over", "mouseover", "float"],
+            "check": ["check", "tick", "mark", "enable"],
+            "uncheck": ["uncheck", "untick", "unmark", "disable"],
+            "submit": ["submit", "send", "post", "confirm"],
+            "cancel": ["cancel", "close", "abort", "dismiss"],
+            "drag": ["drag", "move", "reorder"],
+            "double_click": ["double click", "double-click", "dblclick"],
+            "right_click": ["right click", "right-click", "context menu"],
+            "focus": ["focus", "activate", "select field"],
+            "blur": ["blur", "unfocus", "deactivate"],
+            "wait": ["wait", "pause", "delay"],
+            "refresh": ["refresh", "reload", "update"],
+            "back": ["back", "previous", "return"],
+            "forward": ["forward", "next", "continue"],
+            "assert": ["verify", "check", "assert", "ensure"]
+        }
+        
+        # Check for action patterns
+        action = "click"  # default
+        for act, patterns in action_patterns.items():
+            if any(pattern in step_lower for pattern in patterns):
+                action = act
+                break
 
         # Extract target phrase (remove action word)
         action_words = [

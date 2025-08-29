@@ -236,6 +236,25 @@ class EnhancedSessionManager:
                 logger.info(f"Re-indexing due to SPA route change")
                 self._index_page_enhanced(session_id, page, force=True)
 
+    def index_page(
+        self, session_id: str, page: Page, force: bool = False
+    ) -> Tuple[List[Dict[str, Any]], str]:
+        """Index a page for the session.
+
+        Args:
+            session_id: Session ID
+            page: Page to index
+            force: Force reindex even if not needed
+
+        Returns:
+            Tuple of (element_descriptors, dom_hash)
+        """
+        session = self.sessions.get(session_id)
+        if not session:
+            session = self.create_session(session_id, page)
+
+        return self._index_page_enhanced(session_id, page, force)
+
     def _wait_for_page_idle(self, page: Page, timeout: float = 5.0) -> bool:
         """Wait for page to be idle (document ready, network idle)."""
         if not PLAYWRIGHT_AVAILABLE or not page:

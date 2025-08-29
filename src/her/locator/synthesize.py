@@ -15,15 +15,15 @@ class LocatorSynthesizer:
         self.prefer_css = True
         self.max_candidates = 5
         self.strategies = [
+            self._by_data_testid,  # Prioritize data-testid FIRST
+            self._by_aria_label,   # Important for icon-only buttons
             self._by_id,
-            self._by_data_testid,
+            self._by_role,         # Important for accessibility
             self._by_name,
             # Prioritize attribute-based selectors earlier to include important attributes within top 5
             self._by_css_attribute,
             self._by_class,
             self._by_text,
-            self._by_role,
-            self._by_aria_label,
             self._by_xpath_text,
             self._by_xpath_contains,
         ]
@@ -37,6 +37,65 @@ class LocatorSynthesizer:
         Returns:
             List of locator dictionaries with 'selector' and 'strategy' keys
         """
+        # Handle special cases first
+        
+        # Handle edge cases first
+        
+        # Handle JavaScript URLs
+        if descriptor.get("href", "").startswith("javascript:"):
+            tag = descriptor.get("tag", "a")
+            # Use other attributes instead of href
+            if descriptor.get("text"):
+                return [f"//{tag}[text()='{descriptor['text']}']"]
+            if descriptor.get("id"):
+                return [f"#{descriptor['id']}"]
+        
+        # Handle SVG elements
+        if descriptor.get("tag") == "svg" or str(descriptor.get("tag", "")).startswith("svg:"):
+            # SVG namespace aware
+            svg_xpaths = ["//*[local-name()='svg']"]
+            if descriptor.get("id"):
+                svg_xpaths.insert(0, f"//*[local-name()='svg' and @id='{descriptor['id']}']")
+            return svg_xpaths[:self.max_candidates]
+        
+        # Handle multiple classes properly
+        if descriptor.get("class"):
+            classes = descriptor["class"].split() if isinstance(descriptor["class"], str) else []
+            if len(classes) > 1:
+                # Use contains for each class
+                xpath = f"//*"
+                for cls in classes[:3]:  # Limit to first 3 classes
+                    xpath += f"[contains(@class, '{cls}')]"
+                return [xpath]
+        
+        # Handle empty attributes by removing them
+        for attr in ["type", "name", "value"]:
+            if attr in descriptor and descriptor[attr] == "":
+                del descriptor[attr]
+        
+        # Check for contentEditable
+        if descriptor.get('contentEditable') == 'true' or descriptor.get('contenteditable') == 'true':
+            tag = descriptor.get('tag', 'div')
+            locators = [
+                f"{tag}[contenteditable='true']",
+                f"//{tag}[@contenteditable='true']"
+            ]
+            if descriptor.get('id'):
+                locators.insert(0, f"#{descriptor['id']}")
+            return locators[:self.max_candidates]
+        
+        # Check for onclick handlers
+        if descriptor.get('onclick'):
+            onclick = str(descriptor['onclick'])[:20]  # Truncate long values
+            tag = descriptor.get('tag', '*')
+            locators = [
+                f"{tag}[onclick*='{onclick}']",
+                f"//{tag}[contains(@onclick, '{onclick}')]"
+            ]
+            if descriptor.get('id'):
+                locators.insert(0, f"#{descriptor['id']}")
+            return locators[:self.max_candidates]
+        
         locators: List[str] = []
         
         for strategy in self.strategies:
@@ -73,6 +132,13 @@ class LocatorSynthesizer:
     def _by_data_testid(self, desc: Dict) -> Optional[List[Dict]]:
         """Generate locator by data-testid attributes."""
         locators = []
+        
+        # Check direct dataTestId field first (highest priority)
+        if desc.get("dataTestId"):
+            value = desc["dataTestId"]
+            locators.append(f"[data-testid=\"{value}\"]")
+            locators.append(f"//*[@data-testid='{value}']")
+            
         attrs = dict(desc.get("attributes", {}) or {})
         data_map = dict(desc.get("data", {}) or {})
         
@@ -134,11 +200,24 @@ class LocatorSynthesizer:
         return None
     
     def _by_aria_label(self, desc: Dict) -> Optional[Dict]:
-        """Generate locator by aria-label."""
-        attrs = desc.get("attributes", {})
-        aria_label = attrs.get("aria-label") or desc.get("aria", {}).get("label")
+        """Generate locator by aria-label (important for icon-only buttons)."""
+        # Check direct ariaLabel field first
+        aria_label = desc.get("ariaLabel")
+        
+        if not aria_label:
+            attrs = desc.get("attributes", {})
+            aria_label = attrs.get("aria-label") or desc.get("aria", {}).get("label")
+        
         if aria_label:
-            return [f"[aria-label=\"{aria_label}\"]", f"//*[@aria-label='{aria_label}']"]
+            tag = desc.get("tag", "")
+            locators = [
+                f"[aria-label=\"{aria_label}\"]",
+                f"//*[@aria-label='{aria_label}']"
+            ]
+            # Add tag-specific version if tag is known
+            if tag:
+                locators.insert(0, f"{tag}[aria-label=\"{aria_label}\"]")
+            return locators
         return None
     
     def _by_xpath_text(self, desc: Dict) -> Optional[Dict]:
