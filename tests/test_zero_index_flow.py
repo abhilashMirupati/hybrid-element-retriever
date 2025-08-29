@@ -1,6 +1,6 @@
 import pytest
 
-from her.cli_api import HybridClient
+from her.cli_api import HybridElementRetrieverClient as HybridClient
 
 
 def test_zero_index_flow() -> None:

@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Overlays and Spinners</title>
+    <style>
+        /* Spinner */
+        .spinner-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 9999;
+        }
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        /* Cookie Banner */
+        .cookie-banner {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: #333;
+            color: white;
+            padding: 20px;
+            z-index: 1000;
+        }
+        
+        /* Modal */
+        .modal-backdrop {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.7);
+            z-index: 500;
+        }
+        .modal {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: white;
+            padding: 30px;
+            z-index: 501;
+            min-width: 300px;
+        }
+        
+        /* Hidden by default */
+        .overlay { display: none; }
+        .overlay.active { display: block; }
+    </style>
+</head>
+<body>
+    <h1>Main Content</h1>
+    <button id="main-action">Perform Action</button>
+    <button onclick="showSpinner()">Show Spinner</button>
+    <button onclick="showCookieBanner()">Show Cookie Banner</button>
+    <button onclick="showModal()">Show Modal</button>
+    
+    <!-- Spinner Overlay -->
+    <div id="spinner-overlay" class="spinner-overlay overlay">
+        <div class="spinner"></div>
+    </div>
+    
+    <!-- Cookie Banner -->
+    <div id="cookie-banner" class="cookie-banner overlay">
+        <p>We use cookies to improve your experience.</p>
+        <button onclick="acceptCookies()">Accept All</button>
+        <button onclick="rejectCookies()">Reject All</button>
+        <button onclick="manageCookies()">Manage Preferences</button>
+    </div>
+    
+    <!-- Modal with Backdrop -->
+    <div id="modal-backdrop" class="modal-backdrop overlay" onclick="closeModal()"></div>
+    <div id="modal" class="modal overlay">
+        <h2>Newsletter Signup</h2>
+        <p>Subscribe to our newsletter!</p>
+        <input type="email" placeholder="Your email">
+        <button onclick="subscribe()">Subscribe</button>
+        <button onclick="closeModal()">Close</button>
+    </div>
+    
+    <!-- Chat Widget -->
+    <div id="chat-widget" class="overlay" style="position: fixed; bottom: 20px; right: 20px; background: blue; color: white; padding: 10px; border-radius: 5px; z-index: 100;">
+        <span>Need help?</span>
+        <button onclick="closeChatWidget()" style="margin-left: 10px;">×</button>
+    </div>
+    
+    <script>
+        function showSpinner() {
+            document.getElementById('spinner-overlay').classList.add('active');
+            // Auto-hide after 2 seconds
+            setTimeout(() => {
+                document.getElementById('spinner-overlay').classList.remove('active');
+            }, 2000);
+        }
+        
+        function showCookieBanner() {
+            document.getElementById('cookie-banner').classList.add('active');
+        }
+        
+        function acceptCookies() {
+            document.getElementById('cookie-banner').classList.remove('active');
+            console.log('Cookies accepted');
+        }
+        
+        function rejectCookies() {
+            document.getElementById('cookie-banner').classList.remove('active');
+            console.log('Cookies rejected');
+        }
+        
+        function manageCookies() {
+            console.log('Managing cookie preferences');
+        }
+        
+        function showModal() {
+            document.getElementById('modal-backdrop').classList.add('active');
+            document.getElementById('modal').classList.add('active');
+        }
+        
+        function closeModal() {
+            document.getElementById('modal-backdrop').classList.remove('active');
+            document.getElementById('modal').classList.remove('active');
+        }
+        
+        function subscribe() {
+            console.log('Subscribed!');
+            closeModal();
+        }
+        
+        function closeChatWidget() {
+            document.getElementById('chat-widget').classList.remove('active');
+        }
+        
+        // Simulate network activity
+        let activeRequests = 0;
+        function simulateNetworkActivity() {
+            activeRequests++;
+            console.log('Active requests:', activeRequests);
+            
+            setTimeout(() => {
+                activeRequests--;
+                console.log('Active requests:', activeRequests);
+            }, Math.random() * 3000);
+        }
+        
+        // Check if element is occluded
+        function isElementOccluded(element) {
+            const rect = element.getBoundingClientRect();
+            const centerX = rect.left + rect.width / 2;
+            const centerY = rect.top + rect.height / 2;
+            const topElement = document.elementFromPoint(centerX, centerY);
+            return topElement !== element && !element.contains(topElement);
+        }
+    </script>
+</body>
+</html>

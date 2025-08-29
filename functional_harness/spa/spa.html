@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>SPA with PushState Navigation</title>
+    <style>
+        nav { background: #333; padding: 15px; }
+        nav a { 
+            color: white; 
+            margin: 0 15px; 
+            cursor: pointer;
+            text-decoration: none;
+        }
+        nav a:hover { text-decoration: underline; }
+        .page { 
+            display: none; 
+            padding: 20px;
+            min-height: 400px;
+        }
+        .page.active { display: block; }
+        .new-content {
+            background: #ffc;
+            padding: 10px;
+            margin: 10px 0;
+            border: 2px solid #ff0;
+        }
+    </style>
+</head>
+<body>
+    <nav>
+        <a onclick="navigate('/', 'home')">Home</a>
+        <a onclick="navigate('/products', 'products')">Products</a>
+        <a onclick="navigate('/about', 'about')">About</a>
+        <a onclick="navigate('/contact', 'contact')">Contact</a>
+    </nav>
+    
+    <div id="home" class="page active">
+        <h1>Home Page</h1>
+        <p>Welcome to our SPA demo</p>
+        <button id="home-cta">Get Started</button>
+    </div>
+    
+    <div id="products" class="page">
+        <h1>Products Page</h1>
+        <div id="product-list">
+            <div class="product">Product A</div>
+            <div class="product">Product B</div>
+        </div>
+        <button id="load-more">Load More Products</button>
+    </div>
+    
+    <div id="about" class="page">
+        <h1>About Page</h1>
+        <p>About our company</p>
+        <button id="learn-more">Learn More</button>
+    </div>
+    
+    <div id="contact" class="page">
+        <h1>Contact Page</h1>
+        <form>
+            <input type="email" id="contact-email" placeholder="Your email">
+            <button type="submit">Send Message</button>
+        </form>
+    </div>
+    
+    <script>
+        let currentPage = 'home';
+        let navigationCount = 0;
+        
+        function navigate(path, pageId) {
+            // Update URL without reload
+            window.history.pushState(
+                {page: pageId, navCount: ++navigationCount}, 
+                '', 
+                path
+            );
+            
+            // Update view
+            document.querySelectorAll('.page').forEach(p => {
+                p.classList.remove('active');
+            });
+            document.getElementById(pageId).classList.add('active');
+            
+            // Simulate dynamic content loading (delta changes)
+            if (pageId === 'products' && navigationCount > 1) {
+                const newProduct = document.createElement('div');
+                newProduct.className = 'product new-content';
+                newProduct.textContent = `Product C (Loaded at navigation ${navigationCount})`;
+                newProduct.id = `dynamic-product-${navigationCount}`;
+                document.getElementById('product-list').appendChild(newProduct);
+            }
+            
+            currentPage = pageId;
+            
+            // Dispatch custom event for testing
+            window.dispatchEvent(new CustomEvent('spa-navigation', {
+                detail: {
+                    from: currentPage,
+                    to: pageId,
+                    path: path,
+                    timestamp: Date.now()
+                }
+            }));
+        }
+        
+        // Handle browser back/forward
+        window.addEventListener('popstate', function(e) {
+            if (e.state && e.state.page) {
+                document.querySelectorAll('.page').forEach(p => {
+                    p.classList.remove('active');
+                });
+                document.getElementById(e.state.page).classList.add('active');
+                currentPage = e.state.page;
+            }
+        });
+        
+        // Handle hash changes
+        window.addEventListener('hashchange', function(e) {
+            console.log('Hash changed:', window.location.hash);
+        });
+        
+        // Load more products dynamically
+        document.getElementById('load-more').addEventListener('click', function() {
+            const newProduct = document.createElement('div');
+            newProduct.className = 'product new-content';
+            newProduct.textContent = `Product ${Date.now()}`;
+            document.getElementById('product-list').appendChild(newProduct);
+        });
+    </script>
+</body>
+</html>

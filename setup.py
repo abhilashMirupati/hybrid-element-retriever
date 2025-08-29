@@ -24,7 +24,7 @@ if dev_requirements_file.exists():
     dev_requirements = [
         line.strip() 
         for line in dev_requirements_file.read_text().splitlines() 
-        if line.strip() and not line.startswith("#")
+        if line.strip() and not line.startswith("#") and not line.startswith("-r")
     ]
 
 setup(

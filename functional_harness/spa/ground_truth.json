@@ -1,0 +1,57 @@
+[
+    {
+        "intent_id": "navigate-products",
+        "sequence": [
+            {
+                "action": "click",
+                "query": "click products link",
+                "expected": {
+                    "used_locator": "nav a:nth-of-type(2)",
+                    "strategy": "css",
+                    "notes": "Should trigger pushState navigation"
+                }
+            },
+            {
+                "action": "verify",
+                "expected": {
+                    "url_changed": true,
+                    "url_pattern": "/products",
+                    "dom_mutated": true,
+                    "no_page_reload": true
+                }
+            }
+        ]
+    },
+    {
+        "intent_id": "load-dynamic-content",
+        "sequence": [
+            {
+                "action": "click",
+                "query": "load more products",
+                "expected": {
+                    "used_locator": "#load-more",
+                    "strategy": "css"
+                }
+            },
+            {
+                "action": "verify",
+                "expected": {
+                    "dom_mutated": true,
+                    "new_elements_added": true,
+                    "delta_embed_only": true,
+                    "notes": "Should only embed new products, not re-embed existing"
+                }
+            }
+        ]
+    },
+    {
+        "intent_id": "find-dynamic-element",
+        "prerequisites": ["load-dynamic-content"],
+        "query": "find new product",
+        "expected": {
+            "used_locator": ".product.new-content",
+            "strategy": "css",
+            "notes": "Should find dynamically added content"
+        }
+    }
+]

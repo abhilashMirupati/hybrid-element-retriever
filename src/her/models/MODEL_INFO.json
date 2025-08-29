@@ -1,0 +1,15 @@
+{
+    "e5_small": {
+        "path": "e5_small.onnx",
+        "type": "query_embedder",
+        "dimension": 384,
+        "version": "1.0.0"
+    },
+    "markuplm_base": {
+        "path": "markuplm_base.onnx",
+        "type": "element_embedder",
+        "dimension": 768,
+        "version": "1.0.0"
+    },
+    "installed_at": "2025-08-29T17:48:57Z"
+}

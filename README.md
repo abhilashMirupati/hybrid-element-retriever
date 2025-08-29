@@ -241,6 +241,64 @@ config = PipelineConfig(
 )
 ```
 
+## Development
+
+### Setup Development Environment
+
+```bash
+# Clone the repository
+git clone https://github.com/yourusername/her.git
+cd her
+
+# Install in development mode with all dependencies
+pip install -e ".[dev]"
+
+# Run tests
+pytest tests/
+
+# Check code formatting
+black --check src/
+flake8 src/
+
+# Format code
+black src/
+
+# Type checking
+mypy src/
+```
+
+### Running Tests
+
+```bash
+# Run all tests
+pytest
+
+# Run with coverage
+pytest --cov=src --cov-report=html
+
+# Run specific test file
+pytest tests/test_basic.py
+
+# Run with verbose output
+pytest -v
+
+# Run integration tests only
+pytest tests/ -k integration
+```
+
+### Building Package
+
+```bash
+# Build distribution packages
+python -m build
+
+# Test installation
+pip install dist/*.whl
+
+# Upload to PyPI (requires credentials)
+python -m twine upload dist/*
+```
+
 ## Troubleshooting
 
 ### Common Issues

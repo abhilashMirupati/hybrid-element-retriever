@@ -1,0 +1,64 @@
+[
+    {
+        "intent_id": "enter-email",
+        "expected": {
+            "used_locator": "input[type='email']",
+            "strategy": "css",
+            "frame_path": ["main"],
+            "confidence_min": 0.95,
+            "element_attributes": {
+                "type": "email",
+                "id": "email"
+            }
+        }
+    },
+    {
+        "intent_id": "enter-username",
+        "expected": {
+            "used_locator": "input#username",
+            "strategy": "css",
+            "frame_path": ["main"],
+            "confidence_min": 0.95,
+            "element_attributes": {
+                "type": "text",
+                "id": "username"
+            }
+        }
+    },
+    {
+        "intent_id": "enter-password",
+        "expected": {
+            "used_locator": "input[type='password']#password",
+            "strategy": "css",
+            "frame_path": ["main"],
+            "confidence_min": 0.95,
+            "element_attributes": {
+                "type": "password",
+                "id": "password"
+            },
+            "notes": "Should select main password, not confirm field"
+        }
+    },
+    {
+        "intent_id": "click-submit",
+        "expected": {
+            "used_locator": "button#submit-active",
+            "strategy": "css",
+            "frame_path": ["main"],
+            "confidence_min": 0.90,
+            "notes": "Should select enabled submit, not disabled one",
+            "post_action": {
+                "form_submitted": true
+            }
+        }
+    },
+    {
+        "intent_id": "enter-referral",
+        "expected": {
+            "used_locator": null,
+            "strategy": "none",
+            "error": "Field is disabled",
+            "notes": "Should detect disabled field and not interact"
+        }
+    }
+]

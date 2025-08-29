@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Complex Widgets Test</title>
+    <style>
+        .widget { margin: 20px 0; padding: 15px; border: 1px solid #ddd; }
+        .date-picker { position: relative; }
+        .calendar { 
+            position: absolute; 
+            background: white; 
+            border: 1px solid #ccc;
+            padding: 10px;
+            display: none;
+            z-index: 1000;
+        }
+        .calendar.open { display: block; }
+        .file-drop-zone {
+            border: 2px dashed #ccc;
+            padding: 30px;
+            text-align: center;
+            cursor: pointer;
+        }
+        .file-drop-zone.dragover {
+            background: #e3f2fd;
+            border-color: #2196f3;
+        }
+    </style>
+</head>
+<body>
+    <h1>Complex Widget Forms</h1>
+    
+    <!-- Date Picker Widget -->
+    <div class="widget date-picker">
+        <label for="date-input">Select Date:</label>
+        <input type="text" id="date-input" placeholder="MM/DD/YYYY" readonly>
+        <button id="open-calendar">📅</button>
+        <div id="calendar" class="calendar">
+            <div class="calendar-header">
+                <button id="prev-month">‹</button>
+                <span id="current-month">January 2024</span>
+                <button id="next-month">›</button>
+            </div>
+            <div class="calendar-days">
+                <!-- Simplified calendar -->
+                <button class="day" data-date="2024-01-15">15</button>
+                <button class="day" data-date="2024-01-16">16</button>
+                <button class="day" data-date="2024-01-17">17</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- File Upload Widget -->
+    <div class="widget">
+        <label>Upload Files:</label>
+        <div id="file-drop-zone" class="file-drop-zone">
+            <p>Drag files here or click to browse</p>
+            <input type="file" id="file-input" multiple style="display: none;">
+            <button id="browse-files">Browse Files</button>
+        </div>
+        <div id="file-list"></div>
+    </div>
+    
+    <!-- Select with Search -->
+    <div class="widget">
+        <label for="country-select">Select Country:</label>
+        <input type="text" id="country-search" placeholder="Type to search...">
+        <select id="country-select" size="5">
+            <option value="us">United States</option>
+            <option value="uk">United Kingdom</option>
+            <option value="ca">Canada</option>
+            <option value="au">Australia</option>
+            <option value="de">Germany</option>
+            <option value="fr">France</option>
+            <option value="jp">Japan</option>
+            <option value="cn">China</option>
+        </select>
+    </div>
+    
+    <!-- Color Picker -->
+    <div class="widget">
+        <label for="color-picker">Choose Color:</label>
+        <input type="color" id="color-picker" value="#2196f3">
+        <span id="color-value">#2196f3</span>
+    </div>
+    
+    <!-- Range Slider -->
+    <div class="widget">
+        <label for="price-range">Price Range:</label>
+        <input type="range" id="price-range" min="0" max="1000" value="500">
+        <span id="price-value">$500</span>
+    </div>
+    
+    <!-- Toggle Switches -->
+    <div class="widget">
+        <label>
+            <input type="checkbox" id="toggle-notifications" role="switch">
+            <span>Enable Notifications</span>
+        </label>
+        <br>
+        <label>
+            <input type="checkbox" id="toggle-darkmode" role="switch">
+            <span>Dark Mode</span>
+        </label>
+    </div>
+    
+    <!-- Autocomplete -->
+    <div class="widget">
+        <label for="city-input">City:</label>
+        <input type="text" id="city-input" list="cities" placeholder="Start typing...">
+        <datalist id="cities">
+            <option value="New York">
+            <option value="Los Angeles">
+            <option value="Chicago">
+            <option value="Houston">
+            <option value="Phoenix">
+        </datalist>
+    </div>
+    
+    <script>
+        // Date picker
+        document.getElementById('open-calendar').addEventListener('click', () => {
+            document.getElementById('calendar').classList.toggle('open');
+        });
+        
+        document.querySelectorAll('.day').forEach(day => {
+            day.addEventListener('click', (e) => {
+                document.getElementById('date-input').value = e.target.dataset.date;
+                document.getElementById('calendar').classList.remove('open');
+            });
+        });
+        
+        // File upload
+        const dropZone = document.getElementById('file-drop-zone');
+        const fileInput = document.getElementById('file-input');
+        
+        document.getElementById('browse-files').addEventListener('click', () => {
+            fileInput.click();
+        });
+        
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        });
+        
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.classList.remove('dragover');
+        });
+        
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            displayFiles(files);
+        });
+        
+        fileInput.addEventListener('change', (e) => {
+            displayFiles(e.target.files);
+        });
+        
+        function displayFiles(files) {
+            const fileList = document.getElementById('file-list');
+            fileList.innerHTML = '<h4>Selected Files:</h4>';
+            for (let file of files) {
+                fileList.innerHTML += `<p>${file.name} (${file.size} bytes)</p>`;
+            }
+        }
+        
+        // Country search
+        document.getElementById('country-search').addEventListener('input', (e) => {
+            const search = e.target.value.toLowerCase();
+            const options = document.querySelectorAll('#country-select option');
+            options.forEach(option => {
+                option.style.display = option.textContent.toLowerCase().includes(search) ? '' : 'none';
+            });
+        });
+        
+        // Color picker
+        document.getElementById('color-picker').addEventListener('input', (e) => {
+            document.getElementById('color-value').textContent = e.target.value;
+        });
+        
+        // Range slider
+        document.getElementById('price-range').addEventListener('input', (e) => {
+            document.getElementById('price-value').textContent = `$${e.target.value}`;
+        });
+    </script>
+</body>
+</html>
