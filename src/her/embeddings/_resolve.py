@@ -55,13 +55,13 @@ def _read_json(p:Path)->Dict:
     with p.open('r',encoding='utf-8') as f: return json.load(f)
 
 
-def _find_model_info(base:Path)->Optional[Dict]:
+def _find_model_info(base:Path)->Optional[object]:
     info=base/_MODELS_INFO_NAME
     if info.is_file():
         try:
-            d=_read_json(info)
-            if isinstance(d,dict) and 'models' in d: return d
-        except Exception: return None
+            return _read_json(info)
+        except Exception:
+            return None
     return None
 
 
@@ -73,16 +73,39 @@ def _guess_dir_for_name(name:str)->str:
 
 
 def load_model_info()->Dict[str,Dict]:
+    """Load model metadata from MODEL_INFO.json supporting multiple layouts.
+
+    Supported formats:
+    - Legacy dict: {"models": [{"name": ..., "hf_id": ..., "task": ..., "path": ...}]}
+    - Spec list:   [{"id": "intfloat/e5-small", "task": "text-embedding"}, ...]
+    """
     for base in get_models_base_dirs():
         info=_find_model_info(base)
-        if info:
-            out:Dict[str,Dict]={}
-            for m in info.get('models',[]):
-                nm=m.get('name');
-                if not nm: continue
+        if not info:
+            continue
+        out:Dict[str,Dict]={}
+        # Legacy format
+        if isinstance(info, dict) and 'models' in info:
+            for m in info.get('models', []):
+                nm=m.get('name') or m.get('id')
+                if not nm:
+                    continue
                 rel=m.get('path')
                 ap=(base/Path(rel).name).resolve() if rel else (base/_guess_dir_for_name(nm)).resolve()
-                out[nm]={'hf_id':m.get('hf_id'),'task':m.get('task'),'path':str(ap)}
+                out[str(nm)]={'hf_id':m.get('hf_id') or m.get('id'), 'task':m.get('task'), 'path':str(ap)}
+            return out
+        # Spec list format
+        if isinstance(info, list):
+            for m in info:
+                if not isinstance(m, dict):
+                    continue
+                mid=str(m.get('id') or '')
+                if not mid:
+                    continue
+                # Derive short name from HF id
+                short = 'e5-small' if 'e5-small' in mid else ('markuplm-base' if 'markuplm-base' in mid else mid)
+                ap=(base/_guess_dir_for_name(short)).resolve()
+                out[short]={'hf_id':mid,'task':m.get('task'),'path':str(ap)}
             return out
     return {}
 

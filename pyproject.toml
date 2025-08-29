@@ -11,9 +11,19 @@ requires-python = ">=3.9"
 authors = [{name="HER Maintainers"}]
 dependencies = [
   "playwright>=1.43",
-  "transformers>=4.40.0",
-  "onnxruntime>=1.16.0",
-  "optimum[onnxruntime]>=1.17.0",
+  "numpy>=1.23",
+  "onnxruntime>=1.15; extra == \"cpu\"",
+]
+
+[project.optional-dependencies]
+dev = [
+  "black>=23.0.0",
+  "flake8>=6.0.0",
+  "mypy>=1.0.0",
+  "pytest>=7.3.0",
+  "pytest-cov>=4.0.0",
+  "pytest-timeout>=2.1.0",
+  "pytest-xdist>=3.3.1",
 ]
 
 [project.scripts]

@@ -97,7 +97,18 @@ class RankFusion:
                 'explanation': 'weighted_sum'
             }
             out.append((d, fused, reasons))
-        out.sort(key=lambda t: t[1], reverse=True)
+        # Stable ordering with deterministic tie-breakers
+        out.sort(key=lambda t: (t[1], str(t[0].get('id') or t[0].get('xpath') or t[0].get('selector') or t[0].get('text') or '')), reverse=True)
+        # Normalize AFTER fusion
+        if out:
+            scores = [s for _, s, _ in out]
+            mx = max(scores); mn = min(scores); rng = (mx - mn) if mx != mn else 1.0
+            normalized: List[Tuple[Dict[str, Any], float, Dict[str, Any]]] = []
+            for d, s, r in out:
+                ns = (s - mn) / rng
+                nr = dict(r); nr['normalized'] = ns
+                normalized.append((d, ns, nr))
+            out = normalized
         return out[:top_k] if top_k else out
 
     def rank_candidates(self, candidates: List[Tuple[Dict[str, Any], float, float]]) -> List[Tuple[Dict[str, Any], float, Dict[str, Any]]]:
@@ -122,5 +133,9 @@ def fuse(cands: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     for c in cands:
         s = ALPHA_DEFAULT * float(c.get('semantic', 0.0)) + BETA_DEFAULT * float(c.get('css', 0.0)) + GAMMA_DEFAULT * float(c.get('promotion', 0.0))
         x = dict(c); x['score'] = s; out.append(x)
-    out.sort(key=lambda d: d['score'], reverse=True)
+    out.sort(key=lambda d: (d['score'], str(d.get('selector') or d.get('xpath') or d.get('text') or '')), reverse=True)
+    if out:
+        mx = max(x['score'] for x in out); mn = min(x['score'] for x in out); rng = (mx - mn) if mx != mn else 1.0
+        for x in out:
+            x['score'] = (x['score'] - mn) / rng
     return out
