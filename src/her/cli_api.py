@@ -221,7 +221,18 @@ class HybridClient:
                 except Exception:
                     pass
 
-            descriptors, _dom_hash = (self.session_manager.index_page(self.current_session_id, page) if page else ([], "0"*64))
+            # Get descriptors based on session manager type
+            if hasattr(self.session_manager, 'index_page'):
+                descriptors, _dom_hash = (self.session_manager.index_page(self.current_session_id, page) if page else ([], "0"*64))
+            else:
+                # EnhancedSessionManager stores descriptors in session state
+                session = self.session_manager.get_session(self.current_session_id)
+                if session and session.descriptors:
+                    descriptors, _dom_hash = session.descriptors, session.dom_hash
+                else:
+                    # Fall back to capture_snapshot
+                    from .bridge.snapshot import capture_snapshot
+                    descriptors, _dom_hash = capture_snapshot(page) if page else ([], "0"*64)
             candidates = self._find_candidates(phrase, descriptors)
 
             results: List[Dict[str, Any]] = []
@@ -290,7 +301,18 @@ class HybridClient:
                     wait_for_idle(page)
                 except Exception:
                     pass
-            descriptors, dom_hash = (self.session_manager.index_page(self.current_session_id, page) if page else ([], "0"*64))
+            # Get descriptors based on session manager type
+            if hasattr(self.session_manager, 'index_page'):
+                descriptors, dom_hash = (self.session_manager.index_page(self.current_session_id, page) if page else ([], "0"*64))
+            else:
+                # EnhancedSessionManager stores descriptors in session state
+                session = self.session_manager.get_session(self.current_session_id)
+                if session and session.descriptors:
+                    descriptors, dom_hash = session.descriptors, session.dom_hash
+                else:
+                    # Fall back to capture_snapshot
+                    from .bridge.snapshot import capture_snapshot
+                    descriptors, dom_hash = capture_snapshot(page) if page else ([], "0"*64)
 
             # Build candidates
             candidates = self._find_candidates(intent.target_phrase, descriptors)

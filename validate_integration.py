@@ -18,7 +18,7 @@ def validate_imports():
         ("src.her.session.enhanced_manager", ["EnhancedSessionManager"]),
         ("src.her.locator.enhanced_verify", ["EnhancedLocatorVerifier", "PopupHandler"]),
         ("src.her.recovery.enhanced_promotion", ["EnhancedPromotionStore"]),
-        ("src.her.cli_api", ["HER"])
+        ("src.her.cli_api", ["HybridClient"])
     ]
     
     all_ok = True
@@ -44,10 +44,10 @@ def validate_integration():
     print("=" * 60)
     
     try:
-        from src.her.cli_api import HER
+        from src.her.cli_api import HybridClient
         
         # Create instance with enhanced features
-        her = HER(use_enhanced=True)
+        her = HybridClient(use_enhanced=True)
         
         # Check if enhanced components are used
         checks = [
