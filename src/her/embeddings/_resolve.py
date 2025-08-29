@@ -104,5 +104,47 @@ def get_element_resolver() -> ONNXResolver:
     return ONNXResolver('element-embedding', embedding_dim=384)
 
 
-__all__ = ['ResolveError', 'resolve_model_paths', 'ONNXResolver', 'get_query_resolver', 'get_element_resolver']
+# Back-compat alias expected by some tests
+class ONNXModelResolver(ONNXResolver):
+    pass
+
+
+def _guess_dir_for_name(name: str) -> str:
+    n = name.lower()
+    if n.startswith('e5'):
+        return 'e5-small-onnx'
+    if 'markuplm' in n:
+        return 'markuplm-base-onnx'
+    return name
+
+
+def resolve_model_dir(name: str) -> Path:
+    # Choose first available base dir
+    for base in _base_dirs():
+        d = base / _guess_dir_for_name(name)
+        if d.exists():
+            return d
+    raise ResolveError(f"Model directory for '{name}' not found")
+
+
+def resolve_file(name: str, filename: str) -> Path:
+    d = resolve_model_dir(name)
+    f = d / filename
+    if not f.exists():
+        raise ResolveError(f"File '{filename}' not found in model '{name}' at {d}")
+    return f
+
+
+def ensure_model_available(name: str) -> Path:
+    d = resolve_model_dir(name)
+    f = d / 'model.onnx'
+    if not f.exists():
+        raise ResolveError(f"Model '{name}' missing model.onnx at {d}")
+    return d
+
+
+__all__ = [
+    'ResolveError', 'resolve_model_paths', 'ONNXResolver', 'ONNXModelResolver',
+    'get_query_resolver', 'get_element_resolver', 'resolve_model_dir', 'resolve_file', 'ensure_model_available'
+]
 

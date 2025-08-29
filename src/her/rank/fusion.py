@@ -57,3 +57,21 @@ class FusionScorer:
 
 
 __all__ = ['FusionScorer', 'FusionConfig', 'ElementScore']
+
+# Back-compat shim expected by some tests
+class RankFusion:
+    def __init__(self, config: Optional[FusionConfig] = None) -> None:
+        self._scorer = FusionScorer(config)
+
+    def fuse(self, semantic_scores, heuristic_scores=None, context: str = 'default', top_k: Optional[int] = None):
+        # Accept list of (desc, score) for both
+        sem = semantic_scores or []
+        heu = heuristic_scores or []
+        elements = [d for d, _ in sem] or [d for d, _ in heu]
+        sem_map = {id(d): float(s) for d, s in sem}
+        heu_map = {id(d): float(s) for d, s in heu}
+        sems = [sem_map.get(id(d), 0.0) for d in elements]
+        heus = [heu_map.get(id(d), 0.0) for d in elements]
+        out = self._scorer.score_elements(elements, sems, heus)
+        triples = [(e['element'], e['score'], {'semantic': e['details']['semantic'], 'css': e['details']['css'], 'promotion': e['details']['promotion']}) for e in out]
+        return triples[:top_k] if top_k else triples
