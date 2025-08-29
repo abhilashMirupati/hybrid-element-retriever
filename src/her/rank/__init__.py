@@ -1,0 +1,1 @@
+from .fusion_scorer import FusionScorer  # re-export for tests

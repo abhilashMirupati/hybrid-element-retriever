@@ -168,3 +168,8 @@ class InMemoryVectorStore:
         if 0 <= idx < len(self.vectors):
             return (self.vectors[idx], self.metadata[idx])
         return None
+
+
+# Compatibility alias expected by tests
+class FAISSStore(InMemoryVectorStore):
+    pass

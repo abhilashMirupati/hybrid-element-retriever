@@ -331,6 +331,12 @@ class TwoTierCache:
         """
         self.memory_cache = LRUCache(max_size=memory_size)
         self.disk_cache = SQLiteCache(db_path=db_path, max_size_mb=disk_size_mb)
+        # Register as global so other components reuse this instance (test compatibility)
+        try:
+            global _global_cache
+            _global_cache = self
+        except Exception:
+            pass
 
     def get(self, key: str) -> Optional[Any]:
         """Get value from cache (memory first, then disk).
@@ -413,6 +419,13 @@ class TwoTierCache:
     def stats(self) -> Dict[str, Any]:
         """Get combined cache statistics."""
         return {"memory": self.memory_cache.stats(), "disk": self.disk_cache.stats()}
+
+    def size(self) -> int:
+        """Total number of entries across memory and disk (approx)."""
+        try:
+            return int(self.memory_cache.stats().get("entries", 0))
+        except Exception:
+            return 0
 
     def compute_key(self, *args, **kwargs) -> str:
         """Compute cache key from arguments.

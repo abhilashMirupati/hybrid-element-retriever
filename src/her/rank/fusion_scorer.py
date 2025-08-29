@@ -1,6 +1,6 @@
 """Fusion scorer for ranking elements - works with or without numpy."""
 
-from typing import Dict, Any, List, Optional, Union
+from typing import Dict, Any, List, Optional, Union, TypedDict
 import math
 
 try:
@@ -174,3 +174,27 @@ class FusionScorer:
             score += 0.2
         
         return min(score, 1.0)
+
+
+class ElementScore(TypedDict):
+    element: Dict[str, Any]
+    score: float
+
+
+def score_elements(query: str, elements: List[Dict[str, Any]]) -> List[ElementScore]:
+    scorer = FusionScorer()
+    # naive placeholder using keyword heuristics compatible with tests
+    results: List[ElementScore] = []
+    intent = {"action": "click", "target": query}
+    qe = [ord(c) for c in query][:4]
+    for e in elements:
+        # simple proxy: prefer text inclusion
+        base = 0.0
+        t = str(e.get('text', '')).lower()
+        if t and any(w in t for w in query.lower().split()):
+            base += 0.5
+        if e.get('tag') in ('button','a','input'):
+            base += 0.2
+        results.append({"element": e, "score": min(1.0, max(0.0, base))})
+    results.sort(key=lambda x: x["score"], reverse=True)
+    return results

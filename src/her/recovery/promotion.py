@@ -161,3 +161,8 @@ def promote_locator(locator: str, context: str, *args, **kwargs) -> None:
 def get_promotion_score(locator: str, context: str) -> float:
     return PromotionStore(use_sqlite=True).get_score(locator, context)
 
+
+# Compatibility alias for tests expecting a class named Promotion
+class Promotion(PromotionStore):
+    pass
+

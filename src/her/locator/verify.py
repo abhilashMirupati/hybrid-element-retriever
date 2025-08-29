@@ -194,3 +194,8 @@ class LocatorVerifier:
 
 
 __all__=['VerificationResult','verify_locator','LocatorVerifier']
+
+
+class XPathVerifier(LocatorVerifier):
+    """Compatibility alias used in tests."""
+    pass

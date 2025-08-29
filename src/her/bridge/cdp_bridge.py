@@ -566,3 +566,16 @@ def get_box_model(page: Optional[Page], node_id: int) -> Optional[Dict[str, Any]
     except Exception as e:
         logger.debug(f"Failed to get box model for node {node_id}: {e}")
         return None
+
+
+class CDPBridge:
+    """Thin facade expected by tests providing helper methods as instance methods."""
+
+    def get_flattened_document(self, page: Optional[Page], pierce: bool = True, depth: int = -1, wait_stable: bool = True) -> List[Dict[str, Any]]:
+        return get_flattened_document(page, pierce=pierce, depth=depth, wait_stable=wait_stable)
+
+    def get_full_ax_tree(self, page: Optional[Page], include_frames: bool = True) -> List[Dict[str, Any]]:
+        return get_full_ax_tree(page, include_frames=include_frames)
+
+    def capture_complete_snapshot(self, page: Page, include_styles: bool = False, include_frames: bool = True, wait_stable: bool = True) -> DOMSnapshot:
+        return capture_complete_snapshot(page, include_styles=include_styles, include_frames=include_frames, wait_stable=wait_stable)

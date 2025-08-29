@@ -2,6 +2,7 @@
 
 from .merge import merge_dom_ax
 from typing import Dict, Any
+from dataclasses import dataclass
 
 
 def normalize_descriptor(node: Dict[str, Any]) -> Dict[str, Any]:
@@ -41,3 +42,11 @@ def normalize_descriptor(node: Dict[str, Any]) -> Dict[str, Any]:
 
 
 __all__ = ["merge_dom_ax", "normalize_descriptor"]
+
+
+@dataclass
+class ElementDescriptor:
+    tag: str
+    text: str = ""
+    attributes: Dict[str, Any] | None = None
+    xpath: str | None = None

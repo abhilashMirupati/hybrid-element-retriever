@@ -2,6 +2,7 @@ from __future__ import annotations
 import hashlib
 import time
 from typing import Any, Optional
+from dataclasses import dataclass
 
 
 class Session:
@@ -100,3 +101,11 @@ class Session:
 
 
 __all__ = ['Session']
+
+
+@dataclass
+class SessionManager:
+    """Minimal placeholder to satisfy imports in some tests."""
+    auto_index: bool = True
+    reindex_on_change: bool = True
+

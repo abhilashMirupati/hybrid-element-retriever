@@ -324,3 +324,8 @@ class SQLiteKV:
                 stats['promotion_entries'] = cursor.fetchone()[0] or 0
         
         return stats
+
+
+# Compatibility alias expected by tests
+class SQLiteCache(SQLiteKV):
+    pass

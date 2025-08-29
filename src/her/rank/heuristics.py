@@ -114,3 +114,17 @@ def explain_heuristic_score(descriptor: Dict[str, Any], phrase: str = "", action
         'matched_properties': matched_properties,
     }
 
+
+class HeuristicScorer:
+    """Wrapper class expected by some tests providing a .score_elements API."""
+
+    def score(self, query: str, element: Dict[str, Any]) -> float:
+        return heuristic_score(element, phrase=query, action="")
+
+    def score_elements(self, query: str, elements: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        out: List[Dict[str, Any]] = []
+        for e in elements:
+            s = heuristic_score(e, phrase=query, action="")
+            out.append({"element": e, "score": s})
+        return out
+

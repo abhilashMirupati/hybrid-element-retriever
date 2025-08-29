@@ -506,3 +506,8 @@ class SessionManager:
         except Exception as e:
             logger.debug(f"Failed to check SPA changes: {e}")
             return False
+
+
+class SessionStateManager(SessionManager):
+    """Compatibility alias expected by some tests."""
+    pass

@@ -663,7 +663,7 @@ class HybridElementRetrieverClient:
 
 
 # Alias for compatibility
-HybridElementRetriever = HybridElementRetrieverClient
+HybridClient = HybridElementRetrieverClient
 
 
 @dataclass

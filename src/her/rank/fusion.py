@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Tuple, Optional
 import json
+from .fusion_scorer import FusionScorer  # re-export compatibility
 
 ALPHA_DEFAULT=1.0; BETA_DEFAULT=0.5; GAMMA_DEFAULT=0.2
 
