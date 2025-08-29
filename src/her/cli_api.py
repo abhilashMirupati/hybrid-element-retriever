@@ -16,6 +16,12 @@ except Exception:
 # Core components
 from .parser.intent import IntentParser
 from .session.manager import SessionManager
+try:
+    from .session.enhanced_manager import EnhancedSessionManager
+    ENHANCED_AVAILABLE = True
+except ImportError:
+    EnhancedSessionManager = None
+    ENHANCED_AVAILABLE = False
 from .descriptors.merge import merge_dom_ax
 from .embeddings.query_embedder import QueryEmbedder
 from .embeddings.element_embedder import ElementEmbedder
@@ -23,8 +29,10 @@ from .rank.fusion import RankFusion
 from .rank.heuristics import rank_by_heuristics
 from .locator.simple_synthesize import LocatorSynthesizer as SimpleSynth
 from .locator.verify import LocatorVerifier
+from .locator.enhanced_verify import EnhancedLocatorVerifier, PopupHandler
 from .executor.actions import ActionError, ActionExecutor, wait_for_idle
 from .recovery.enhanced_self_heal import EnhancedSelfHeal
+from .recovery.enhanced_promotion import EnhancedPromotionStore
 from .utils import truncate_text
 
 # Configure logging
@@ -78,7 +86,8 @@ class HybridClient:
         auto_index: bool = True,
         enable_self_heal: bool = True,
         enable_cache: bool = True,
-        log_level: str = "INFO"
+        log_level: str = "INFO",
+        use_enhanced: bool = True
     ):
         """Initialize HER client with all components.
         
@@ -100,19 +109,36 @@ class HybridClient:
         self.timeout_ms = 30000
         self.promotion_enabled = True
         self.current_session_id = "default"
+        self.use_enhanced = use_enhanced
 
-        # Components (compat names for tests)
+        # Components (use enhanced versions if enabled)
         self.parser = IntentParser()
-        self.session_manager = SessionManager(
-            auto_index=auto_index,
-            reindex_on_change=True,
-            reindex_on_failure=True
-        )
+        
+        if use_enhanced and ENHANCED_AVAILABLE:
+            # Use enhanced components for production features
+            self.session_manager = EnhancedSessionManager(
+                auto_index=auto_index,
+                reindex_on_change=True,
+                reindex_on_failure=True,
+                enable_incremental=True,
+                enable_spa_tracking=True
+            )
+            self.verifier = EnhancedLocatorVerifier(auto_handle_popups=True)
+            self.promotion_store = EnhancedPromotionStore(auto_fallback=True)
+        else:
+            # Use original components for backward compatibility
+            self.session_manager = SessionManager(
+                auto_index=auto_index,
+                reindex_on_change=True,
+                reindex_on_failure=True
+            )
+            self.verifier = LocatorVerifier()
+            self.promotion_store = None
+        
         self.query_embedder = QueryEmbedder()
         self.element_embedder = ElementEmbedder()
         self.rank_fusion = RankFusion()
         self.synthesizer = SimpleSynth()
-        self.verifier = LocatorVerifier()
         self.healer = EnhancedSelfHeal() if enable_self_heal else None
 
         # Executor
@@ -280,6 +306,15 @@ class HybridClient:
             desc, score, _ = candidates[0]
             locators = self.synthesizer.synthesize(desc)
             locator = self.verifier.find_unique_locator(locators, page)
+            
+            # Try promotion store fallback if enhanced mode
+            if not locator and self.use_enhanced and self.promotion_store:
+                context = page.url if page else ""
+                fallback_record = self.promotion_store.get_best_fallback(context)
+                if fallback_record:
+                    logger.info(f"Using fallback locator from promotion store: {fallback_record.locator}")
+                    locator = fallback_record.locator
+            
             if not locator and len(candidates) > 1:
                 for d, _s, _r in candidates[1:]:
                     locs = self.synthesizer.synthesize(d)
@@ -291,6 +326,11 @@ class HybridClient:
             ar = self._execute_with_recovery(intent.action, locator or '', intent.args, candidates)
             status = 'ok' if ar.success else 'fail'
             used = getattr(ar, 'locator', None) or locator or None
+            
+            # Record promotion if enhanced mode and successful
+            if self.use_enhanced and self.promotion_store and ar.success and used:
+                context = page.url if page else ""
+                self.promotion_store.record_success(used, context, desc)
             overlays = []
             for attr in ('overlay_events', 'dismissed_overlays'):
                 try:
