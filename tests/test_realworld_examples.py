@@ -10,7 +10,7 @@ import os
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from her.cli_api import HybridClient
+from her.cli_api import HybridElementRetrieverClient as HybridClient
 from her.bridge.cdp_bridge import capture_complete_snapshot, DOMSnapshot
 from her.cache.two_tier import TwoTierCache
 from her.rank.fusion_scorer import FusionScorer, ElementScore

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Dict, Any, List
 import time
 
-from her.cli_api import HybridClient
+from her.cli_api import HybridElementRetrieverClient as HybridClient
 from her.bridge.snapshot import compute_dom_hash
 from her.locator.verify import LocatorVerifier
 from her.executor.actions import ActionExecutor

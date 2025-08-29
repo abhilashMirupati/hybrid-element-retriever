@@ -1,4 +1,4 @@
-from her.cli_api import HybridClient
+from her.cli_api import HybridElementRetrieverClient as HybridClient
 
 
 def test_act_and_query() -> None:

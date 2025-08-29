@@ -5,7 +5,7 @@ from unittest.mock import Mock, patch, MagicMock
 import json
 import numpy as np
 
-from her.cli_api import HybridClient, QueryResult
+from her.cli_api import HybridElementRetrieverClient as HybridClient, QueryResult
 
 
 class TestHybridClient:

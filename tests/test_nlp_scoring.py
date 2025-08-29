@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
-from her.pipeline_production import ProductionPipeline
+from her.pipeline import HERPipeline as ProductionPipeline
 from her.scoring.fusion_scorer_v2 import FusionScorerV2
 
 

@@ -69,7 +69,7 @@ print(f"\nXPath generation: {xpath_fixed}/{len(edge_cases)} working")
 print("\n3. FULL PIPELINE WITH FIXES")
 print("-" * 80)
 
-from her.pipeline_final import FinalProductionPipeline
+from her.pipeline import HERPipeline as FinalProductionPipeline
 pipeline = FinalProductionPipeline()
 
 # Test cases that previously failed

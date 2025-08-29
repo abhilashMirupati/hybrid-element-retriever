@@ -121,7 +121,7 @@ for q1, q2 in similar_queries:
 print("\n3. FINAL PIPELINE TEST")
 print("-" * 80)
 
-from her.pipeline_final import FinalProductionPipeline
+from her.pipeline import HERPipeline as FinalProductionPipeline
 
 pipeline = FinalProductionPipeline()
 

@@ -56,7 +56,7 @@ for frame_name, frame_data in frame_structure["main"]["frames"].items():
 print(f"Created mock DOM with {len(all_elements)} elements across 3 frames")
 
 # Test frame-aware queries
-from her.pipeline_production import ProductionPipeline
+from her.pipeline import HERPipeline as ProductionPipeline
 pipeline = ProductionPipeline()
 
 frame_tests = [
