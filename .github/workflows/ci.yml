@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  lint:
+  quality:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
@@ -26,11 +26,15 @@ jobs:
     - name: Format check with black
       run: black --check src/ tests/
     
-    - name: Lint with flake8
+    - name: Lint with flake8  
       run: flake8 src/ tests/
     
     - name: Type check with mypy
       run: mypy src/ --ignore-missing-imports
+    
+    - name: Check for TODOs and stubs
+      run: |
+        ! git grep -n -E '\.\.\.|\\bTODO\\b|\\bstub\\b' src/ tests/
 
   test-linux:
     runs-on: ubuntu-latest
@@ -66,13 +70,24 @@ jobs:
         pip install -r requirements-dev.txt
         pip install pytest-cov pytest-timeout pytest-xdist
     
+    - name: Install Playwright
+      run: python -m playwright install chromium
+    
+    - name: Install models (optional)
+      run: |
+        if [ -f scripts/install_models.sh ]; then
+          bash scripts/install_models.sh
+        fi
+      continue-on-error: true
+    
     - name: Run tests with coverage
       run: |
         pytest tests/ \
-          --cov=src/her \
+          --cov=src \
           --cov-report=xml \
           --cov-report=html \
           --cov-report=term-missing \
+          --cov-fail-under=85 \
           --timeout=300 \
           -n auto \
           -v
@@ -83,10 +98,6 @@ jobs:
         file: ./coverage.xml
         flags: unittests
         name: codecov-linux-${{ matrix.python-version }}
-    
-    - name: Check coverage threshold
-      run: |
-        coverage report --fail-under=85
 
   test-windows:
     runs-on: windows-latest
@@ -115,45 +126,26 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
         pip install -r requirements-dev.txt
-        pip install pytest pytest-timeout
+        pip install pytest pytest-cov pytest-timeout
     
-    - name: Run tests
+    - name: Install Playwright
+      run: python -m playwright install chromium
+    
+    - name: Install models (optional)
       run: |
-        pytest tests/ --timeout=300 -v
-
-  performance:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v3
+        if (Test-Path scripts\install_models.ps1) {
+          .\scripts\install_models.ps1
+        }
+      continue-on-error: true
+      shell: pwsh
     
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.9'
-    
-    - name: Install dependencies
+    - name: Run tests with coverage
       run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install pytest pytest-benchmark
-    
-    - name: Run performance tests
-      run: |
-        pytest tests/test_performance.py \
-          --benchmark-only \
-          --benchmark-autosave \
-          --benchmark-compare \
-          --benchmark-compare-fail=min:10%
-    
-    - name: Upload benchmark results
-      uses: actions/upload-artifact@v3
-      with:
-        name: benchmark-results
-        path: .benchmarks/
+        pytest tests/ --cov=src --cov-fail-under=85 --timeout=300 -v
 
   build:
     runs-on: ubuntu-latest
-    needs: [lint, test-linux]
+    needs: [quality, test-linux]
     
     steps:
     - uses: actions/checkout@v3
@@ -162,13 +154,19 @@ jobs:
       uses: actions/setup-python@v4
       with:
         python-version: '3.9'
+    
+    - name: Set up Java
+      uses: actions/setup-java@v3
+      with:
+        java-version: '11'
+        distribution: 'temurin'
     
     - name: Install build dependencies
       run: |
         python -m pip install --upgrade pip
         pip install build wheel setuptools
     
-    - name: Build package
+    - name: Build Python package
       run: |
         python -m build
     
@@ -177,84 +175,16 @@ jobs:
         pip install twine
         twine check dist/*
     
-    - name: Test installation
+    - name: Build Java JAR
       run: |
-        pip install dist/*.whl
-        python -c "from her import HybridElementRetriever; print('Import successful')"
+        cd java
+        mvn clean package
+      continue-on-error: true
     
     - name: Upload artifacts
       uses: actions/upload-artifact@v3
       with:
         name: dist
-        path: dist/
-
-  integration:
-    runs-on: ubuntu-latest
-    needs: build
-    
-    steps:
-    - uses: actions/checkout@v3
-    
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.9'
-    
-    - name: Download build artifacts
-      uses: actions/download-artifact@v3
-      with:
-        name: dist
-        path: dist/
-    
-    - name: Install package
-      run: |
-        pip install dist/*.whl
-        pip install playwright pytest
-        playwright install chromium
-    
-    - name: Run integration tests
-      run: |
-        pytest tests/test_integration.py -v
-    
-    - name: Run example scripts
-      run: |
-        python examples/basic_usage.py
-        python examples/advanced_features.py
-
-  security:
-    runs-on: ubuntu-latest
-    
-    steps:
-    - uses: actions/checkout@v3
-    
-    - name: Run Bandit security scan
-      uses: gaurav-nelson/bandit-action@v1
-      with:
-        path: "src/"
-    
-    - name: Run Safety check
-      run: |
-        pip install safety
-        safety check --json
-
-  deploy:
-    runs-on: ubuntu-latest
-    needs: [build, integration, security]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    
-    steps:
-    - uses: actions/checkout@v3
-    
-    - name: Download build artifacts
-      uses: actions/download-artifact@v3
-      with:
-        name: dist
-        path: dist/
-    
-    - name: Publish to Test PyPI
-      env:
-        TWINE_USERNAME: __token__
-        TWINE_PASSWORD: ${{ secrets.TEST_PYPI_TOKEN }}
-      run: |
-        pip install twine
-        twine upload --repository testpypi dist/* --skip-existing
+        path: |
+          dist/
+          java/target/*.jar

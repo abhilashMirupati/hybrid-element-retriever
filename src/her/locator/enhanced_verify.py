@@ -1,432 +1,396 @@
-"""Enhanced locator verification with popup/overlay handling."""
+"""Enhanced locator verification with frame support and self-healing."""
 
-from __future__ import annotations
-from dataclasses import dataclass
-from typing import Any, List, Optional, Tuple, Dict
 import logging
 import time
+from typing import Any, Dict, List, Optional, Tuple
+from dataclasses import dataclass
+
+from .verify import verify_locator
+from .synthesize import LocatorSynthesizer
+from ..vectordb.sqlite_cache import SQLiteKV
 
 logger = logging.getLogger(__name__)
 
-try:
-    from playwright.sync_api import Page
-    PLAYWRIGHT_AVAILABLE = True
-except Exception:
-    Page = Any
-    PLAYWRIGHT_AVAILABLE = False
 
-
-@dataclass(frozen=True)
-class EnhancedVerificationResult:
-    """Enhanced verification result with additional metadata."""
-    ok: bool
-    unique: bool
-    count: int
-    visible: bool
-    occluded: bool
-    disabled: bool
-    strategy: str
-    used_selector: str
-    explanation: str
-    # Enhanced fields
-    popup_detected: bool = False
-    popup_closed: bool = False
-    retry_count: int = 0
-    element_rect: Optional[Dict[str, float]] = None
-
-
-class PopupHandler:
-    """Handles popup and overlay detection/dismissal."""
+@dataclass
+class VerificationResult:
+    """Result of locator verification."""
+    success: bool
+    selector: str
+    frame_path: str = "main"
+    frame_id: Optional[str] = None
+    frame_url: Optional[str] = None
+    unique_in_frame: bool = False
+    element_count: int = 0
+    strategy_used: str = "primary"
+    promoted_from: Optional[str] = None
+    error: Optional[str] = None
     
-    # Common popup selectors
-    POPUP_SELECTORS = [
-        # Cookie banners
-        '[class*="cookie"]',
-        '[id*="cookie"]',
-        '[aria-label*="cookie"]',
-        # General modals
-        '[role="dialog"]',
-        '[role="alertdialog"]',
-        '.modal',
-        '.popup',
-        '.overlay',
-        # Notifications
-        '[role="alert"]',
-        '.notification',
-        '.toast',
-        # Newsletter/subscription
-        '[class*="newsletter"]',
-        '[class*="subscribe"]',
-        # GDPR/Privacy
-        '[class*="gdpr"]',
-        '[class*="privacy"]',
-        '[class*="consent"]',
-    ]
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "success": self.success,
+            "selector": self.selector,
+            "frame": {
+                "used_frame_id": self.frame_id or "",
+                "frame_url": self.frame_url or "",
+                "frame_path": self.frame_path
+            },
+            "unique_in_frame": self.unique_in_frame,
+            "element_count": self.element_count,
+            "strategy_used": self.strategy_used,
+            "promoted_from": self.promoted_from or "",
+            "error": self.error or ""
+        }
+
+
+class EnhancedVerifier:
+    """Enhanced locator verifier with self-healing and frame support."""
     
-    # Common close button selectors
-    CLOSE_SELECTORS = [
-        '[aria-label*="close"]',
-        '[aria-label*="dismiss"]',
-        '[title*="close"]',
-        'button:has-text("Accept")',
-        'button:has-text("OK")',
-        'button:has-text("Got it")',
-        'button:has-text("Close")',
-        'button:has-text("X")',
-        '.close',
-        '.dismiss',
-        '[class*="close"]',
-        '[class*="dismiss"]',
-    ]
+    STRATEGY_ORDER = ["semantic", "css", "xpath_contextual", "xpath_text"]
     
-    @classmethod
-    def detect_popup(cls, page: Page) -> Optional[str]:
-        """Detect if a popup/overlay is present."""
-        if not page or not PLAYWRIGHT_AVAILABLE:
-            return None
+    def __init__(self, cache_path: Optional[str] = None):
+        """Initialize enhanced verifier.
+        
+        Args:
+            cache_path: Path to SQLite cache for promotions
+        """
+        self.synthesizer = LocatorSynthesizer()
+        self.promotion_cache = SQLiteKV(cache_path) if cache_path else None
+    
+    def verify_with_healing(
+        self,
+        selector: str,
+        descriptor: Dict[str, Any],
+        page: Any,
+        frame_path: Optional[str] = None,
+        max_attempts: int = 3
+    ) -> VerificationResult:
+        """Verify locator with self-healing fallbacks.
+        
+        Args:
+            selector: Primary selector to verify
+            descriptor: Element descriptor
+            page: Page or frame object
+            frame_path: Optional frame path
+            max_attempts: Maximum healing attempts
             
+        Returns:
+            VerificationResult with comprehensive metadata
+        """
+        result = VerificationResult(
+            success=False,
+            selector=selector,
+            frame_path=frame_path or "main"
+        )
+        
+        # Switch to frame if needed
+        target = self._switch_to_frame(page, frame_path) if frame_path else page
+        if not target:
+            result.error = f"Failed to switch to frame: {frame_path}"
+            return result
+        
+        # Get frame metadata
+        result.frame_id = self._get_frame_id(target)
+        result.frame_url = self._get_frame_url(target)
+        
+        # Try primary selector
+        if self._verify_unique_in_frame(selector, descriptor, target):
+            result.success = True
+            result.unique_in_frame = True
+            result.element_count = self._count_elements(selector, target)
+            return result
+        
+        # Check for promoted selector
+        if self.promotion_cache:
+            promoted = self.promotion_cache.get_promotion(selector)
+            if promoted and self._verify_unique_in_frame(promoted, descriptor, target):
+                result.success = True
+                result.selector = promoted
+                result.unique_in_frame = True
+                result.element_count = self._count_elements(promoted, target)
+                result.strategy_used = "promoted"
+                result.promoted_from = selector
+                
+                # Record successful promotion
+                self.promotion_cache.record_promotion(selector, promoted, True)
+                return result
+        
+        # Try self-healing with different strategies
+        for attempt in range(max_attempts):
+            for strategy in self.STRATEGY_ORDER:
+                healed_selector = self._generate_selector(descriptor, strategy)
+                
+                if healed_selector and healed_selector != selector:
+                    if self._verify_unique_in_frame(healed_selector, descriptor, target):
+                        result.success = True
+                        result.selector = healed_selector
+                        result.unique_in_frame = True
+                        result.element_count = self._count_elements(healed_selector, target)
+                        result.strategy_used = strategy
+                        result.promoted_from = selector
+                        
+                        # Record successful healing
+                        if self.promotion_cache:
+                            self.promotion_cache.record_promotion(selector, healed_selector, True)
+                        
+                        return result
+        
+        # All attempts failed
+        result.error = "No unique selector found after healing attempts"
+        return result
+    
+    def verify_uniqueness_per_frame(
+        self,
+        selector: str,
+        page: Any,
+        include_frames: bool = True
+    ) -> Dict[str, VerificationResult]:
+        """Verify selector uniqueness in each frame.
+        
+        Args:
+            selector: Selector to verify
+            page: Page object
+            include_frames: Whether to check child frames
+            
+        Returns:
+            Dictionary of frame_path to VerificationResult
+        """
+        results = {}
+        
+        # Check main frame
+        main_result = VerificationResult(
+            success=False,
+            selector=selector,
+            frame_path="main"
+        )
+        
         try:
-            for selector in cls.POPUP_SELECTORS:
-                try:
-                    elements = page.query_selector_all(selector)
-                    for el in elements:
-                        if el.is_visible():
-                            # Check if it's actually overlaying content
-                            rect = el.bounding_box()
-                            if rect:
-                                # Check if it covers significant area
-                                viewport = page.viewport_size
-                                if viewport:
-                                    coverage = (rect['width'] * rect['height']) / (viewport['width'] * viewport['height'])
-                                    if coverage > 0.2:  # Covers >20% of viewport
-                                        logger.debug(f"Detected popup with selector: {selector}")
-                                        return selector
-                except Exception:
-                    continue
-                    
+            count = self._count_elements(selector, page)
+            main_result.element_count = count
+            main_result.unique_in_frame = (count == 1)
+            main_result.success = main_result.unique_in_frame
         except Exception as e:
-            logger.warning(f"Error detecting popup: {e}")
-            
-        return None
+            main_result.error = str(e)
+        
+        results["main"] = main_result
+        
+        # Check child frames
+        if include_frames:
+            try:
+                iframes = page.query_selector_all("iframe")
+                
+                for i, iframe in enumerate(iframes):
+                    try:
+                        frame = iframe.content_frame()
+                        if frame:
+                            frame_id = iframe.get_attribute("id") or f"frame_{i}"
+                            frame_path = f"iframe[id='{frame_id}']" if frame_id != f"frame_{i}" else f"iframe:nth-of-type({i+1})"
+                            
+                            frame_result = VerificationResult(
+                                success=False,
+                                selector=selector,
+                                frame_path=frame_path,
+                                frame_id=frame_id,
+                                frame_url=self._get_frame_url(frame)
+                            )
+                            
+                            count = self._count_elements(selector, frame)
+                            frame_result.element_count = count
+                            frame_result.unique_in_frame = (count == 1)
+                            frame_result.success = frame_result.unique_in_frame
+                            
+                            results[frame_path] = frame_result
+                            
+                    except Exception as e:
+                        logger.debug(f"Failed to check frame {i}: {e}")
+                        
+            except Exception as e:
+                logger.warning(f"Failed to check frames: {e}")
+        
+        return results
     
-    @classmethod
-    def close_popup(cls, page: Page, popup_selector: Optional[str] = None) -> bool:
-        """Attempt to close a detected popup."""
-        if not page or not PLAYWRIGHT_AVAILABLE:
+    def _verify_unique_in_frame(
+        self,
+        selector: str,
+        descriptor: Dict[str, Any],
+        frame: Any
+    ) -> bool:
+        """Verify selector is unique in frame.
+        
+        Args:
+            selector: Selector to verify
+            descriptor: Expected element descriptor
+            frame: Frame object
+            
+        Returns:
+            True if selector uniquely identifies element
+        """
+        try:
+            # First check basic verification
+            if not verify_locator(selector, descriptor, frame):
+                return False
+            
+            # Check uniqueness
+            count = self._count_elements(selector, frame)
+            if count != 1:
+                return False
+            
+            # Verify it matches expected element
+            element = frame.query_selector(selector)
+            if element:
+                # Check key attributes match
+                elem_tag = element.evaluate("el => el.tagName.toLowerCase()")
+                expected_tag = descriptor.get('tag', '').lower()
+                
+                if expected_tag and elem_tag != expected_tag:
+                    return False
+                
+                # Check ID if present
+                elem_id = element.get_attribute("id")
+                expected_id = descriptor.get('id')
+                
+                if expected_id and elem_id != expected_id:
+                    return False
+                
+                return True
+            
             return False
             
-        try:
-            # If specific popup selector provided, try to close it
-            if popup_selector:
-                try:
-                    popup = page.query_selector(popup_selector)
-                    if popup:
-                        # Look for close button within popup
-                        for close_sel in cls.CLOSE_SELECTORS:
-                            try:
-                                close_btn = popup.query_selector(close_sel)
-                                if close_btn and close_btn.is_visible():
-                                    close_btn.click()
-                                    page.wait_for_timeout(500)  # Wait for animation
-                                    logger.info(f"Closed popup using {close_sel}")
-                                    return True
-                            except Exception:
-                                continue
-                                
-                        # Try clicking outside popup (for modal overlays)
-                        try:
-                            page.mouse.click(10, 10)  # Click top-left corner
-                            page.wait_for_timeout(300)
-                            if not page.query_selector(popup_selector).is_visible():
-                                logger.info("Closed popup by clicking outside")
-                                return True
-                        except Exception:
-                            pass
-                            
-                except Exception as e:
-                    logger.debug(f"Error closing specific popup: {e}")
-            
-            # Try generic close attempts
-            for close_sel in cls.CLOSE_SELECTORS:
-                try:
-                    close_btns = page.query_selector_all(close_sel)
-                    for btn in close_btns:
-                        if btn.is_visible():
-                            btn.click()
-                            page.wait_for_timeout(500)
-                            logger.info(f"Closed popup using generic {close_sel}")
-                            return True
-                except Exception:
-                    continue
-                    
-            # Try ESC key
-            try:
-                page.keyboard.press("Escape")
-                page.wait_for_timeout(300)
-                logger.info("Attempted popup close with ESC key")
-                return True
-            except Exception:
-                pass
-                
         except Exception as e:
-            logger.warning(f"Error closing popup: {e}")
-            
-        return False
-
-
-def check_element_occlusion(page: Page, element: Any) -> Tuple[bool, Optional[str]]:
-    """Check if element is occluded and identify occluding element."""
-    if not element:
-        return False, None
-        
-    try:
-        # Get element center point
-        box = element.bounding_box()
-        if not box:
-            return False, None
-            
-        cx = box['x'] + box['width'] / 2
-        cy = box['y'] + box['height'] / 2
-        
-        # Check what element is at center point
-        result = page.evaluate("""
-            ({x, y, element}) => {
-                const topEl = document.elementFromPoint(x, y);
-                if (!topEl) return { occluded: false };
-                
-                // Check if top element is our target or contains it
-                const targetEl = element;
-                if (topEl === targetEl || topEl.contains(targetEl) || targetEl.contains(topEl)) {
-                    return { occluded: false };
-                }
-                
-                // Element is occluded - get info about occluder
-                const occluder = {
-                    tag: topEl.tagName.toLowerCase(),
-                    id: topEl.id || null,
-                    classes: Array.from(topEl.classList),
-                    role: topEl.getAttribute('role'),
-                    zIndex: window.getComputedStyle(topEl).zIndex
-                };
-                
-                return { occluded: true, occluder };
-            }
-        """, {'x': cx, 'y': cy, 'element': element})
-        
-        if result['occluded']:
-            occluder = result.get('occluder', {})
-            occluder_desc = f"{occluder.get('tag', 'unknown')}"
-            if occluder.get('id'):
-                occluder_desc += f"#{occluder['id']}"
-            if occluder.get('classes'):
-                occluder_desc += f".{'.'.join(occluder['classes'][:2])}"
-            return True, occluder_desc
-            
-    except Exception as e:
-        logger.debug(f"Error checking occlusion: {e}")
-        
-    return False, None
-
-
-def enhanced_verify_locator(
-    page: Page,
-    selector: str,
-    strategy: str = 'css',
-    require_unique: bool = True,
-    auto_handle_popups: bool = True,
-    max_retries: int = 3
-) -> EnhancedVerificationResult:
-    """Enhanced locator verification with popup handling and retries."""
+            logger.debug(f"Verification failed: {e}")
+            return False
     
-    if not page or not PLAYWRIGHT_AVAILABLE:
-        return EnhancedVerificationResult(
-            False, False, 0, False, False, False, strategy, selector,
-            "Page not available", False, False, 0
-        )
-    
-    retry_count = 0
-    popup_detected = False
-    popup_closed = False
-    
-    while retry_count <= max_retries:
+    def _generate_selector(self, descriptor: Dict[str, Any], strategy: str) -> Optional[str]:
+        """Generate selector using specific strategy.
+        
+        Args:
+            descriptor: Element descriptor
+            strategy: Strategy to use
+            
+        Returns:
+            Generated selector or None
+        """
         try:
-            # Check for popups if enabled
-            if auto_handle_popups and retry_count == 0:
-                popup_sel = PopupHandler.detect_popup(page)
-                if popup_sel:
-                    popup_detected = True
-                    logger.info(f"Detected popup: {popup_sel}")
-                    if PopupHandler.close_popup(page, popup_sel):
-                        popup_closed = True
-                        logger.info("Successfully closed popup")
-                        time.sleep(0.5)  # Wait for DOM to stabilize
+            if strategy == "semantic":
+                # Prioritize semantic attributes
+                if descriptor.get('dataTestId'):
+                    return f"[data-testid='{descriptor['dataTestId']}']"
+                elif descriptor.get('ariaLabel'):
+                    return f"[aria-label='{descriptor['ariaLabel']}']"
+                elif descriptor.get('id'):
+                    return f"#{descriptor['id']}"
             
-            # Query elements
-            if strategy == 'css':
-                elements = page.query_selector_all(selector)
-            elif strategy == 'xpath':
-                elements = page.query_selector_all(f"xpath={selector}")
-            elif strategy == 'text':
-                elements = page.query_selector_all(f"text={selector}")
-            else:
-                elements = page.query_selector_all(selector)
+            elif strategy == "css":
+                # Generate CSS selector
+                tag = descriptor.get('tag', '*')
+                classes = descriptor.get('classes', [])
+                
+                if classes:
+                    class_selector = ''.join(f'.{c}' for c in classes[:2])  # Limit classes
+                    return f"{tag}{class_selector}"
             
-            count = len(elements)
+            elif strategy == "xpath_contextual":
+                # Generate contextual XPath
+                tag = descriptor.get('tag', '*')
+                text = descriptor.get('text', '')
+                
+                if text:
+                    # Find parent with ID and use relative path
+                    return f"//{tag}[contains(text(), '{text[:30]}')]"
             
-            if count == 0:
-                if retry_count < max_retries:
-                    retry_count += 1
-                    time.sleep(0.5)
-                    continue
-                return EnhancedVerificationResult(
-                    False, False, 0, False, False, False, strategy, selector,
-                    "No elements matched", popup_detected, popup_closed, retry_count
-                )
+            elif strategy == "xpath_text":
+                # Generate text-based XPath
+                text = descriptor.get('text', '')
+                if text:
+                    return f"//*[normalize-space()='{text[:50]}']"
             
-            if require_unique and count != 1:
-                return EnhancedVerificationResult(
-                    False, False, count, False, False, False, strategy, selector,
-                    f"Matched {count} elements; expected 1", 
-                    popup_detected, popup_closed, retry_count
-                )
+            # Fall back to synthesizer
+            locators = self.synthesizer.synthesize(descriptor)
+            for loc in locators:
+                if strategy == "css" and not loc.startswith('/'):
+                    return loc
+                elif strategy.startswith("xpath") and loc.startswith('/'):
+                    return loc
             
-            target = elements[0]
-            
-            # Check visibility
-            if not target.is_visible():
-                if retry_count < max_retries:
-                    retry_count += 1
-                    time.sleep(0.5)
-                    continue
-                return EnhancedVerificationResult(
-                    False, count == 1, count, False, False, False, strategy, selector,
-                    "Element not visible", popup_detected, popup_closed, retry_count
-                )
-            
-            # Check occlusion
-            is_occluded, occluder = check_element_occlusion(page, target)
-            if is_occluded:
-                # If occluded and we haven't tried closing popups yet
-                if auto_handle_popups and not popup_closed and retry_count == 0:
-                    # Try to close any overlay
-                    if PopupHandler.close_popup(page):
-                        popup_closed = True
-                        retry_count += 1
-                        time.sleep(0.5)
-                        continue
-                        
-                if retry_count < max_retries:
-                    retry_count += 1
-                    time.sleep(0.5)
-                    continue
-                    
-                return EnhancedVerificationResult(
-                    False, count == 1, count, True, True, False, strategy, selector,
-                    f"Element occluded by {occluder or 'unknown'}",
-                    popup_detected, popup_closed, retry_count
-                )
-            
-            # Check if disabled
-            is_disabled = False
-            try:
-                is_disabled = not target.is_enabled()
-            except Exception:
-                pass
-            
-            if is_disabled:
-                return EnhancedVerificationResult(
-                    False, count == 1, count, True, False, True, strategy, selector,
-                    "Element is disabled", popup_detected, popup_closed, retry_count
-                )
-            
-            # Get element rect for additional info
-            element_rect = None
-            try:
-                box = target.bounding_box()
-                if box:
-                    element_rect = {
-                        'x': box['x'],
-                        'y': box['y'],
-                        'width': box['width'],
-                        'height': box['height']
-                    }
-            except Exception:
-                pass
-            
-            # Success!
-            return EnhancedVerificationResult(
-                True, count == 1, count, True, False, False, strategy, selector,
-                "Element verified successfully",
-                popup_detected, popup_closed, retry_count, element_rect
-            )
+            return locators[0] if locators else None
             
         except Exception as e:
-            if retry_count < max_retries:
-                retry_count += 1
-                time.sleep(0.5)
-                continue
-                
-            return EnhancedVerificationResult(
-                False, False, 0, False, False, False, strategy, selector,
-                f"Verification error: {e}", popup_detected, popup_closed, retry_count
-            )
+            logger.debug(f"Selector generation failed for {strategy}: {e}")
+            return None
     
-    return EnhancedVerificationResult(
-        False, False, 0, False, False, False, strategy, selector,
-        f"Max retries ({max_retries}) exceeded", popup_detected, popup_closed, retry_count
-    )
-
-
-class EnhancedLocatorVerifier:
-    """Enhanced verifier with popup handling."""
-    
-    def __init__(self, timeout_ms: int = 5000, auto_handle_popups: bool = True):
-        self.timeout_ms = timeout_ms
-        self.auto_handle_popups = auto_handle_popups
-    
-    def verify(self, selector: str, page: Optional[Page]) -> Tuple[bool, str, Dict]:
-        """Verify a locator with enhanced features."""
-        if not page:
-            return False, "No page available", {"count": 0}
+    def _switch_to_frame(self, page: Any, frame_path: str) -> Optional[Any]:
+        """Switch to specified frame.
+        
+        Args:
+            page: Page object
+            frame_path: Frame path
             
-        result = enhanced_verify_locator(
-            page, selector, 
-            auto_handle_popups=self.auto_handle_popups
-        )
-        
-        details = {
-            "count": result.count,
-            "unique": result.unique,
-            "visible": result.visible,
-            "enabled": not result.disabled,
-            "occluded": result.occluded,
-            "popup_handled": result.popup_closed,
-            "retries": result.retry_count
-        }
-        
-        return result.ok, result.explanation, details
+        Returns:
+            Frame object or None
+        """
+        try:
+            if not frame_path or frame_path == "main":
+                return page
+            
+            # Handle nested frames
+            frames = frame_path.split("/")
+            current = page
+            
+            for frame_selector in frames:
+                if frame_selector:
+                    frame_element = current.query_selector(frame_selector)
+                    if frame_element:
+                        current = frame_element.content_frame()
+                    else:
+                        return None
+            
+            return current
+            
+        except Exception as e:
+            logger.warning(f"Failed to switch to frame {frame_path}: {e}")
+            return None
     
-    def verify_uniqueness(self, page: Optional[Page], selector: str) -> bool:
-        """Check if selector matches exactly one element."""
-        ok, _, details = self.verify(selector, page)
-        return ok and details.get("unique", False)
+    def _count_elements(self, selector: str, frame: Any) -> int:
+        """Count elements matching selector.
+        
+        Args:
+            selector: Selector
+            frame: Frame object
+            
+        Returns:
+            Number of matching elements
+        """
+        try:
+            elements = frame.query_selector_all(selector)
+            return len(elements)
+        except Exception:
+            return 0
     
-    def find_unique_locator(
-        self, 
-        locators: List[str], 
-        page: Optional[Page]
-    ) -> Optional[str]:
-        """Find first unique locator from list."""
-        for loc in locators:
-            if self.verify_uniqueness(page, loc):
-                return loc
-        return None
-
-
-__all__ = [
-    'EnhancedVerificationResult',
-    'EnhancedLocatorVerifier',
-    'enhanced_verify_locator',
-    'PopupHandler',
-    'check_element_occlusion'
-]
+    def _get_frame_id(self, frame: Any) -> Optional[str]:
+        """Get frame ID.
+        
+        Args:
+            frame: Frame object
+            
+        Returns:
+            Frame ID or None
+        """
+        try:
+            return frame.evaluate("window.frameElement ? window.frameElement.id : null")
+        except Exception:
+            return None
+    
+    def _get_frame_url(self, frame: Any) -> Optional[str]:
+        """Get frame URL.
+        
+        Args:
+            frame: Frame object
+            
+        Returns:
+            Frame URL or None
+        """
+        try:
+            return frame.url
+        except Exception:
+            return None
