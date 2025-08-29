@@ -59,15 +59,22 @@ class FunctionalValidator:
         
         # Initialize HER client
         try:
-            # Try mock client first for testing
-            from her.mock_client import MockHERClient
-            self.client = MockHERClient()
+            # Use production client with semantic scoring
+            from her.production_client import ProductionHERClient
+            self.client = ProductionHERClient()
             await self.client.initialize(self.page)
-        except:
-            # Fall back to real client
-            self.client = HybridElementRetrieverClient()
-            if hasattr(self.client, 'initialize'):
+        except Exception as e:
+            print(f"Warning: Could not load production client: {e}")
+            # Fall back to mock client
+            try:
+                from her.mock_client import MockHERClient
+                self.client = MockHERClient()
                 await self.client.initialize(self.page)
+            except:
+                # Last resort - original client
+                self.client = HybridElementRetrieverClient()
+                if hasattr(self.client, 'initialize'):
+                    await self.client.initialize(self.page)
         
     async def teardown(self):
         """Clean up resources"""

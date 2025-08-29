@@ -1,0 +1,33 @@
+[
+    {
+        "intent_id": "login-email",
+        "expected": {
+            "used_locator": "input#login-email",
+            "strategy": "css",
+            "frame_path": ["main"],
+            "confidence_min": 0.95
+        }
+    },
+    {
+        "intent_id": "login-password",
+        "expected": {
+            "used_locator": "input#login-password",
+            "strategy": "css",
+            "frame_path": ["main"],
+            "confidence_min": 0.95
+        }
+    },
+    {
+        "intent_id": "click-signin",
+        "expected": {
+            "used_locator": "button#login-button",
+            "strategy": "css",
+            "frame_path": ["main"],
+            "confidence_min": 0.90,
+            "post_action": {
+                "url_changed": true,
+                "dom_mutated": true
+            }
+        }
+    }
+]

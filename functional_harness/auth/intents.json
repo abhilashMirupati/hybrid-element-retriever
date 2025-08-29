@@ -1,0 +1,19 @@
+[
+    {
+        "id": "login-email",
+        "query": "enter login email",
+        "action": "type",
+        "value": "user@example.com"
+    },
+    {
+        "id": "login-password",
+        "query": "enter password",
+        "action": "type",
+        "value": "SecurePass123"
+    },
+    {
+        "id": "click-signin",
+        "query": "click sign in button",
+        "action": "click"
+    }
+]
