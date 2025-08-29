@@ -8,7 +8,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
 from her.pipeline import HERPipeline as ProductionPipeline
-from her.scoring.fusion_scorer_v2 import FusionScorerV2
+from her.rank.fusion_scorer import FusionScorer as FusionScorerV2
 
 
 class TestNLPScoring(unittest.TestCase):

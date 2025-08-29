@@ -6,7 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent / 'src'))
 
 from her.pipeline import HERPipeline
-from her.pipeline_v2 import HERPipelineV2
+from her.pipeline import HERPipeline as HERPipelineV2
 from her.matching.intelligent_matcher import IntelligentMatcher
 
 print("=" * 80)

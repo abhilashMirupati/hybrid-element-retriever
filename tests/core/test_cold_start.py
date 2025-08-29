@@ -16,7 +16,7 @@ class TestColdStart:
     @pytest.fixture
     def clean_cache(self, tmp_path):
         """Provide a clean cache instance."""
-        cache = TwoTierCache(cache_dir=tmp_path)
+        cache = TwoTierCache(db_path=tmp_path / "cache.db")
         cache.clear()
         return cache
     
@@ -27,8 +27,7 @@ class TestColdStart:
             use_minilm=True,
             use_e5_small=False,
             use_markuplm=True,
-            enable_cold_start_detection=True,
-            cache_dir=str(clean_cache.cache_dir)
+            enable_cold_start_detection=True
         )
         return HERPipeline(config=config)
     

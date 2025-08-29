@@ -150,17 +150,24 @@ test_cases = [
     )
 ]
 
-success = 0
-for query, elements, expected in test_cases:
-    result = pipeline.process(query, elements)
-    elem_str = str(result.element).lower()
-    if expected.lower() in elem_str:
-        print(f"✅ '{query}' → correct")
-        success += 1
-    else:
-        print(f"❌ '{query}' → wrong")
+def test_pipeline_accuracy():
+    """Test pipeline accuracy on test cases."""
+    success = 0
+    for query, elements, expected in test_cases:
+        result = pipeline.process(query, elements)
+        if result and "element" in result:
+            elem_str = str(result["element"]).lower()
+            if expected.lower() in elem_str:
+                print(f"✅ '{query}' → correct")
+                success += 1
+            else:
+                print(f"❌ '{query}' → wrong")
+    
+    print(f"Pipeline accuracy: {success}/{len(test_cases)}")
+    assert success >= len(test_cases) * 0.8  # At least 80% accuracy
 
-print(f"Pipeline accuracy: {success}/{len(test_cases)}")
+# Run the test
+test_pipeline_accuracy()
 
 # Test cache hit
 print("\nTesting cache hits...")

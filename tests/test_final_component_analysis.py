@@ -11,7 +11,7 @@ print("FINAL COMPONENT ANALYSIS - 100% ACCURACY TARGET")
 print("=" * 80)
 
 # Import all components
-from her.pipeline_v2 import HERPipelineV2
+from her.pipeline import HERPipeline as HERPipelineV2
 from her.matching.intelligent_matcher import IntelligentMatcher
 from her.locator.synthesize import LocatorSynthesizer
 from her.session.snapshot import SnapshotManager
