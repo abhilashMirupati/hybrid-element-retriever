@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Product Catalog - Disambiguation Test</title>
+    <style>
+        .product-card {
+            border: 1px solid #ddd;
+            padding: 15px;
+            margin: 10px;
+            display: inline-block;
+            width: 250px;
+        }
+        .product-title { font-weight: bold; font-size: 18px; }
+        .product-category { color: #666; font-size: 14px; }
+        .price { color: #2a2; font-size: 20px; margin: 10px 0; }
+        .add-to-cart { 
+            background: #28a745; 
+            color: white; 
+            padding: 10px 20px;
+            border: none;
+            cursor: pointer;
+            width: 100%;
+        }
+        .out-of-stock { background: #ccc; cursor: not-allowed; }
+    </style>
+</head>
+<body>
+    <h1>Electronics Store</h1>
+    
+    <!-- Phone products -->
+    <div class="product-card" data-product-id="iphone-14">
+        <div class="product-title">iPhone 14 Pro</div>
+        <div class="product-category">Smartphone</div>
+        <div class="price">$999</div>
+        <button class="add-to-cart" data-product-type="phone">Add to Cart</button>
+    </div>
+    
+    <div class="product-card" data-product-id="galaxy-s23">
+        <div class="product-title">Samsung Galaxy S23</div>
+        <div class="product-category">Smartphone</div>
+        <div class="price">$899</div>
+        <button class="add-to-cart" data-product-type="phone">Add to Cart</button>
+    </div>
+    
+    <!-- Laptop products -->
+    <div class="product-card" data-product-id="macbook-pro">
+        <div class="product-title">MacBook Pro 16"</div>
+        <div class="product-category">Laptop</div>
+        <div class="price">$2499</div>
+        <button class="add-to-cart" data-product-type="laptop">Add to Cart</button>
+    </div>
+    
+    <div class="product-card" data-product-id="thinkpad">
+        <div class="product-title">ThinkPad X1 Carbon</div>
+        <div class="product-category">Laptop</div>
+        <div class="price">$1899</div>
+        <button class="add-to-cart" data-product-type="laptop">Add to Cart</button>
+    </div>
+    
+    <!-- Tablet products -->
+    <div class="product-card" data-product-id="ipad-pro">
+        <div class="product-title">iPad Pro 12.9"</div>
+        <div class="product-category">Tablet</div>
+        <div class="price">$1099</div>
+        <button class="add-to-cart" data-product-type="tablet">Add to Cart</button>
+    </div>
+    
+    <div class="product-card" data-product-id="surface-pro">
+        <div class="product-title">Surface Pro 9</div>
+        <div class="product-category">Tablet</div>
+        <div class="price">$1299</div>
+        <button class="add-to-cart out-of-stock" data-product-type="tablet" disabled>Out of Stock</button>
+    </div>
+</body>
+</html>

@@ -1,0 +1,63 @@
+[
+    {
+        "intent_id": "phone-add-1",
+        "expected": {
+            "used_locator": "button[data-product-type='phone']:not([disabled])",
+            "strategy": "css",
+            "frame_path": ["main"],
+            "confidence_min": 0.85,
+            "post_action": {
+                "dom_mutated": true
+            }
+        }
+    },
+    {
+        "intent_id": "laptop-add-1",
+        "expected": {
+            "used_locator": "button[data-product-type='laptop']",
+            "strategy": "css",
+            "frame_path": ["main"],
+            "confidence_min": 0.85,
+            "post_action": {
+                "dom_mutated": true
+            }
+        }
+    },
+    {
+        "intent_id": "tablet-add-1",
+        "expected": {
+            "used_locator": "div[data-product-id='ipad-pro'] button.add-to-cart",
+            "strategy": "css",
+            "frame_path": ["main"],
+            "confidence_min": 0.80,
+            "notes": "Should select iPad, not disabled Surface",
+            "post_action": {
+                "dom_mutated": true
+            }
+        }
+    },
+    {
+        "intent_id": "iphone-specific",
+        "expected": {
+            "used_locator": "div[data-product-id='iphone-14'] button",
+            "strategy": "css",
+            "frame_path": ["main"],
+            "confidence_min": 0.90,
+            "post_action": {
+                "dom_mutated": true
+            }
+        }
+    },
+    {
+        "intent_id": "macbook-specific",
+        "expected": {
+            "used_locator": "div[data-product-id='macbook-pro'] button",
+            "strategy": "css",
+            "frame_path": ["main"],
+            "confidence_min": 0.90,
+            "post_action": {
+                "dom_mutated": true
+            }
+        }
+    }
+]
