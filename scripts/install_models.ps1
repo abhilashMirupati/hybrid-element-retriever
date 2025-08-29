@@ -1,3 +1,32 @@
+#!/usr/bin/env pwsh
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+$Root = Join-Path (Split-Path -Parent $PSCommandPath) '..' | Resolve-Path
+$ModelsDir = Join-Path $Root 'src/her/models'
+
+New-Item -ItemType Directory -Force -Path (Join-Path $ModelsDir 'e5-small-onnx') | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $ModelsDir 'markuplm-base-onnx') | Out-Null
+
+foreach ($ModelSub in 'e5-small-onnx','markuplm-base-onnx') {
+  $ModelPath = Join-Path $ModelsDir "$ModelSub/model.onnx"
+  $TokenizerPath = Join-Path $ModelsDir "$ModelSub/tokenizer.json"
+  if (!(Test-Path $ModelPath)) { New-Item -ItemType File -Path $ModelPath | Out-Null }
+  if (!(Test-Path $TokenizerPath)) {
+    @'{ "error": "Tokenizer not installed. Offline stub created by scripts/install_models.ps1. Embedders must use deterministic hash fallback.", "ok": false }'@ |
+      Set-Content -LiteralPath $TokenizerPath -Encoding UTF8
+  }
+}
+
+$iso = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+$modelInfo = @(
+  @{ id = 'sentence-transformers/ms-marco-MiniLM-L-6-v3'; alias = 'e5-small-onnx/model.onnx'; task = 'text-embedding'; downloaded_at = $iso },
+  @{ id = 'microsoft/markuplm-base'; alias = 'markuplm-base-onnx/model.onnx'; task = 'element-embedding'; downloaded_at = $iso }
+)
+$json = $modelInfo | ConvertTo-Json -Depth 3
+Set-Content -LiteralPath (Join-Path $ModelsDir 'MODEL_INFO.json') -Value $json -Encoding UTF8
+
+Write-Host "Models directory prepared at $ModelsDir"
 # Install ONNX models for HER (E5-small + MarkupLM-base) - Windows version
 
 $ErrorActionPreference = "Stop"

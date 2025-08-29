@@ -1,3 +1,52 @@
+Hybrid Element Retriever (HER)
+
+Quick start (Phase 0 installability):
+
+1. Install in editable mode with dev extras:
+
+   ```bash
+   pip install -e .[dev]
+   ```
+
+2. Install Playwright Chromium browser:
+
+   ```bash
+   python -m playwright install chromium
+   ```
+
+3. Install or stub models:
+
+   ```bash
+   ./scripts/install_models.sh
+   ```
+
+   On Windows PowerShell:
+
+   ```powershell
+   ./scripts/install_models.ps1
+   ```
+
+4. Verify sources compile:
+
+   ```bash
+   python -m compileall src
+   ```
+
+Model locations:
+
+- Packaged models directory: `src/her/models/`
+- Two model aliases used by the resolver:
+  - `e5-small-onnx/model.onnx`
+  - `markuplm-base-onnx/model.onnx`
+
+Offline behavior:
+
+If models are not available, the installer creates deterministic stubs:
+
+- `model.onnx` is a zero-byte file
+- `tokenizer.json` contains human-readable error text
+
+Embedders will fall back to a deterministic hashing projection so the system remains functional offline and during CI runs without network.
 # Hybrid Element Retriever (HER)
 
 [![CI](https://github.com/yourusername/her/actions/workflows/ci.yml/badge.svg)](https://github.com/yourusername/her/actions/workflows/ci.yml)

@@ -3,28 +3,68 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "hybrid-element-retriever"
+name = "her"
 version = "0.1.0"
-description = "HER: Natural-language to unique, resilient UI locators with verification/self-heal"
+description = "Hybrid Element Retriever (HER)"
 readme = "README.md"
-requires-python = ">=3.9"
-authors = [{name="HER Maintainers"}]
+requires-python = ">=3.10"
+authors = [
+  { name = "HER Maintainers", email = "maintainers@example.com" }
+]
+license = { text = "MIT" }
+keywords = ["hybrid", "retrieval", "automation", "embeddings", "onnx"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent"
+]
 dependencies = [
-  "playwright>=1.43",
-  "numpy>=1.23",
-  "onnxruntime>=1.15; extra == \"cpu\"",
+  "numpy>=1.24",
 ]
 
 [project.optional-dependencies]
 dev = [
-  "black>=23.0.0",
-  "flake8>=6.0.0",
-  "mypy>=1.0.0",
-  "pytest>=7.3.0",
-  "pytest-cov>=4.0.0",
-  "pytest-timeout>=2.1.0",
-  "pytest-xdist>=3.3.1",
+  "pytest>=7",
+  "playwright>=1.45",
+  "black>=24.0",
+  "flake8>=6.0",
+  "mypy>=1.6",
 ]
 
 [project.scripts]
 her = "her.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["her*"]
+
+[tool.setuptools.package-data]
+her = [
+  "models/**/*",
+]
+
+[tool.black]
+line-length = 100
+target-version = ["py310", "py311", "py312"]
+
+[tool.flake8]
+max-line-length = 100
+extend-ignore = ["E203", "W503"]
+exclude = [
+  ".git",
+  "__pycache__",
+  "build",
+  "dist",
+]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
