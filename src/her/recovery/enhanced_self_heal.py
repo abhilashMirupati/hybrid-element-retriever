@@ -82,7 +82,9 @@ class HealingStrategy:
         self, locator: str, context: Optional[Dict[str, Any]] = None
     ) -> List[str]:
         """Apply healing strategy to generate alternative locators."""
-        raise NotImplementedError
+        # Base implementation returns empty list
+        # Subclasses should override this method
+        return []
 
 
 class RelaxExactMatchStrategy(HealingStrategy):
