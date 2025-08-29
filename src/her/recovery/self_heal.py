@@ -92,3 +92,7 @@ class SelfHealer:
             return out or candidates
         self.healing_history.extend(candidates)
         return candidates
+
+
+# Compatibility alias
+SelfHeal = SelfHealer

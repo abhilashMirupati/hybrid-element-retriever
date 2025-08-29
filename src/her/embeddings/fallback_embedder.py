@@ -175,3 +175,13 @@ class FallbackElementEmbedder:
             str(descriptor.get('attributes', {}))
         ]
         return '|'.join(key_parts)
+
+
+class FallbackEmbedder:
+    """Compatibility facade exposing simple text embed for tests."""
+
+    def __init__(self, dim: int = 384):
+        self._qe = FallbackQueryEmbedder(dim=dim)
+
+    def embed(self, text: str) -> List[float]:
+        return self._qe.embed(text)

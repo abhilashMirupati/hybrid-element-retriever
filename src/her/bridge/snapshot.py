@@ -284,3 +284,13 @@ def _fallback_capture(frame: Any) -> List[Dict]:
 
 
 __all__ = ["get_flat_snapshot", "capture_snapshot", "detect_dom_change", "compute_dom_hash", "merge_dom_and_ax", "get_full_ax_tree", "get_flattened_document", "capture_frame_snapshot"]
+
+
+class SnapshotCapture:
+    """Compatibility wrapper expected by some tests."""
+
+    def __init__(self) -> None:
+        pass
+
+    def capture(self, page: Any) -> Tuple[List[Dict[str, Any]], str]:
+        return capture_snapshot(page)

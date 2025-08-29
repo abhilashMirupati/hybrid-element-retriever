@@ -3,6 +3,7 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Dict, Tuple
+import time
 import json
 
 
@@ -37,7 +38,7 @@ class PromotionStore:
 
     def _ensure_sqlite(self) -> None:
         with sqlite3.connect(self.path) as c:
-            c.execute('CREATE TABLE IF NOT EXISTS promotions(locator TEXT, context TEXT, success INTEGER, failure INTEGER, score REAL, PRIMARY KEY(locator,context))')
+            c.execute('CREATE TABLE IF NOT EXISTS promotions(locator TEXT, context TEXT, success INTEGER, failure INTEGER, score REAL, ts REAL, PRIMARY KEY(locator,context))')
             c.commit()
 
     def record_success(self, locator: str, context: str, boost: float = 0.1) -> PromotionRecord:
@@ -71,8 +72,11 @@ class PromotionStore:
         # Load from disk if sqlite
         if self.use_sqlite and self.path.exists():
             with sqlite3.connect(self.path) as c:
-                row = c.execute('SELECT score FROM promotions WHERE locator=? AND context=?', (locator, context)).fetchone()
-                return float(row[0]) if row else 0.0
+                row = c.execute('SELECT score, ts FROM promotions WHERE locator=? AND context=?', (locator, context)).fetchone()
+                if not row:
+                    return 0.0
+                score, ts = row
+                return float(self._apply_aging(score, ts))
         return 0.0
 
     def get_promotion_score(self, locator: str, context: str) -> float:
@@ -86,7 +90,7 @@ class PromotionStore:
     def _persist(self, rec: PromotionRecord) -> None:
         if self.use_sqlite:
             with sqlite3.connect(self.path) as c:
-                c.execute('INSERT OR REPLACE INTO promotions(locator,context,success,failure,score) VALUES(?,?,?,?,?)', (rec.locator, rec.context, rec.success_count, rec.failure_count, rec.score))
+                c.execute('INSERT OR REPLACE INTO promotions(locator,context,success,failure,score,ts) VALUES(?,?,?,?,?,?)', (rec.locator, rec.context, rec.success_count, rec.failure_count, rec.score, time.time()))
                 c.commit()
         else:
             # Write entire cache
@@ -135,6 +139,20 @@ class PromotionStore:
             'top_performers': top,
         }
 
+    def _apply_aging(self, score: float, ts: Optional[float]) -> float:
+        """Apply simple exponential decay to promotion score based on age.
+
+        Half-life ~ 7 days: decay = 0.5 ** (age_days / 7)
+        """
+        try:
+            if not ts:
+                return float(score)
+            age_days = max(0.0, (time.time() - float(ts)) / 86400.0)
+            decay = 0.5 ** (age_days / 7.0)
+            return float(max(0.0, score * decay))
+        except Exception:
+            return float(score)
+
 
 # Backward-compatible simple helpers
 def promote_locator(locator: str, context: str, *args, **kwargs) -> None:
@@ -142,4 +160,9 @@ def promote_locator(locator: str, context: str, *args, **kwargs) -> None:
 
 def get_promotion_score(locator: str, context: str) -> float:
     return PromotionStore(use_sqlite=True).get_score(locator, context)
+
+
+# Compatibility alias for tests expecting a class named Promotion
+class Promotion(PromotionStore):
+    pass
 

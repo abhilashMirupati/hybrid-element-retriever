@@ -28,10 +28,11 @@ except ImportError:
 
 from .descriptors.merge import merge_dom_ax
 from .locator.synthesize import LocatorSynthesizer
-from .locator.verify import verify_locator
+from .locator.verify import verify_locator, LocatorVerifier
 from .rank.fusion_scorer import FusionScorer
 from .embeddings.query_embedder import QueryEmbedder
 from .embeddings.element_embedder import ElementEmbedder
+from .executor.actions import ActionExecutor
 
 # New integrated components
 from .pipeline import HERPipeline, PipelineConfig
@@ -91,6 +92,8 @@ class HybridElementRetrieverClient:
         self.auto_index = auto_index
         self.enable_resilience = enable_resilience
         self.enable_pipeline = enable_pipeline
+        self.timeout_ms = 30000
+        self.promotion_enabled = True
         
         # Initialize pipeline if enabled
         if enable_pipeline:
@@ -137,10 +140,12 @@ class HybridElementRetrieverClient:
         
         # Legacy components (kept for compatibility)
         self.intent_parser = IntentParser()
+        self.parser = self.intent_parser  # compatibility for tests
         self.synthesizer = LocatorSynthesizer()
         self.query_embedder = QueryEmbedder(cache_enabled=True)
         self.element_embedder = ElementEmbedder(cache_enabled=True)
         self.fusion_scorer = FusionScorer()
+        self.verifier = LocatorVerifier()
         
         # Browser management
         self.playwright = None
@@ -180,6 +185,77 @@ class HybridElementRetrieverClient:
         
         return self.page
     
+    def act(self, step: str, url: Optional[str] = None) -> Dict[str, Any]:
+        """Execute a natural-language step; return strict JSON for tests."""
+        page = self._ensure_browser()
+        if url and page:
+            try:
+                page.goto(url)
+            except Exception:
+                pass
+        # Parse intent
+        intent = getattr(self.parser, 'parse')(step) if hasattr(self, 'parser') else None
+        action = getattr(intent, 'action', 'click') if intent else 'click'
+        target_phrase = getattr(intent, 'target_phrase', step)
+        confidence = float(getattr(intent, 'confidence', 0.0))
+
+        # Index page to obtain dom_hash
+        descriptors, dom_hash = ([], '')
+        try:
+            if page:
+                descriptors, dom_hash = self.session_manager.index_page(self.current_session_id, page)  # type: ignore
+        except Exception:
+            pass
+
+        # Find candidates (allow test to patch _find_candidates)
+        try:
+            candidates = self._find_candidates(target_phrase, descriptors)
+        except Exception:
+            candidates = []
+        used_locator: Optional[str] = None
+        if candidates:
+            primary_desc = candidates[0][0]
+            locators = self.synthesizer.synthesize(primary_desc)
+            used_locator = self.verifier.find_unique_locator(locators, page) if hasattr(self, 'verifier') else (locators[0] if locators else None)
+        if not used_locator:
+            return {
+                'status': 'failure',
+                'method': action,
+                'confidence': confidence,
+                'dom_hash': dom_hash,
+                'used_locator': None,
+                'overlay_events': [],
+                'retries': {'attempts': 0},
+                'explanation': 'No valid locator found'
+            }
+
+        # Execute with recovery
+        exec_result = self._execute_with_recovery(action, used_locator, None, candidates)
+        status = 'success' if getattr(exec_result, 'success', False) else 'failure'
+        overlay_events = getattr(exec_result, 'overlay_events', []) or []
+        attempts = int(getattr(exec_result, 'retries', 0) or 0)
+        return {
+            'status': status,
+            'method': action,
+            'confidence': confidence,
+            'dom_hash': dom_hash,
+            'used_locator': used_locator,
+            'overlay_events': overlay_events,
+            'retries': {'attempts': attempts}
+        }
+
+    def _execute_with_recovery(self, method: str, locator: str, value: Optional[str], candidates: List[Tuple[Dict[str, Any], float, Any]]):
+        """Run an action, optionally applying self-heal or alternatives (tests patch ActionExecutor)."""
+        try:
+            executor = ActionExecutor()
+            if method in {'type', 'fill'}:
+                return executor.fill(locator, value or '')
+            if method == 'check':
+                return executor.check(locator)
+            return executor.click(locator)
+        except Exception as e:  # pragma: no cover
+            return type('Result', (), {'success': False, 'locator': locator, 'error': str(e), 'overlay_events': [], 'retries': 0, 'verification': {}})()
+
     def query(self, phrase: str, url: Optional[str] = None) -> Any:
         """Query for elements with full pipeline integration.
         
@@ -587,4 +663,11 @@ class HybridElementRetrieverClient:
 
 
 # Alias for compatibility
-HybridElementRetriever = HybridElementRetrieverClient
+HybridClient = HybridElementRetrieverClient
+
+
+@dataclass
+class QueryResult:
+    selector: str
+    score: float
+    element: Dict[str, Any]

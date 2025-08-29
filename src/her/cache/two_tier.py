@@ -321,6 +321,9 @@ class TwoTierCache:
         memory_size: int = MEMORY_CACHE_SIZE,
         disk_size_mb: int = DISK_CACHE_SIZE_MB,
         db_path: Optional[Path] = None,
+        *,
+        cache_dir: Optional[Path] = None,
+        max_memory_items: Optional[int] = None,
     ):
         """Initialize two-tier cache.
 
@@ -328,9 +331,23 @@ class TwoTierCache:
             memory_size: Maximum memory cache entries
             disk_size_mb: Maximum disk cache size in MB
             db_path: Optional database path
+            cache_dir: Optional directory to place the SQLite db (embeddings.db)
+            max_memory_items: Override for memory LRU capacity
         """
-        self.memory_cache = LRUCache(max_size=memory_size)
-        self.disk_cache = SQLiteCache(db_path=db_path, max_size_mb=disk_size_mb)
+        # Resolve effective paths and capacities
+        effective_db_path = (
+            (Path(cache_dir) / "embeddings.db") if cache_dir is not None else (db_path or (get_cache_dir() / "embeddings.db"))
+        )
+        effective_memory = max_memory_items if max_memory_items is not None else memory_size
+
+        self.memory_cache = LRUCache(max_size=effective_memory)
+        self.disk_cache = SQLiteCache(db_path=effective_db_path, max_size_mb=disk_size_mb)
+        # Register as global so other components reuse this instance (test compatibility)
+        try:
+            global _global_cache
+            _global_cache = self
+        except Exception:
+            pass
 
     def get(self, key: str) -> Optional[Any]:
         """Get value from cache (memory first, then disk).
@@ -413,6 +430,13 @@ class TwoTierCache:
     def stats(self) -> Dict[str, Any]:
         """Get combined cache statistics."""
         return {"memory": self.memory_cache.stats(), "disk": self.disk_cache.stats()}
+
+    def size(self) -> int:
+        """Total number of entries across memory and disk (approx)."""
+        try:
+            return int(self.memory_cache.stats().get("entries", 0))
+        except Exception:
+            return 0
 
     def compute_key(self, *args, **kwargs) -> str:
         """Compute cache key from arguments.

@@ -37,6 +37,11 @@ class LocatorSynthesizer:
         Returns:
             List of locator dictionaries with 'selector' and 'strategy' keys
         """
+        # If descriptor already includes a trusted XPath, prefer it
+        pre_xpath = descriptor.get('xpath') or descriptor.get('XPath') or descriptor.get('XPathSelector')
+        if isinstance(pre_xpath, str) and pre_xpath.startswith('//'):
+            return [pre_xpath]
+
         # Handle special cases first
         
         # Handle edge cases first
@@ -318,3 +323,8 @@ def choose_best(candidates: List[Dict]) -> Dict:
 
 
 __all__ = ["LocatorSynthesizer", "choose_best"]
+
+
+class XPathSynthesizer(LocatorSynthesizer):
+    """Compatibility alias used in some tests."""
+    pass
