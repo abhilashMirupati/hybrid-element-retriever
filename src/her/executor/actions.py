@@ -199,10 +199,20 @@ def _scroll_into_view(el: Any) -> None:
 
 def _overlay_guard(page: Any) -> None:
     try:
-        for sel in ['text=Accept', 'text=Close', 'text=Dismiss', 'role=dialog >> text=×']:
+        # Denylist for destructive actions - never auto-click
+        deny = {'text=Delete', 'text=Remove', 'text=Confirm', 'text=Yes, delete', 'text=Erase'}
+        # Safe overlay close/selectors
+        selectors = [
+            'role=dialog >> text=×',
+            'text=Accept', 'text=Close', 'text=Dismiss', 'text=I agree', 'text=Got it',
+            '[aria-label="Close"]', '[data-testid="close"]', '.MuiBackdrop-root'
+        ]
+        for sel in selectors:
             try:
                 el = page.query_selector(sel)
                 if el and el.is_visible():
+                    if sel in deny:
+                        continue
                     el.click(timeout=1000)
             except Exception:
                 continue
@@ -237,16 +247,31 @@ def _verify_post_action(el: Any, action: str, expected: Optional[str] = None) ->
         raise ActionError(f'post verify: {e}') from e
 
 
-def wait_for_idle(page: Any, timeout: float = 5.0) -> None:
+def wait_for_idle(page: Any, timeout: float = 15.0, network_idle_ms: int = 500) -> None:
+    """Wait for DOM ready and a brief network-idle window."""
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
             if page.evaluate('() => document.readyState') == 'complete':
-                return
+                break
         except Exception:
-            # Page might be navigating or closed, continue waiting
             pass
-        time.sleep(0.1)
+        time.sleep(0.05)
+    # Approximate network idle by a quiet period
+    quiet_start = None
+    while time.time() < deadline:
+        try:
+            pending = page.evaluate('() => (window.__her_pending__ || 0)')
+        except Exception:
+            pending = 0
+        if not pending:
+            if quiet_start is None:
+                quiet_start = time.time()
+            if (time.time() - quiet_start) * 1000.0 >= network_idle_ms:
+                return
+        else:
+            quiet_start = None
+        time.sleep(0.05)
 
 
 def _parse_role_sel(sel: str) -> tuple[str, Optional[str]]:
