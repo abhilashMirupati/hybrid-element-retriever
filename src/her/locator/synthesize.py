@@ -39,6 +39,40 @@ class LocatorSynthesizer:
         """
         # Handle special cases first
         
+        # Handle edge cases first
+        
+        # Handle JavaScript URLs
+        if descriptor.get("href", "").startswith("javascript:"):
+            tag = descriptor.get("tag", "a")
+            # Use other attributes instead of href
+            if descriptor.get("text"):
+                return [f"//{tag}[text()='{descriptor['text']}']"]
+            if descriptor.get("id"):
+                return [f"#{descriptor['id']}"]
+        
+        # Handle SVG elements
+        if descriptor.get("tag") == "svg" or str(descriptor.get("tag", "")).startswith("svg:"):
+            # SVG namespace aware
+            svg_xpaths = ["//*[local-name()='svg']"]
+            if descriptor.get("id"):
+                svg_xpaths.insert(0, f"//*[local-name()='svg' and @id='{descriptor['id']}']")
+            return svg_xpaths[:self.max_candidates]
+        
+        # Handle multiple classes properly
+        if descriptor.get("class"):
+            classes = descriptor["class"].split() if isinstance(descriptor["class"], str) else []
+            if len(classes) > 1:
+                # Use contains for each class
+                xpath = f"//*"
+                for cls in classes[:3]:  # Limit to first 3 classes
+                    xpath += f"[contains(@class, '{cls}')]"
+                return [xpath]
+        
+        # Handle empty attributes by removing them
+        for attr in ["type", "name", "value"]:
+            if attr in descriptor and descriptor[attr] == "":
+                del descriptor[attr]
+        
         # Check for contentEditable
         if descriptor.get('contentEditable') == 'true' or descriptor.get('contenteditable') == 'true':
             tag = descriptor.get('tag', 'div')
