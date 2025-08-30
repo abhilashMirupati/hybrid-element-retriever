@@ -70,6 +70,6 @@ def truncate_text(text: Any, max_length: int) -> str:
         return text
 
     if max_length <= 3:
-        return "..."
+        return "…"
 
-    return text[: max_length - 1] + "..."
+    return text[: max_length - 1] + "…"

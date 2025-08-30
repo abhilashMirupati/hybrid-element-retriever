@@ -77,6 +77,15 @@ def main(argv: list[str] | None = None) -> int:
                     'metadata': {'frame_path': '', 'used_frame_id': '', 'url': url or '', 'no_candidate': False},
                 }
                 return _print(out)
+            # Normalize to strict schema if pipeline returns best element
+            if isinstance(res, dict) and {'element','xpath','confidence','strategy','metadata'} <= set(res.keys()):
+                return _print({
+                    'element': res.get('element'),
+                    'xpath': res.get('xpath'),
+                    'confidence': float(res.get('confidence', 0.0)),
+                    'strategy': str(res.get('strategy', 'fusion')),
+                    'metadata': dict(res.get('metadata', {})),
+                })
             return _print(res if isinstance(res, dict) else {'ok': True, 'result': res})
         else:
             res = hc.act(text, url=url)

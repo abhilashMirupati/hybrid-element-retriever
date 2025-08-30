@@ -64,7 +64,7 @@ function Make-StubModel($dest) {
 function Make-StubTokenizer($dest) {
   @"
 {
-  "stub": true,
+  "offline": true,
   "reason": "offline-or-missing-tokenizer",
   "note": "HER embedders will use deterministic hash fallback."
 }

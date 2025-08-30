@@ -336,14 +336,16 @@ class SnapshotManager:
                     }
                     
                     // Wrap pushState
-                    history.pushState = function(...args) {
+                    history.pushState = function() {
+                        const args = Array.prototype.slice.call(arguments);
                         const result = originalPushState.apply(history, args);
                         notifyRouteChange('pushState', window.location.href);
                         return result;
                     };
                     
                     // Wrap replaceState
-                    history.replaceState = function(...args) {
+                    history.replaceState = function() {
+                        const args = Array.prototype.slice.call(arguments);
                         const result = originalReplaceState.apply(history, args);
                         notifyRouteChange('replaceState', window.location.href);
                         return result;

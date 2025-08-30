@@ -114,9 +114,10 @@ class FusionScorer:
         score = 0.0
         
         # Get element text and attributes
-        element_text = str(element_descriptor.get('text', '')).lower()
+        element_text = str(element_descriptor.get('text', '') or element_descriptor.get('name','')).lower()
         element_tag = str(element_descriptor.get('tag', element_descriptor.get('tagName', ''))).lower()
-        element_id = str(element_descriptor.get('id', '')).lower()
+        attrs = element_descriptor.get('attributes', {})
+        element_id = str((attrs.get('id') if isinstance(attrs, dict) else element_descriptor.get('id', ''))).lower()
         
         # Get intent keywords
         target = str(intent.get('target', '')).lower()
@@ -141,6 +142,12 @@ class FusionScorer:
         if element_id and target and target in element_id:
             score += 0.3
         
+        # Prefer email/password types for corresponding intents
+        if 'email' in target and element_descriptor.get('attributes', {}).get('type') == 'email':
+            score += 0.3
+        if 'password' in target and element_descriptor.get('attributes', {}).get('type') == 'password':
+            score += 0.3
+        
         return min(score, 1.0)
     
     def _compute_structural_score(
@@ -152,7 +159,8 @@ class FusionScorer:
         score = 0.0
         
         # Prioritize elements with IDs
-        if element_descriptor.get('id'):
+        id_val = element_descriptor.get('id') or element_descriptor.get('attributes', {}).get('id')
+        if id_val:
             score += 0.3
         
         # Prioritize interactive elements

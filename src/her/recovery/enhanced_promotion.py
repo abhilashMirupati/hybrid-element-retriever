@@ -190,7 +190,7 @@ class EnhancedPromotionStore:
         self._persist(rec)
         
         logger.debug(
-            f"Recorded success for {locator[:30]}... in {context[:30]}... "
+            f"Recorded success for {locator[:30]}… in {context[:30]}… "
             f"(score={rec.score:.2f}, confidence={rec.confidence:.2f})"
         )
         
@@ -222,7 +222,7 @@ class EnhancedPromotionStore:
         self._persist(rec)
         
         logger.debug(
-            f"Recorded failure for {locator[:30]}... in {context[:30]}... "
+            f"Recorded failure for {locator[:30]}… in {context[:30]}… "
             f"(score={rec.score:.2f}, confidence={rec.confidence:.2f})"
         )
         
@@ -247,7 +247,7 @@ class EnhancedPromotionStore:
                     candidates.append(rec)
         
         if not candidates:
-            logger.debug(f"No fallback candidates for context: {context[:50]}...")
+            logger.debug(f"No fallback candidates for context: {context[:50]}…")
             return None
         
         # Sort by score * confidence (combined metric)
@@ -255,7 +255,7 @@ class EnhancedPromotionStore:
         best = candidates[0]
         
         logger.info(
-            f"Found fallback locator: {best.locator[:30]}... "
+            f"Found fallback locator: {best.locator[:30]}… "
             f"(score={best.score:.2f}, confidence={best.confidence:.2f})"
         )
         

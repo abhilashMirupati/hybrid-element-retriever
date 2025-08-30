@@ -11,7 +11,7 @@ def normalize_descriptor(node: Dict[str, Any]) -> Dict[str, Any]:
     out['tagName'] = (node.get('tag') or node.get('tagName') or node.get('nodeName') or '').lower()
     attrs = node.get('attributes') or {}
     if isinstance(attrs, list):
-        # Convert [name,value,...] to dict
+        # Convert alternating [name, value] entries to a dictionary
         attrs_dict = {}
         for i in range(0, len(attrs), 2):
             if i+1 < len(attrs):

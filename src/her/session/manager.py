@@ -166,7 +166,7 @@ class SessionManager:
                 old8 = (session.dom_hash or '')[:8]
                 new8 = (new_hash or '')[:8]
                 logger.debug(
-                    f"DOM changed: {old8}... -> {new8}..."
+                    f"DOM changed: {old8}… -> {new8}…"
                 )
                 return True
             else:
@@ -233,7 +233,7 @@ class SessionManager:
 
         logger.info(
             f"Indexed {len(descriptors)} elements for session {session_id}, "
-            f"hash={dom_hash[:8]}..., index_count={session.index_count}"
+            f"hash={dom_hash[:8]}…, index_count={session.index_count}"
         )
 
         return descriptors, dom_hash

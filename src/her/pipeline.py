@@ -8,7 +8,7 @@ and ranking fusion into a single flow.
 from typing import Dict, Any, List
 import time
 
-from her.embeddings.text_embedder import TextEmbedder
+from her.embeddings.query_embedder import QueryEmbedder
 from her.embeddings.element_embedder import ElementEmbedder
 from her.rank.fusion import FusionScorer
 from her.cache.two_tier import TwoTierCache
@@ -31,10 +31,11 @@ from .compat import HERPipeline  # noqa: E402  (placed after class definitions)
 
 class HybridPipeline:
     def __init__(self, cache_dir: str = ".cache", device: str = "cpu"):
-        self.text_embedder = TextEmbedder(device=device)
-        self.element_embedder = ElementEmbedder(device=device)
+        self.text_embedder = QueryEmbedder()
+        # Align element embedding dimensionality with query embedder to simplify cosine
+        self.element_embedder = ElementEmbedder(device=device, dim=getattr(self.text_embedder, 'dim', 384))
         self.scorer = FusionScorer()
-        self.cache = TwoTierCache(cache_dir)
+        self.cache = TwoTierCache(cache_dir=cache_dir)
 
     def query(self, intent: str, dom_snapshot: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
@@ -53,19 +54,54 @@ class HybridPipeline:
         # --- 2. Element embeddings (with caching)
         embeddings = []
         elements = []
+        cache_hits = 0
+        cache_misses = 0
         for el in dom_snapshot:
             el_hash = self._hash_el(el)
-            cached = self.cache.get(el_hash)
+            raw = self.cache.get_raw(el_hash)
+            cached = raw.get("value")
             if cached is not None:
                 emb = cached
+                cache_hits += 1
             else:
                 emb = self.element_embedder.batch_encode([el])[0]
-                self.cache.set(el_hash, emb)
+                self.cache.put(el_hash, emb)
+                cache_misses += 1
             embeddings.append(emb)
-            elements.append((el, el_hash))
+            elements.append(el)
 
         # --- 3. Retrieval scoring
-        scored = self.scorer.score_elements(intent_vec, embeddings, elements)
+        # Compute simple cosine similarities as semantic proxy
+        import numpy as _np
+        def _cos(a: _np.ndarray, b: _np.ndarray) -> float:
+            a = a.astype(_np.float32); b = b.astype(_np.float32)
+            # Resize to match dims if needed
+            if a.shape[0] != b.shape[0]:
+                if a.shape[0] < b.shape[0]:
+                    b = _np.resize(b, a.shape[0])
+                else:
+                    a = _np.resize(a, b.shape[0])
+            na = float(_np.linalg.norm(a)); nb = float(_np.linalg.norm(b))
+            if na == 0.0 or nb == 0.0:
+                return 0.0
+            return float(_np.dot(a, b) / (na * nb))
+
+        semantic_scores = [_cos(intent_vec, e) for e in embeddings]
+        # Heuristic CSS/text score: prefer buttons/links and text inclusion
+        css_scores = []
+        for el in elements:
+            score = 0.0
+            tag = str(el.get('tag', '')).lower()
+            txt = str(el.get('text', '')).lower()
+            if tag in {'button', 'a', 'input'}:
+                score += 0.2
+            for w in str(intent).lower().split():
+                if w and w in txt:
+                    score += 0.1
+            css_scores.append(min(1.0, score))
+        promotions = [0.0] * len(elements)
+
+        scored = self.scorer.score_elements(intent, elements, semantic_scores, css_scores, promotions)
 
         # --- 4. Best candidate (fallback to empty if none)
         if not scored:
@@ -80,17 +116,26 @@ class HybridPipeline:
         best = scored[0]
         latency = time.time() - start
 
-        return {
-            "element": best["element"],
-            "xpath": best["xpath"],
-            "confidence": best["score"],
-            "strategy": "fusion",
-            "metadata": {
-                "latency_sec": latency,
-                "cache_hits": self.cache.stats()["hits"],
-                "cache_misses": self.cache.stats()["misses"],
-            },
+        # Shadow DOM/frame hints
+        metadata = {
+            "latency_sec": float(latency),
+            "cache_hits": int(cache_hits),
+            "cache_misses": int(cache_misses),
+            "frame_info": "main",
         }
+        if best.get("element", {}).get("shadow_elements"):
+            metadata["in_shadow_dom"] = True
+        out = {
+            "element": best.get("element"),
+            "xpath": best.get("xpath", ""),
+            "confidence": float(best.get("score", 0.0)),
+            "strategy": "fusion",
+            "metadata": metadata,
+        }
+        # Frame fields for tests (use None when main)
+        out["used_frame_id"] = None
+        out["frame_path"] = []
+        return out
 
     def _hash_el(self, el: Dict[str, Any]) -> str:
         """Stable hash for DOM element dict."""
