@@ -130,7 +130,7 @@ def parse_attributes(attributes: List[Any]) -> Dict[str, str]:
     """Parse attribute list into dictionary."""
     attrs = {}
     if attributes:
-        # Attributes come as [name, value, name, value, ...]
+        # Attributes come as [name, value, name, value, and so on]
         for i in range(0, len(attributes), 2):
             if i + 1 < len(attributes):
                 attrs[attributes[i]] = attributes[i + 1]

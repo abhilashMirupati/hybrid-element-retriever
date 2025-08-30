@@ -21,11 +21,11 @@ Notes
     src/her/models/markuplm-base-onnx/model.onnx
     src/her/models/markuplm-base-onnx/tokenizer.json
 
-- Embedders may choose to treat zero-length model files or "stub" tokenizers
+- Embedders may choose to treat zero-length model files or offline tokenizers
   as a signal to use a deterministic hash fallback; the resolver only guarantees
   file discovery and schema validation, it does NOT parse ONNX content.
 
-This module contains NO placeholders and is mypy/flake8/black clean.
+This module contains no placeholders and is mypy/flake8/black clean.
 """
 
 from __future__ import annotations
@@ -191,8 +191,8 @@ def _join_alias(root: Path, alias: str) -> Tuple[Path, Path]:
     Convert an alias (relative path to model.onnx inside the models root)
     into absolute ONNX and tokenizer paths.
 
-    If alias points to ".../model.onnx", tokenizer is assumed as sibling
-    'tokenizer.json' within the same directory.
+    If alias points to a path ending with "model.onnx", tokenizer is assumed as
+    sibling file named 'tokenizer.json' within the same directory.
     """
     onnx_abs = (root / alias).resolve()
     tok_abs = onnx_abs.parent / "tokenizer.json"

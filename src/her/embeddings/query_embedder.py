@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-from typing import List
+from typing import List, Dict, Any
 
 import numpy as np
 
@@ -9,62 +9,65 @@ from . import _resolve
 
 
 class QueryEmbedder:
-    """Deterministic query embedder with ONNX fallback.
+    """E5-small (MiniLM) query embedder with deterministic fallback.
 
     API:
-    - encode(text) -> np.ndarray[np.float32]
+    - encode_one(text) -> np.ndarray[np.float32]
     - batch_encode(texts) -> np.ndarray[np.float32] with shape [N, D]
+    - embed(text) -> List[float]  (compat helper used by legacy code)
+    - info() -> Dict[str, Any]
     """
 
     def __init__(self, dim: int = 384, **_: object) -> None:
         self.dim = int(dim)
-        # Build a minimal resolver adapter using _resolve API
-        class _R:
-            def files(self):
-                try:
-                    mp = _resolve.resolve_text_embedding()
-                    return (mp.onnx if mp.onnx.exists() else None, mp.tokenizer if mp.tokenizer.exists() else None)
-                except Exception:
-                    return (None, None)
-        self.resolver = _R()
+        self._paths = None
         self._session = None
         self._init_session()
 
     def _init_session(self) -> None:
-        onnx_path, _ = self.resolver.files()
-        if onnx_path is None:
+        try:
+            mp = _resolve.resolve_text_embedding()
+            self._paths = mp
+        except Exception:
+            self._paths = None
             self._session = None
             return
+
         try:
             import onnxruntime as ort  # type: ignore
 
-            self._session = ort.InferenceSession(str(onnx_path), providers=['CPUExecutionProvider'])
+            self._session = ort.InferenceSession(
+                str(mp.onnx), providers=["CPUExecutionProvider"]
+            )
         except Exception:
             self._session = None
 
     def _hash_fallback(self, text: str) -> np.ndarray:
-        seed_bytes = hashlib.sha256(text.strip().lower().encode('utf-8')).digest()
-        seed = int.from_bytes(seed_bytes[:8], 'little', signed=False) & 0xFFFFFFFF
+        seed_bytes = hashlib.sha256(text.strip().lower().encode("utf-8")).digest()
+        seed = int.from_bytes(seed_bytes[:8], "little", signed=False) & 0xFFFFFFFF
         rng = np.random.default_rng(seed)
         vec = rng.standard_normal(self.dim, dtype=np.float32)
         norm = float(np.linalg.norm(vec))
         return vec if norm == 0.0 else (vec / norm).astype(np.float32)
 
-    def encode(self, text: str) -> np.ndarray:
+    def encode_one(self, text: str) -> np.ndarray:
         if not text:
-            return self._hash_fallback('')
+            return self._hash_fallback("")
         if self._session is None:
             return self._hash_fallback(text)
         try:
-            # Minimal compatible inputs for common transformer architectures
+            # Minimal inputs for broadly compatible ONNX transformer sessions
             input_ids = np.zeros((1, 8), dtype=np.int64)
             attention_mask = np.ones((1, 8), dtype=np.int64)
             token_type_ids = np.zeros((1, 8), dtype=np.int64)
-            outs = self._session.run(None, {
-                'input_ids': input_ids,
-                'attention_mask': attention_mask,
-                'token_type_ids': token_type_ids,
-            })
+            outs = self._session.run(
+                None,
+                {
+                    "input_ids": input_ids,
+                    "attention_mask": attention_mask,
+                    "token_type_ids": token_type_ids,
+                },
+            )
             x = outs[0] if isinstance(outs, list) else outs
             arr = np.array(x).mean(axis=1).reshape(-1).astype(np.float32)
             if arr.size != self.dim:
@@ -74,8 +77,29 @@ class QueryEmbedder:
         except Exception:
             return self._hash_fallback(text)
 
+    # Back-compat alias used in legacy scoring
+    def encode(self, text: str) -> np.ndarray:
+        return self.encode_one(text)
+
     def batch_encode(self, texts: List[str]) -> np.ndarray:
         if not texts:
             return np.zeros((0, self.dim), dtype=np.float32)
-        vecs = [self.encode(t) for t in texts]
+        vecs = [self.encode_one(t) for t in texts]
         return np.stack(vecs, axis=0).astype(np.float32)
+
+    # Legacy-facing API expected by some code paths
+    def embed(self, text: str) -> np.ndarray:
+        return self.encode_one(text)
+
+    def info(self) -> Dict[str, Any]:
+        mp = self._paths
+        return {
+            "task": "text-embedding",
+            "id": getattr(mp, "id", None),
+            "alias": getattr(mp, "alias", None),
+            "root": str(getattr(mp, "root_dir", "")) if mp else None,
+            "onnx": str(getattr(mp, "onnx", "")) if mp else None,
+            "tokenizer": str(getattr(mp, "tokenizer", "")) if mp else None,
+            "mode": "fallback" if self._session is None else "onnx",
+            "dim": self.dim,
+        }

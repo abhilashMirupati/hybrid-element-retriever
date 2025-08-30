@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Dict, List, Tuple, Optional, TypedDict
+import math
 
 
 ALPHA_DEFAULT = 1.0
@@ -18,8 +19,9 @@ class FusionConfig:
 
 class ElementScore(TypedDict):
     element: Dict[str, Any]
+    xpath: str
     score: float
-    details: Dict[str, float]
+    meta: Dict[str, float]
 
 
 class FusionScorer:
@@ -27,7 +29,11 @@ class FusionScorer:
         self.config = config or FusionConfig()
 
     def fuse(self, semantic: float, robust_css: float, promotion: float = 0.0) -> float:
-        return float(self.config.alpha * semantic + self.config.beta * robust_css + self.config.gamma * promotion)
+        return float(
+            self.config.alpha * float(semantic)
+            + self.config.beta * float(robust_css)
+            + self.config.gamma * float(promotion)
+        )
 
     def score_elements(
         self,
@@ -43,10 +49,16 @@ class FusionScorer:
         promotions = promotions or [0.0] * n
         fused: List[Tuple[int, float]] = []
         for i in range(n):
-            s = self.fuse(float(semantic_scores[i]), float(css_scores[i]), float(promotions[i]))
+            # Clamp inputs to [0,1] for stability
+            se = max(0.0, min(1.0, float(semantic_scores[i])))
+            cs = max(0.0, min(1.0, float(css_scores[i])))
+            pr = max(0.0, min(1.0, float(promotions[i])))
+            s = self.fuse(se, cs, pr)
             fused.append((i, s))
-        # Stable tie-breakers by deterministic string rep
-        fused.sort(key=lambda t: (t[1], str(elements[t[0]].get('id') or elements[t[0]].get('xpath') or elements[t[0]].get('text') or '')), reverse=True)
+        # Stable tie-breakers: score desc, xpath asc
+        def tie_xpath(idx: int) -> str:
+            return str(elements[idx].get('xpath') or '')
+        fused.sort(key=lambda t: (-t[1], tie_xpath(t[0])))
         if fused:
             scores_only = [sc for _, sc in fused]
             mx = max(scores_only); mn = min(scores_only); rng = (mx - mn) if mx != mn else 1.0
@@ -55,7 +67,16 @@ class FusionScorer:
             normalized = []
         out: List[ElementScore] = []
         for i, sc in normalized:
-            out.append({'element': elements[i], 'score': float(sc), 'details': {'semantic': float(semantic_scores[i]), 'css': float(css_scores[i]), 'promotion': float(promotions[i])}})
+            out.append({
+                'element': elements[i],
+                'xpath': str(elements[i].get('xpath') or ''),
+                'score': float(sc),
+                'meta': {
+                    'semantic': float(semantic_scores[i]),
+                    'css': float(css_scores[i]),
+                    'promotion': float(promotions[i])
+                }
+            })
         return out
 
 
@@ -75,6 +96,6 @@ class RankFusion:
         heu_map = {id(d): float(s) for d, s in heu}
         sems = [sem_map.get(id(d), 0.0) for d in elements]
         heus = [heu_map.get(id(d), 0.0) for d in elements]
-        out = self._scorer.score_elements(elements, sems, heus)
-        triples = [(e['element'], e['score'], {'semantic': e['details']['semantic'], 'css': e['details']['css'], 'promotion': e['details']['promotion']}) for e in out]
+        out = self._scorer.score_elements("", elements, sems, heus, [0.0] * len(elements))
+        triples = [(e['element'], e['score'], {'semantic': e['meta']['semantic'], 'css': e['meta']['css'], 'promotion': e['meta']['promotion']}) for e in out]
         return triples[:top_k] if top_k else triples
