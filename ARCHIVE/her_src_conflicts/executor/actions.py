@@ -1,3 +1,4 @@
+# archived duplicate of src/her/executor/actions.py
 """Action executor for performing web interactions."""
 
 import asyncio

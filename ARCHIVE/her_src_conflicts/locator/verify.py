@@ -1,3 +1,4 @@
+# archived duplicate of src/her/locator/verify.py
 """Locator verification for validating selectors."""
 
 import asyncio

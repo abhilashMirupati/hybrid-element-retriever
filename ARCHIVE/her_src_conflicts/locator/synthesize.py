@@ -1,3 +1,4 @@
+# archived duplicate of src/her/locator/synthesize.py
 """Locator synthesis for generating robust selectors."""
 
 import logging

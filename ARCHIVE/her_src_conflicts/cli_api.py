@@ -1,3 +1,4 @@
+# archived duplicate of src/her/cli_api.py
 """Main API for HER framework."""
 
 import asyncio

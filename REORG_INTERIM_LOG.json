@@ -1,0 +1,97 @@
+{
+  "moved": 0,
+  "archived": 3,
+  "conflicts": 15,
+  "entries": [
+    {
+      "action": "archive_conflict",
+      "from": "her/src/her/__init__.py",
+      "to": "ARCHIVE/her_src_conflicts/__init__.py"
+    },
+    {
+      "action": "archive_conflict",
+      "from": "her/src/her/bridge/snapshot.py",
+      "to": "ARCHIVE/her_src_conflicts/bridge/snapshot.py"
+    },
+    {
+      "action": "archive_conflict",
+      "from": "her/src/her/cli.py",
+      "to": "ARCHIVE/her_src_conflicts/cli.py"
+    },
+    {
+      "action": "archive_conflict",
+      "from": "her/src/her/cli_api.py",
+      "to": "ARCHIVE/her_src_conflicts/cli_api.py"
+    },
+    {
+      "action": "archive_conflict",
+      "from": "her/src/her/embeddings/_resolve.py",
+      "to": "ARCHIVE/her_src_conflicts/embeddings/_resolve.py"
+    },
+    {
+      "action": "archive_conflict",
+      "from": "her/src/her/embeddings/element_embedder.py",
+      "to": "ARCHIVE/her_src_conflicts/embeddings/element_embedder.py"
+    },
+    {
+      "action": "archive_conflict",
+      "from": "her/src/her/embeddings/query_embedder.py",
+      "to": "ARCHIVE/her_src_conflicts/embeddings/query_embedder.py"
+    },
+    {
+      "action": "archive_conflict",
+      "from": "her/src/her/executor/actions.py",
+      "to": "ARCHIVE/her_src_conflicts/executor/actions.py"
+    },
+    {
+      "action": "archive_conflict",
+      "from": "her/src/her/executor/session.py",
+      "to": "ARCHIVE/her_src_conflicts/executor/session.py"
+    },
+    {
+      "action": "archive_conflict",
+      "from": "her/src/her/locator/synthesize.py",
+      "to": "ARCHIVE/her_src_conflicts/locator/synthesize.py"
+    },
+    {
+      "action": "archive_conflict",
+      "from": "her/src/her/locator/verify.py",
+      "to": "ARCHIVE/her_src_conflicts/locator/verify.py"
+    },
+    {
+      "action": "archive_model_flat",
+      "from": "her/src/her/models/MODEL_INFO.json",
+      "to": "ARCHIVE/models/MODEL_INFO.json"
+    },
+    {
+      "action": "archive_model_flat",
+      "from": "her/src/her/models/e5_small.onnx",
+      "to": "ARCHIVE/models/e5_small.onnx"
+    },
+    {
+      "action": "archive_model_flat",
+      "from": "her/src/her/models/markuplm_base.onnx",
+      "to": "ARCHIVE/models/markuplm_base.onnx"
+    },
+    {
+      "action": "archive_conflict",
+      "from": "her/src/her/rank/fusion.py",
+      "to": "ARCHIVE/her_src_conflicts/rank/fusion.py"
+    },
+    {
+      "action": "archive_conflict",
+      "from": "her/src/her/recovery/promotion.py",
+      "to": "ARCHIVE/her_src_conflicts/recovery/promotion.py"
+    },
+    {
+      "action": "archive_conflict",
+      "from": "her/src/her/recovery/self_heal.py",
+      "to": "ARCHIVE/her_src_conflicts/recovery/self_heal.py"
+    },
+    {
+      "action": "archive_conflict",
+      "from": "her/src/her/vectordb/sqlite_cache.py",
+      "to": "ARCHIVE/her_src_conflicts/vectordb/sqlite_cache.py"
+    }
+  ]
+}

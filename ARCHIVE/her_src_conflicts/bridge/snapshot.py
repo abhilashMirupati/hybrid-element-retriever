@@ -1,3 +1,4 @@
+# archived duplicate of src/her/bridge/snapshot.py
 """Snapshot module for capturing DOM and accessibility trees via CDP."""
 
 import asyncio

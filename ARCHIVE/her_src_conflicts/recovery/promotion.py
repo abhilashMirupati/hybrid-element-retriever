@@ -1,3 +1,4 @@
+# archived duplicate of src/her/recovery/promotion.py
 """Promotion system for successful selectors."""
 
 import asyncio

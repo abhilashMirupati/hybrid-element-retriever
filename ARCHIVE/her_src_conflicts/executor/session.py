@@ -1,3 +1,4 @@
+# archived duplicate of src/her/executor/session.py
 """Session management for SPA route detection and DOM delta tracking."""
 
 import asyncio

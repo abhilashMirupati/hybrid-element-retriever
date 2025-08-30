@@ -1,3 +1,4 @@
+# archived duplicate of src/her/embeddings/element_embedder.py
 """Element embedder using MarkupLM-base ONNX model."""
 
 import hashlib

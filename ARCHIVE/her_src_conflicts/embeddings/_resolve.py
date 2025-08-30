@@ -1,3 +1,4 @@
+# archived duplicate of src/her/embeddings/_resolve.py
 """Model resolution for embeddings."""
 
 import os

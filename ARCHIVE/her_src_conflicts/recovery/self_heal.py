@@ -1,3 +1,4 @@
+# archived duplicate of src/her/recovery/self_heal.py
 """Self-healing locator recovery."""
 
 import logging

@@ -1,3 +1,4 @@
+# archived duplicate of src/her/__init__.py
 """HER - Hybrid Element Retriever
 
 Production-ready web element location framework using semantic embeddings and robust heuristics.

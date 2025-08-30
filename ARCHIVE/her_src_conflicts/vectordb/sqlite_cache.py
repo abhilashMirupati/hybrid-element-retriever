@@ -1,3 +1,4 @@
+# archived duplicate of src/her/vectordb/sqlite_cache.py
 """SQLite-based vector cache with LRU eviction."""
 
 import asyncio

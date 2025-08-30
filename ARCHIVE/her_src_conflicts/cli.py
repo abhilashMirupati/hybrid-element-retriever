@@ -1,3 +1,4 @@
+# archived duplicate of src/her/cli.py
 #!/usr/bin/env python
 """Command-line interface for HER framework."""
 

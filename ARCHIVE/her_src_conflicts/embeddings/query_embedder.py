@@ -1,3 +1,4 @@
+# archived duplicate of src/her/embeddings/query_embedder.py
 """Query embedder using E5-small ONNX model."""
 
 import hashlib

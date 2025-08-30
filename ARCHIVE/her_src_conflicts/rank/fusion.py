@@ -1,3 +1,4 @@
+# archived duplicate of src/her/rank/fusion.py
 # src/her/rank/fusion.py
 """
 Fusion ranking logic for Hybrid Element Retriever.
