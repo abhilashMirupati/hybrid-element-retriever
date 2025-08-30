@@ -1,0 +1,75 @@
+{
+  "fixture": "products_disambiguation",
+  "description": "Test product disambiguation - phone vs laptop vs tablet",
+  "intents": [
+    {
+      "id": "phone_add_to_cart",
+      "query": "add phone to cart",
+      "action": "click",
+      "ground_truth": {
+        "used_selector": "button[data-product=\"phone\"]",
+        "strategy": "css",
+        "unique": true,
+        "frame_path": [],
+        "expected_node": "button",
+        "expected_aria_label": "Add Smartphone to cart",
+        "not_matching": ["laptop", "tablet", "phone-case"]
+      }
+    },
+    {
+      "id": "laptop_add_to_cart",
+      "query": "add laptop to cart",
+      "action": "click",
+      "ground_truth": {
+        "used_selector": "button[data-product=\"laptop\"]",
+        "strategy": "css",
+        "unique": true,
+        "frame_path": [],
+        "expected_node": "button",
+        "expected_aria_label": "Add Laptop to cart",
+        "not_matching": ["phone", "tablet"]
+      }
+    },
+    {
+      "id": "tablet_add_to_cart",
+      "query": "add tablet to cart",
+      "action": "click",
+      "ground_truth": {
+        "used_selector": "button[data-product=\"tablet\"]",
+        "strategy": "css",
+        "unique": true,
+        "frame_path": [],
+        "expected_node": "button",
+        "expected_aria_label": "Add Tablet to cart",
+        "not_matching": ["phone", "laptop"]
+      }
+    },
+    {
+      "id": "smartphone_specific",
+      "query": "add smartphone pro max to cart",
+      "action": "click",
+      "ground_truth": {
+        "used_selector": "button[data-product=\"phone\"]",
+        "strategy": "css",
+        "unique": true,
+        "frame_path": [],
+        "expected_node": "button",
+        "expected_product_id": "phone-123"
+      }
+    },
+    {
+      "id": "generic_add_button",
+      "query": "click add to cart button",
+      "action": "click",
+      "ground_truth": {
+        "used_selector": ".add-to-cart",
+        "strategy": "css",
+        "unique": false,
+        "count": 4,
+        "frame_path": [],
+        "expected_node": "button",
+        "note": "Should match first or highest scoring add to cart button"
+      }
+    }
+  ]
+}
