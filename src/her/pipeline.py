@@ -8,10 +8,10 @@ and ranking fusion into a single flow.
 from typing import Dict, Any, List
 import time
 
-from her.embedders.text_embedder import TextEmbedder
-from her.embedders.element_embedder import ElementEmbedder
+from her.embeddings.text_embedder import TextEmbedder
+from her.embeddings.element_embedder import ElementEmbedder
 from her.rank.fusion import FusionScorer
-from her.utils.cache import TwoTierCache
+from her.cache.two_tier import TwoTierCache
 
 
 class HybridPipeline:

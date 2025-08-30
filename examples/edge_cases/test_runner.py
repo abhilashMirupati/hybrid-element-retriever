@@ -22,10 +22,10 @@ except ImportError:
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from src.her.session.enhanced_manager import EnhancedSessionManager
-from src.her.locator.enhanced_verify import EnhancedLocatorVerifier, PopupHandler
-from src.her.recovery.enhanced_promotion import EnhancedPromotionStore
-from src.her.cli_api import HER
+from her.session.enhanced_manager import EnhancedSessionManager
+from her.locator.enhanced_verify import EnhancedLocatorVerifier, PopupHandler
+from her.recovery.enhanced_promotion import EnhancedPromotionStore
+from her.cli_api import HER
 
 
 class EdgeCaseTestRunner:

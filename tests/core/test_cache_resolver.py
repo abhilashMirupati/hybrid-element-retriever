@@ -1,6 +1,5 @@
 import json
-from pathlib import Path
-
+# from pathlib import Path
 from her.vectordb.two_tier_cache import TwoTierCache
 from her.embeddings._resolve import resolve_model_paths
 

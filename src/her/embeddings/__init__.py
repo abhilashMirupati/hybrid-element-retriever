@@ -1,4 +1,9 @@
-from ._resolve import ONNXResolver as ONNXModelResolver, get_query_resolver, get_element_resolver
+# Minimal exports to avoid heavy imports at package import time
+from . import _resolve  # re-export submodule access
+
+__all__ = [
+    '_resolve',
+]
 from .query_embedder import QueryEmbedder
 from .element_embedder import ElementEmbedder
 

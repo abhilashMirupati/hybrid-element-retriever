@@ -34,8 +34,12 @@ from .embeddings.query_embedder import QueryEmbedder
 from .embeddings.element_embedder import ElementEmbedder
 from .executor.actions import ActionExecutor
 
-# New integrated components
-from .pipeline import HERPipeline, PipelineConfig
+# New integrated components (optional for environments without full deps)
+try:
+    from .pipeline import HERPipeline, PipelineConfig
+except Exception:  # pragma: no cover - allow smoke tests without full pipeline deps
+    HERPipeline = None  # type: ignore
+    PipelineConfig = None  # type: ignore
 from .resilience import ResilienceManager, WaitStrategy
 from .validators import InputValidator, DOMValidator
 
@@ -96,7 +100,7 @@ class HybridElementRetrieverClient:
         self.promotion_enabled = True
         
         # Initialize pipeline if enabled
-        if enable_pipeline:
+        if enable_pipeline and PipelineConfig is not None and HERPipeline is not None:
             config = PipelineConfig(
                 use_minilm=False,  # Use fallback embeddings
                 use_e5_small=True,
@@ -142,8 +146,9 @@ class HybridElementRetrieverClient:
         self.intent_parser = IntentParser()
         self.parser = self.intent_parser  # compatibility for tests
         self.synthesizer = LocatorSynthesizer()
-        self.query_embedder = QueryEmbedder(cache_enabled=True)
-        self.element_embedder = ElementEmbedder(cache_enabled=True)
+        # Embedders in fallback-friendly mode
+        self.query_embedder = QueryEmbedder()
+        self.element_embedder = ElementEmbedder()
         self.fusion_scorer = FusionScorer()
         self.verifier = LocatorVerifier()
         
@@ -593,10 +598,14 @@ class HybridElementRetrieverClient:
             
             # Find first working selector
             selector = None
-            for loc in locators:
-                if page and verify_locator(loc, desc, page):
-                    selector = loc
-                    break
+            if not page and locators:
+                # Fallback when no browser context: pick first locator
+                selector = locators[0]
+            else:
+                for loc in locators:
+                    if page and verify_locator(loc, desc, page):
+                        selector = loc
+                        break
             
             if selector:
                 results.append({

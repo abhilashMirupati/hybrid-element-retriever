@@ -1,7 +1,5 @@
 {
-  "version": "stub",
-  "type": "WordLevel",
-  "model": {"type": "WordLevel", "vocab": {"[PAD]": 0, "[UNK]": 1}},
-  "normalizer": null,
-  "pre_tokenizer": {"type": "Whitespace"}
+  "stub": true,
+  "reason": "offline-or-missing-tokenizer",
+  "note": "HER embedders will use deterministic hash fallback."
 }
