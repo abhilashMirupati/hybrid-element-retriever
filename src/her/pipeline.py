@@ -55,6 +55,37 @@ class HERPipeline:
         self.syn = LocatorSynthesizer()
         self._session_seen: Dict[str, set[str]] = {}
 
+    def _fallback_selectors(self, el: Dict[str, Any]) -> List[str]:
+        sel: List[str] = []
+        attrs = (el.get('attributes') or el.get('attrs') or {})
+        tag = (el.get('tag') or '').lower() or '*'
+        data_testid = attrs.get('data-testid') or attrs.get('dataTestId')
+        aria_label = attrs.get('aria-label') or attrs.get('ariaLabel')
+        elem_id = attrs.get('id') or el.get('id')
+        name = attrs.get('name')
+        role = attrs.get('role') or el.get('role')
+        text = (el.get('text') or '').strip()
+        if data_testid:
+            sel.append(f"//*[@data-testid='{data_testid}']")
+            sel.append(f"[data-testid=\"{data_testid}\"]")
+        if aria_label:
+            sel.append(f"//*[@aria-label='{aria_label}']")
+            sel.append(f"[aria-label=\"{aria_label}\"]")
+        if elem_id:
+            sel.append(f"//*[@id='{elem_id}']")
+            sel.append(f"#{elem_id}")
+        if name:
+            sel.append(f"//*[@name='{name}']")
+            sel.append(f"{tag}[name=\"{name}\"]")
+        if role:
+            sel.append(f"//*[@role='{role}']")
+            sel.append(f"[role=\"{role}\"]")
+        if text:
+            safe = text.replace("'", "\"")
+            sel.append(f"//{tag}[contains(normalize-space(), '{safe}')]")
+        sel.append(tag)
+        return [s for s in sel if s]
+
     def process(self, query: str, descriptors: Any, page: Optional[Any] = None, session_id: Optional[str] = None) -> Dict[str, Any]:
         session = session_id or 'default'
         elements: List[Dict[str, Any]]
@@ -115,23 +146,34 @@ class HERPipeline:
                 }
 
             best = elements[order[0]]
-            # Synthesize selectors and verify
+            # Synthesize selectors and verify; ensure non-null selector with fallbacks
             syn = self.synthesizer if hasattr(self, 'synthesizer') else self.syn
             selectors = syn.synthesize(best) if hasattr(syn, 'synthesize') else []
-            xpath = None
+            chosen = None
             if selectors:
                 for sel in selectors:
                     if sel.startswith('/') and (page is None or verify_locator(sel, best, page)):
-                        xpath = sel
+                        chosen = sel
                         break
-                if xpath is None:
-                    xpath = selectors[0] if selectors and selectors[0].startswith('/') else None
+                if chosen is None:
+                    for sel in selectors:
+                        if sel.startswith('/'):
+                            chosen = sel
+                            break
+                if chosen is None:
+                    for sel in selectors:
+                        if not sel.startswith('/'):
+                            chosen = sel
+                            break
+            if chosen is None:
+                fb = self._fallback_selectors(best)
+                chosen = fb[0] if fb else None
 
             return {
                 'element': best,
-                'xpath': xpath,
+                'xpath': chosen,
                 'confidence': float(scores[order[0]]) if scores.size else 0.0,
-                'strategy': 'semantic',
+                'strategy': 'xpath' if (chosen or '').startswith('/') else 'css',
                 'metadata': {
                     'frame_path': frame_path,
                     'used_frame_id': used_frame_id,
