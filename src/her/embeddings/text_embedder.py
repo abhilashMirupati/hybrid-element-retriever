@@ -24,8 +24,6 @@ import json
 from pathlib import Path
 from typing import List, Optional
 import numpy as np
-import onnxruntime as ort
-from transformers import AutoTokenizer
 
 from . import _resolve
 
@@ -33,7 +31,7 @@ from . import _resolve
 class TextEmbedder:
     """MiniLM / E5-small ONNX embedder (sentence-transformers)."""
 
-    def __init__(self, session: Optional[ort.InferenceSession] = None):
+    def __init__(self, session: Optional[object] = None, device: str = "cpu"):
         mp = _resolve.resolve_text_embedding()
         self.paths = mp
 
@@ -43,18 +41,20 @@ class TextEmbedder:
             self.tokenizer = None
             return
 
-        # Load tokenizer
-        self.tokenizer = AutoTokenizer.from_pretrained(str(mp.tokenizer.parent))
-
-        # Load ONNX session (or reuse injected one)
-        self.session = session or ort.InferenceSession(
-            str(mp.onnx),
-            providers=["CPUExecutionProvider"],
-        )
-
-        # Cache input/output names
-        self.input_name = self.session.get_inputs()[0].name
-        self.output_name = self.session.get_outputs()[0].name
+        # Try to load ONNX/Tokenizer, but allow fallback if unavailable
+        try:
+            from transformers import AutoTokenizer  # type: ignore
+            import onnxruntime as ort  # type: ignore
+            self.tokenizer = AutoTokenizer.from_pretrained(str(mp.tokenizer.parent))
+            self.session = session or ort.InferenceSession(
+                str(mp.onnx), providers=["CPUExecutionProvider"]
+            )
+            self.input_name = self.session.get_inputs()[0].name
+            self.output_name = self.session.get_outputs()[0].name
+        except Exception:
+            # Fallback mode
+            self.session = None
+            self.tokenizer = None
 
     # ------------------------------------------------------------------
 

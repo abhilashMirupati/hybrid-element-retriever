@@ -22,9 +22,15 @@ def __getattr__(name):
     if name == "HybridElementRetrieverClient":
         from .cli_api import HybridElementRetrieverClient
         return HybridElementRetrieverClient
+    if name == "HybridPipeline":
+        from .pipeline import HybridPipeline
+        return HybridPipeline
     if name == "HERPipeline":
-        from .pipeline import HERPipeline
+        from .compat import HERPipeline
         return HERPipeline
+    if name == "resolve_model_paths":
+        from .compat import resolve_model_paths
+        return resolve_model_paths
     if name == "PipelineConfig":
         from .pipeline import PipelineConfig
         return PipelineConfig
@@ -56,7 +62,9 @@ __all__ = [
     "HybridClient",
     "HybridElementRetriever", 
     "HybridElementRetrieverClient",
+    "HybridPipeline",
     "HERPipeline",
+    "resolve_model_paths",
     "PipelineConfig",
     "ResilienceManager",
     "WaitStrategy",

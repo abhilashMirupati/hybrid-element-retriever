@@ -162,8 +162,7 @@ class TestCacheHitLatency:
     
     def test_cache_memory_usage(self, pipeline):
         """Test cache memory usage stays bounded."""
-        import sys
-        
+# import sys
         # Fill cache with data
         for i in range(1000):
             key = f"test_key_{i}"

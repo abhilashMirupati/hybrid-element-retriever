@@ -43,6 +43,32 @@ ELEMENT_EMBED_TASK = "element-embedding"  # MarkupLM-base
 MODEL_INFO_FILENAME = "MODEL_INFO.json"
 DEFAULT_PACKAGED_MODELS_REL = "src/her/models"
 
+# Back-compat helper for legacy tests
+def resolve_model_paths() -> Dict[str, Dict[str, Any]]:
+    out: Dict[str, Dict[str, Any]] = {
+        TEXT_EMBED_TASK: {"id": None, "onnx": None, "tokenizer": None},
+        ELEMENT_EMBED_TASK: {"id": None, "onnx": None, "tokenizer": None},
+    }
+    try:
+        mp = resolve_text_embedding()
+        out[TEXT_EMBED_TASK] = {
+            "id": mp.id,
+            "onnx": str(mp.onnx),
+            "tokenizer": str(mp.tokenizer),
+        }
+    except Exception:
+        pass
+    try:
+        mp = resolve_element_embedding()
+        out[ELEMENT_EMBED_TASK] = {
+            "id": mp.id,
+            "onnx": str(mp.onnx),
+            "tokenizer": str(mp.tokenizer),
+        }
+    except Exception:
+        pass
+    return out
+
 
 class ResolverError(RuntimeError):
     """Raised when model resolution or MODEL_INFO.json validation fails."""

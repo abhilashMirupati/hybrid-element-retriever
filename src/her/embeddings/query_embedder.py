@@ -5,7 +5,7 @@ from typing import List
 
 import numpy as np
 
-from ._resolve import get_query_resolver, ONNXResolver
+from . import _resolve
 
 
 class QueryEmbedder:
@@ -18,7 +18,15 @@ class QueryEmbedder:
 
     def __init__(self, dim: int = 384, **_: object) -> None:
         self.dim = int(dim)
-        self.resolver: ONNXResolver = get_query_resolver()
+        # Build a minimal resolver adapter using _resolve API
+        class _R:
+            def files(self):
+                try:
+                    mp = _resolve.resolve_text_embedding()
+                    return (mp.onnx if mp.onnx.exists() else None, mp.tokenizer if mp.tokenizer.exists() else None)
+                except Exception:
+                    return (None, None)
+        self.resolver = _R()
         self._session = None
         self._init_session()
 

@@ -78,8 +78,7 @@ class TestLargeDOMStress:
     def test_memory_efficiency(self, pipeline, large_dom):
         """Test memory usage stays reasonable with large DOM."""
         import gc
-        import sys
-        
+# import sys
         gc.collect()
         initial_memory = sys.getsizeof(pipeline.cache)
         
