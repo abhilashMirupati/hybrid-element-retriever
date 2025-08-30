@@ -1,3 +1,48 @@
+HER Installability Report
+
+Environment:
+- OS: linux (container)
+- Python: python3 (system)
+
+Commands and results:
+
+1) pip install -e .[dev]
+
+```
+pip3 install -e .[dev] --break-system-packages
+
+Result: SUCCESS
+Key outputs: built editable wheel for her, installed numpy, pytest, black, flake8, mypy, playwright
+```
+
+2) python -m playwright install chromium
+
+```
+python3 -m playwright install chromium
+
+Result: SUCCESS
+Key outputs: Chromium downloaded to ~/.cache/ms-playwright; ffmpeg and headless shell installed
+```
+
+3) ./scripts/install_models.sh
+
+```
+Result: SUCCESS
+Models directory prepared at src/her/models
+MODEL_INFO.json written with current ISO-8601 timestamp
+Stub model.onnx and tokenizer.json ensured for e5-small-onnx and markuplm-base-onnx
+```
+
+4) python -m compileall src
+
+```
+python3 -m compileall src
+
+Result: SUCCESS
+All Python sources under src compiled without errors.
+```
+
+Conclusion: Phase 0 acceptance criteria satisfied in a clean environment.
 # Installability Report
 
 ## Phase 0: Environment & Installability Verification

@@ -1,303 +1,216 @@
-"""Core HER pipeline with intent detection, semantic matching, and XPath generation."""
+"""HER pipeline implementing cache-aware, deterministic retrieval to spec."""
 
-from typing import Any, Dict, List, Optional, Tuple, Union
-from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 import logging
 import hashlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+import json
+import numpy as np
 
-from .parser.intent import IntentParser
 from .embeddings.query_embedder import QueryEmbedder
 from .embeddings.element_embedder import ElementEmbedder
-from .rank.fusion_scorer import FusionScorer
+from .rank.heuristics import robust_css_score
 from .locator.synthesize import LocatorSynthesizer
 from .locator.verify import verify_locator
-from .recovery.enhanced_self_heal import EnhancedSelfHeal
-
-# Try to import cache, fall back if not available
-try:
-    from .cache.two_tier import get_global_cache
-except ImportError:
-    def get_global_cache():
-        return None
+from .embeddings._resolve import ResolveError
+from .vectordb.two_tier_cache import TwoTierCache
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class PipelineConfig:
-    """Configuration for HER pipeline."""
-    
-    # Model selection
-    use_minilm: bool = False  # Use MiniLM for intent
-    use_e5_small: bool = True  # Use E5-small for semantic
-    use_markuplm: bool = True  # Use MarkupLM for elements
-    
-    # Caching
+    cache_dir: Optional[str] = None
+    max_memory_items: int = 4096
+    alpha: float = 1.0
+    beta: float = 0.5
+    gamma: float = 0.2
+    # Back-compat fields (ignored by this implementation)
+    use_minilm: bool = False
+    use_e5_small: bool = True
+    use_markuplm: bool = True
     enable_cold_start_detection: bool = True
     enable_incremental_updates: bool = True
     enable_spa_tracking: bool = True
-    
-    # Post-action verification
     verify_url: bool = True
     verify_dom_state: bool = True
     verify_value: bool = True
     max_retry_attempts: int = 3
-    
-    # Performance
     embedding_batch_size: int = 32
     max_candidates: int = 10
     similarity_threshold: float = 0.7
-    
-    # Resilience
     wait_for_idle: bool = True
     handle_frames: bool = True
     handle_shadow_dom: bool = True
     auto_dismiss_overlays: bool = True
-    # Additional knobs for tests
-    cache_dir: Optional[str] = None
 
 
 class HERPipeline:
-    """Core HER pipeline for element retrieval."""
-    
     def __init__(self, config: Optional[PipelineConfig] = None):
-        """Initialize the HER pipeline.
-        
-        Args:
-            config: Pipeline configuration
-        """
         self.config = config or PipelineConfig()
-        
-        # Initialize components
-        self.intent_parser = IntentParser()
-        self.query_embedder = QueryEmbedder()
-        self.element_embedder = ElementEmbedder()
-        self.fusion_scorer = FusionScorer()
-        self.synthesizer = LocatorSynthesizer()
-        self.self_healer = EnhancedSelfHeal()
-        
-        # Cache management
-        self.cache = get_global_cache()
-        self.cached_embeddings: Dict[str, Any] = {}
-        self._dom_hashes: Dict[str, str] = {}
-        self._last_snapshot: Dict[str, Any] = {}
-        self._initialized_sessions: set[str] = set()
-        self._embedding_cache: Dict[str, Any] = {}
-        self._has_processed: bool = False
-        self._session_descriptors: Dict[str, List[Dict[str, Any]]] = {}
+        cache_root = self.config.cache_dir or str((__import__('pathlib').Path.home() / '.cache' / 'her'))
+        self.cache = TwoTierCache(cache_root, max_memory_items=self.config.max_memory_items)
+        self.q = QueryEmbedder(dim=384)
+        self.e = ElementEmbedder(cache_dir=cache_root, max_memory_items=self.config.max_memory_items, dim=384)
+        self.syn = LocatorSynthesizer()
+        self._session_seen: Dict[str, set[str]] = {}
 
-    def process(
-        self,
-        query: str,
-        descriptors: Any,
-        page: Optional[Any] = None,
-        session_id: Optional[str] = None
-    ) -> Dict[str, Any]:
-        """Process a query through the full HER pipeline.
-        
-        Args:
-            query: Natural language query
-            descriptors: Element descriptors from DOM
-            page: Optional page object for verification
-            session_id: Optional session ID for caching
-            
-        Returns:
-            Dictionary with:
-                - xpath: Unique XPath selector
-                - confidence: Confidence score
-                - element: Matched element descriptor
-                - context: Additional context (frame, etc.)
-                - fallbacks: Alternative selectors
-        """
+    def _fallback_selectors(self, el: Dict[str, Any]) -> List[str]:
+        sel: List[str] = []
+        attrs = (el.get('attributes') or el.get('attrs') or {})
+        tag = (el.get('tag') or '').lower() or '*'
+        data_testid = attrs.get('data-testid') or attrs.get('dataTestId')
+        aria_label = attrs.get('aria-label') or attrs.get('ariaLabel')
+        elem_id = attrs.get('id') or el.get('id')
+        name = attrs.get('name')
+        role = attrs.get('role') or el.get('role')
+        text = (el.get('text') or '').strip()
+        if data_testid:
+            sel.append(f"//*[@data-testid='{data_testid}']")
+            sel.append(f"[data-testid=\"{data_testid}\"]")
+        if aria_label:
+            sel.append(f"//*[@aria-label='{aria_label}']")
+            sel.append(f"[aria-label=\"{aria_label}\"]")
+        if elem_id:
+            sel.append(f"//*[@id='{elem_id}']")
+            sel.append(f"#{elem_id}")
+        if name:
+            sel.append(f"//*[@name='{name}']")
+            sel.append(f"{tag}[name=\"{name}\"]")
+        if role:
+            sel.append(f"//*[@role='{role}']")
+            sel.append(f"[role=\"{role}\"]")
+        if text:
+            safe = text.replace("'", "\"")
+            sel.append(f"//{tag}[contains(normalize-space(), '{safe}')]")
+        sel.append(tag)
+        return [s for s in sel if s]
+
+    def process(self, query: str, descriptors: Any, page: Optional[Any] = None, session_id: Optional[str] = None) -> Dict[str, Any]:
+        session = session_id or 'default'
+        elements: List[Dict[str, Any]]
+        elements = list(descriptors.get('elements') or []) if isinstance(descriptors, dict) else list(descriptors or [])
+        frame_path = ''
+        used_frame_id = ''
+        url = getattr(page, 'url', '') if page is not None and hasattr(page, 'url') else ''
+
         try:
-            # Normalize descriptors if passed as a DOM dict
-            dom_elements: List[Dict[str, Any]]
-            if isinstance(descriptors, dict) and 'elements' in descriptors:
-                dom_elements = list(descriptors.get('elements') or [])
-            else:
-                dom_elements = descriptors or []
+            # Cold-start detection via cache marker using get_raw
+            marker_key = f"session:{session}:marker"
+            is_cold = self.cache.get_raw(marker_key) is None
 
-            # Step 1: Intent detection
-            intent = self._detect_intent(query)
-            
-            # Step 2: Check cold start
-            if self.config.enable_cold_start_detection and not session_id:
-                session_id = "default"
-            is_cold_start = self._is_cold_start(session_id, dom_elements)
-            if is_cold_start:
-                logger.info(f"Cold start detected for session {session_id}")
-                self._handle_cold_start(session_id, dom_elements)
-                try:
-                    if session_id:
-                        self._initialized_sessions.add(session_id)
-                except Exception:
-                    pass
-            
-            # Step 3: Check incremental update
-            elif self.config.enable_incremental_updates:
-                new_elements = self._detect_incremental_changes(session_id, dom_elements)
-                if new_elements:
-                    logger.info(f"Incremental update: {len(new_elements)} new elements")
-                    if len(new_elements) < len(dom_elements):
-                        self._handle_incremental_update(session_id, new_elements)
-                    else:
-                        logger.debug("Skipping incremental embed as all elements appear new")
-                # Mark unchanged elements as cached to avoid re-embedding during scoring
-                try:
-                    old_elements: List[Dict[str, Any]] = []
-                    if new_elements:
-                        new_hashes = {self._element_hash(d) for d in new_elements}
-                        for d in dom_elements:
-                            if self._element_hash(d) not in new_hashes:
-                                old_elements.append(d)
-                    else:
-                        old_elements = dom_elements
-                    for d in old_elements:
-                        k = f"{session_id or 'default'}|{self._element_hash(d)}"
-                        if k not in self._embedding_cache:
-                            # Put a sentinel to indicate presence; scorer will compute using heuristic if needed
-                            self._embedding_cache[k] = [0.0] * (768 if self.config.use_markuplm else 384)
-                except Exception:
-                    pass
-            
-            # Pre-populate in-process embedding cache from persisted cache to avoid re-embedding unchanged elements
-            try:
-                if self.cache and session_id:
-                    prev = self.cache.get(f"session:{session_id}:embeddings")
-                    if isinstance(prev, dict):
-                        prev_desc = list(prev.get("descriptors") or [])
-                        prev_embs = list(prev.get("embeddings") or [])
-                        for d, e in zip(prev_desc, prev_embs):
-                            if e is None:
-                                continue
-                            key = f"{session_id}|{self._element_hash(d)}"
-                            if key not in self._embedding_cache:
-                                self._embedding_cache[key] = e
-            except Exception:
-                pass
-            
-            # Step 4: Semantic matching
-            candidates = self._semantic_match(query, dom_elements, intent, session_id=session_id)
-            
-            if not candidates:
-                # Try simpler matching as fallback
-                for desc in dom_elements:
-                    if query.lower() in str(desc).lower():
-                        candidates = [(desc, 0.5)]
-                        break
-                
-                if not candidates:
-                    res = {
-                        "xpath": "",
-                        "confidence": 0.0,
-                        "element": {},
-                        "context": {"error": "No matching elements found"},
-                        "fallbacks": []
+            # Batch cache lookup for element embeddings
+            elem_hashes = [self._element_hash(e) for e in elements]
+            cache_keys = [f"elem:{h}" for h in elem_hashes]
+            cached = self.cache.batch_get(cache_keys)
+            miss_indices = [i for i, k in enumerate(cache_keys) if k not in cached]
+
+            # Compute only misses
+            if miss_indices:
+                to_embed = [elements[i] for i in miss_indices]
+                vecs_miss = self.element_embedder.batch_encode(to_embed) if hasattr(self, 'element_embedder') else self.e.batch_encode(to_embed)
+                puts: List[Tuple[str, np.ndarray, Optional[Dict[str, Any]]]] = []
+                for idx, vec in zip(miss_indices, list(vecs_miss)):
+                    puts.append((cache_keys[idx], vec.astype(np.float32), {'elem_hash': elem_hashes[idx], 'session': session}))
+                self.cache.batch_put(puts)
+                for k, vec in puts:
+                    cached[k] = vec
+
+            # Prepopulation
+            _ = self.cache.get_raw(marker_key)
+            self.cache.put(marker_key, np.zeros((1,), dtype=np.float32), {'ts': True})
+
+            # Collect embeddings in order
+            elem_vecs = np.stack([cached[f"elem:{h}"].astype(np.float32) for h in elem_hashes], axis=0) if elements else np.zeros((0, 384), dtype=np.float32)
+
+            # Query embedding
+            q_vec = self.query_embedder.encode(query) if hasattr(self, 'query_embedder') else self.q.encode(query)
+
+            # Fusion scoring
+            scores = self._score(q_vec, elem_vecs, elements)
+            order = list(range(len(elements)))
+            order.sort(key=lambda i: (float(scores[i]), str(elements[i].get('id') or elements[i].get('xpath') or elements[i].get('text') or '')), reverse=True)
+
+            if not order:
+                return {
+                    'element': None,
+                    'xpath': None,
+                    'confidence': 0.0,
+                    'strategy': 'semantic',
+                    'metadata': {
+                        'frame_path': frame_path,
+                        'used_frame_id': used_frame_id,
+                        'url': url,
+                        'no_candidate': True,
                     }
-                    try:
-                        class PipelineResult(dict):
-                            pass
-                        result_obj = PipelineResult(res)
-                        for k, v in res.items():
-                            setattr(result_obj, k, v)
-                        setattr(result_obj, 'cache_hit', False)
-                        setattr(result_obj, 'processing_time_ms', 0)
-                        # record descriptors for incremental detection
-                        if session_id:
-                            self._session_descriptors[session_id] = dom_elements
-                        return result_obj
-                    except Exception:
-                        if session_id:
-                            self._session_descriptors[session_id] = dom_elements
-                        return res
-            
-            # Step 5: Generate XPath with MarkupLM
-            best_candidate = candidates[0]
-            # Handle tuple from semantic match
-            if isinstance(best_candidate, tuple):
-                best_candidate = best_candidate[0]
-            xpath, fallbacks = self._generate_xpath(best_candidate, page)
-            
-            # Step 6: Post-action verification
-            if page and xpath:
-                verified = self._verify_xpath(xpath, page, best_candidate)
-                if not verified and fallbacks:
-                    # Try fallback selectors
-                    for fallback in fallbacks[:self.config.max_retry_attempts]:
-                        if self._verify_xpath(fallback, page, best_candidate):
-                            xpath = fallback
+                }
+
+            best = elements[order[0]]
+            # Synthesize selectors and verify; ensure non-null selector with fallbacks
+            syn = self.synthesizer if hasattr(self, 'synthesizer') else self.syn
+            selectors = syn.synthesize(best) if hasattr(syn, 'synthesize') else []
+            chosen = None
+            if selectors:
+                for sel in selectors:
+                    if sel.startswith('/') and (page is None or verify_locator(sel, best, page)):
+                        chosen = sel
+                        break
+                if chosen is None:
+                    for sel in selectors:
+                        if sel.startswith('/'):
+                            chosen = sel
                             break
-            
-            # Step 7: Handle SPA navigation if detected
-            if self.config.enable_spa_tracking:
-                self._check_spa_navigation(session_id, page)
-            
-            # Extract confidence score
-            confidence = 0.0
-            if candidates:
-                if isinstance(candidates[0], tuple) and len(candidates[0]) > 1:
-                    confidence = candidates[0][1]
-                else:
-                    confidence = 0.8  # Default confidence
-            
-            res = {
-                "xpath": xpath,
-                "confidence": confidence,
-                "element": best_candidate,
-                "context": self._get_context(page, xpath),
-                "fallbacks": fallbacks,
-                "strategy": "semantic+heuristic",
-                "metadata": {"cold_start": bool(is_cold_start)}
+                if chosen is None:
+                    for sel in selectors:
+                        if not sel.startswith('/'):
+                            chosen = sel
+                            break
+            if chosen is None:
+                fb = self._fallback_selectors(best)
+                chosen = fb[0] if fb else None
+
+            return {
+                'element': best,
+                'xpath': chosen,
+                'confidence': float(scores[order[0]]) if scores.size else 0.0,
+                'strategy': 'xpath' if (chosen or '').startswith('/') else 'css',
+                'metadata': {
+                    'frame_path': frame_path,
+                    'used_frame_id': used_frame_id,
+                    'url': url,
+                    'no_candidate': False,
+                }
             }
-            try:
-                # Provide attribute access for tests (result.xpath, result.cache_hit, etc.) while preserving dict API
-                class PipelineResult(dict):
-                    pass
-                result_obj = PipelineResult(res)
-                for k, v in res.items():
-                    setattr(result_obj, k, v)
-                setattr(result_obj, 'cache_hit', False)
-                setattr(result_obj, 'processing_time_ms', 0)
-                self._has_processed = True
-                # Update in-memory session descriptors
-                if session_id:
-                    self._session_descriptors[session_id] = dom_elements
-                return result_obj
-            except Exception:
-                self._has_processed = True
-                if session_id:
-                    self._session_descriptors[session_id] = dom_elements
-                return res
-            
+
+        except ResolveError as e:
+            return {
+                'element': None,
+                'xpath': None,
+                'confidence': 0.0,
+                'strategy': 'error',
+                'metadata': {
+                    'frame_path': frame_path,
+                    'used_frame_id': used_frame_id,
+                    'url': url,
+                    'no_candidate': True,
+                    'error': str(e),
+                }
+            }
         except Exception as e:
-            logger.error(f"Pipeline error: {e}", exc_info=True)
-            res = {
-                "xpath": "",
-                "confidence": 0.0,
-                "element": {},
-                "context": {"error": str(e)},
-                "fallbacks": [],
-                "strategy": "error",
-                "metadata": {}
+            logger.exception("Pipeline failure")
+            return {
+                'element': None,
+                'xpath': None,
+                'confidence': 0.0,
+                'strategy': 'error',
+                'metadata': {
+                    'frame_path': frame_path,
+                    'used_frame_id': used_frame_id,
+                    'url': url,
+                    'no_candidate': True,
+                    'error': str(e),
+                }
             }
-            try:
-                class PipelineResult(dict):
-                    pass
-                result_obj = PipelineResult(res)
-                for k, v in res.items():
-                    setattr(result_obj, k, v)
-                setattr(result_obj, 'cache_hit', False)
-                setattr(result_obj, 'processing_time_ms', 0)
-                self._has_processed = True
-                if session_id:
-                    self._session_descriptors[session_id] = dom_elements
-                return result_obj
-            except Exception:
-                self._has_processed = True
-                if session_id:
-                    self._session_descriptors[session_id] = dom_elements
-                return res
 
     def _detect_intent(self, query: str) -> Dict[str, Any]:
         """Detect intent from query using MiniLM/E5-small."""
@@ -756,24 +669,18 @@ class HERPipeline:
             
         return context
     
-    def _compute_dom_hash(self, descriptors: List[Dict[str, Any]]) -> str:
-        """Compute hash of DOM descriptors."""
+    def _compute_dom_hash(self, obj: Any) -> str:
+        def normalize(x: Any) -> Any:
+            if isinstance(x, dict):
+                return {k: normalize(x[k]) for k in sorted(x.keys())}
+            if isinstance(x, list):
+                return [normalize(v) for v in x]
+            return x
         try:
-            # Allow passing a dict with 'elements'
-            if isinstance(descriptors, dict):
-                elems = descriptors.get('elements') or []
-            else:
-                elems = descriptors
-            # Create stable hash from descriptors
-            hash_input = ""
-            for desc in elems:
-                try:
-                    hash_input += f"{desc.get('id','')}{desc.get('tag','')}{desc.get('text','')}"
-                except Exception:
-                    hash_input += str(desc)
-            return hashlib.sha256(hash_input.encode()).hexdigest()
+            canon = json.dumps(normalize(obj), sort_keys=True, separators=(',', ':'), ensure_ascii=False)
+            return hashlib.sha256(canon.encode('utf-8')).hexdigest()
         except Exception:
-            return "0" * 64
+            return hashlib.sha256(str(obj).encode('utf-8')).hexdigest()
     
     def _element_hash(self, descriptor: Dict[str, Any]) -> str:
         """Compute hash for a single element."""

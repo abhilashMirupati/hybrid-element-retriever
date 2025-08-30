@@ -3,18 +3,24 @@ import hashlib
 import time
 from typing import Any, Optional
 from dataclasses import dataclass
+from pathlib import Path
+import numpy as np
+
+from ..vectordb.two_tier_cache import TwoTierCache
 
 
 class Session:
-    """Track DOM and route changes per page with SPA listeners."""
+    """Track DOM and route changes per page with SPA listeners and cache stats."""
 
-    def __init__(self, page: Any, delta_threshold: int = 50) -> None:
+    def __init__(self, page: Any, delta_threshold: int = 50, cache_dir: Optional[str] = None, max_memory_items: int = 4096) -> None:
         self.page = page
         self.delta_threshold = int(delta_threshold)
         self._last_dom_hash: Optional[str] = None
         self._last_url: Optional[str] = None
         self._indexed_at: float = 0.0
         self.route_changed: bool = False
+        root = Path(cache_dir) if cache_dir else (Path.home() / '.cache' / 'her')
+        self.cache = TwoTierCache(root, max_memory_items=max_memory_items)
         self._install_spa_hooks()
 
     def _install_spa_hooks(self) -> None:
@@ -99,13 +105,23 @@ class Session:
         self._indexed_at = 0.0
         self.route_changed = False
 
+    def stats(self) -> dict:
+        try:
+            return self.cache.stats()
+        except Exception:
+            return {}
+
 
 __all__ = ['Session']
 
 
 @dataclass
 class SessionManager:
-    """Minimal placeholder to satisfy imports in some tests."""
     auto_index: bool = True
     reindex_on_change: bool = True
+    cache_dir: Optional[str] = None
+    max_memory_items: int = 4096
+
+    def create_session(self, session_id: str, page: Any) -> Session:
+        return Session(page, cache_dir=self.cache_dir, max_memory_items=self.max_memory_items)
 

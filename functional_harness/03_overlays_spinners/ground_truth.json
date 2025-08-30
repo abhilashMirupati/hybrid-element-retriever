@@ -1,0 +1,4 @@
+[
+  {"xpath":"//*[@data-testid='accept-cookies']"},
+  {"xpath":"//*[@data-testid='proceed']"}
+]

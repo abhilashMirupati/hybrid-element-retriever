@@ -1,0 +1,4 @@
+[
+  {"xpath":"//*[@data-testid='add-to-cart-laptop']"},
+  {"xpath":"//*[@data-testid='add-to-cart-phone']"}
+]

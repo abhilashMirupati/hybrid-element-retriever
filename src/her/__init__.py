@@ -1,3 +1,12 @@
+"""Hybrid Element Retriever (HER).
+
+This package provides a hybrid element retrieval pipeline combining
+semantic embeddings and robust selector heuristics.
+"""
+
+__all__ = [
+    # Public entry points will be added in subsequent phases
+]
 """Hybrid Element Retriever (HER) - Production-ready element location for web automation."""
 
 __version__ = "1.0.0"

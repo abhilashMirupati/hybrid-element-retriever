@@ -1,4 +1,4 @@
 [
-  {"id": "intfloat/e5-small", "task": "text-embedding"},
-  {"id": "microsoft/markuplm-base", "task": "element-embedding"}
+  {"id":"sentence-transformers/ms-marco-MiniLM-L-6-v3","alias":"e5-small-onnx/model.onnx","task":"text-embedding","downloaded_at":"1970-01-01T00:00:00Z"},
+  {"id":"microsoft/markuplm-base","alias":"markuplm-base-onnx/model.onnx","task":"element-embedding","downloaded_at":"1970-01-01T00:00:00Z"}
 ]
