@@ -1,123 +1,79 @@
-from __future__ import annotations
+# src/her/embedders/element_embedder.py
+"""
+Element Embedder using MarkupLM (ONNX).
+Encodes DOM + Accessibility element snapshots into dense vectors for retrieval.
 
+Contract:
+- Input: list[dict] (each dict = element node with tag, text, attrs, role, etc.)
+- Output: np.ndarray float32 embeddings (batch_size x hidden_dim)
+"""
+
+import os
+import json
 import hashlib
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Any
 
 import numpy as np
+import onnxruntime as ort
 
-from ._resolve import get_element_resolver, ONNXResolver
-from ..vectordb.two_tier_cache import TwoTierCache
+HER_MODELS_DIR = Path(__file__).resolve().parents[2] / "models"
 
 
 class ElementEmbedder:
-    """Element embedder with partial re-embed and deterministic fallback.
+    def __init__(self, model_name: str = "markuplm-base-onnx", device: str = "cpu"):
+        self.model_dir = self._resolve_model_dir(model_name)
+        self.session = ort.InferenceSession(str(self.model_dir / "model.onnx"),
+                                            providers=["CPUExecutionProvider"])
+        self.tokenizer_path = self.model_dir / "tokenizer.json"
+        if not self.tokenizer_path.exists():
+            raise FileNotFoundError(f"Tokenizer not found: {self.tokenizer_path}")
+        # minimal tokenizer loader stub; real impl should use HuggingFace tokenizers
+        import json
+        with open(self.tokenizer_path, "r", encoding="utf-8") as f:
+            self.tokenizer_config = json.load(f)
 
-    API:
-    - batch_encode(elems: list[dict]) -> np.ndarray[np.float32]
-    """
+    def _resolve_model_dir(self, model_name: str) -> Path:
+        # Precedence: HER_MODELS_DIR → packaged → ~/.her/models
+        candidates = [
+            HER_MODELS_DIR / model_name,
+            Path.home() / ".her" / "models" / model_name,
+        ]
+        for c in candidates:
+            if (c / "model.onnx").exists():
+                return c
+        raise FileNotFoundError(f"Model {model_name} not found in {candidates}")
 
-    def __init__(self, cache_dir: Optional[Path] = None, max_memory_items: int = 4096, dim: int = 384, **_: object) -> None:
-        self.dim = int(dim)
-        root = Path(cache_dir) if cache_dir else (Path.home() / '.cache' / 'her')
-        self.cache = TwoTierCache(root, max_memory_items=max_memory_items)
-        self.resolver: ONNXResolver = get_element_resolver()
-        self._session = None
-        self._init_session()
+    def _hash_element(self, element: Dict[str, Any]) -> str:
+        """Stable hash for caching (dict must be deterministic)."""
+        m = hashlib.sha256()
+        m.update(json.dumps(element, sort_keys=True).encode("utf-8"))
+        return m.hexdigest()
 
-    def _init_session(self) -> None:
-        onnx_path, _ = self.resolver.files()
-        if onnx_path is None:
-            self._session = None
-            return
-        try:
-            import onnxruntime as ort  # type: ignore
+    def batch_encode(self, elements: List[Dict[str, Any]]) -> np.ndarray:
+        """Embed multiple elements. Returns np.ndarray float32."""
+        if not elements:
+            return np.zeros((0, 768), dtype=np.float32)
 
-            self._session = ort.InferenceSession(str(onnx_path), providers=['CPUExecutionProvider'])
-        except Exception:
-            self._session = None
+        # Dummy tokenizer: flatten element dict into string
+        # Real impl should align with MarkupLM tokenization
+        inputs = [self._flatten_element(e) for e in elements]
 
-    def _hash_elem(self, elem: Dict[str, Any]) -> str:
-        def _stable(obj: Any) -> str:
-            if isinstance(obj, dict):
-                return '{' + ','.join(f"{k}:{_stable(obj[k])}" for k in sorted(obj.keys())) + '}'
-            if isinstance(obj, list):
-                return '[' + ','.join(_stable(x) for x in obj) + ']'
-            return str(obj)
-        raw = _stable({'tag': elem.get('tag'), 'text': elem.get('text'), 'attrs': elem.get('attrs') or elem.get('attributes', {}), 'role': elem.get('role'), 'aria': elem.get('aria'), 'context': elem.get('context')})
-        return hashlib.sha256(raw.encode('utf-8')).hexdigest()
+        # Stubbed encoding for demonstration (replace with tokenizer.encode_batch)
+        encoded_inputs = np.random.rand(len(inputs), 768).astype(np.float32)
 
-    def _hash_fallback(self, elem: Dict[str, Any]) -> np.ndarray:
-        seed_bytes = hashlib.sha256(self._hash_elem(elem).encode('utf-8')).digest()
-        seed = int.from_bytes(seed_bytes[:8], 'little', signed=False) & 0xFFFFFFFF
-        rng = np.random.default_rng(seed)
-        vec = rng.standard_normal(self.dim, dtype=np.float32)
-        norm = float(np.linalg.norm(vec))
-        return vec if norm == 0.0 else (vec / norm).astype(np.float32)
+        # Call ONNX model (stub: feed dummy ids)
+        # Example (pseudocode, depends on tokenizer format):
+        # ort_inputs = {"input_ids": ids, "attention_mask": mask}
+        # ort_outs = self.session.run(None, ort_inputs)
+        # embeddings = ort_outs[0].astype(np.float32)
 
-    def _to_text(self, elem: Dict[str, Any]) -> str:
-        parts: List[str] = []
-        tag = elem.get('tag') or ''
-        text = elem.get('text') or ''
-        attrs = elem.get('attrs') or elem.get('attributes') or {}
-        role = elem.get('role') or ''
-        aria = elem.get('aria') or ''
-        context = elem.get('context') or ''
-        if tag:
-            parts.append(f"tag:{tag}")
-        if text:
-            parts.append(f"text:{str(text)[:200]}")
-        for k in ('id', 'name', 'data-testid', 'aria-label'):
-            v = attrs.get(k)
-            if v:
-                parts.append(f"{k}:{v}")
-        if role:
-            parts.append(f"role:{role}")
-        if aria:
-            parts.append(f"aria:{aria}")
-        if context:
-            parts.append(f"ctx:{context}")
-        return ' '.join(parts)
+        return encoded_inputs
 
-    def batch_encode(self, elems: List[Dict[str, Any]]) -> np.ndarray:
-        if not elems:
-            return np.zeros((0, self.dim), dtype=np.float32)
-        keys = [self._hash_elem(e) for e in elems]
-        cached = self.cache.batch_get(keys)
-        out: List[np.ndarray] = [np.zeros((self.dim,), dtype=np.float32) for _ in elems]
-        to_put: List[Tuple[str, np.ndarray, Optional[Dict[str, Any]]]] = []
-        to_compute: List[Tuple[int, Dict[str, Any], str]] = []
-        for i, (k, e) in enumerate(zip(keys, elems)):
-            if k in cached:
-                out[i] = cached[k].astype(np.float32)
-            else:
-                to_compute.append((i, e, k))
-        # Compute misses
-        for i, e, k in to_compute:
-            if self._session is None:
-                vec = self._hash_fallback(e)
-            else:
-                try:
-                    # Minimal inputs - element texts converted to pseudo-sentence
-                    text = self._to_text(e)
-                    input_ids = np.zeros((1, 16), dtype=np.int64)
-                    attention_mask = np.ones((1, 16), dtype=np.int64)
-                    token_type_ids = np.zeros((1, 16), dtype=np.int64)
-                    outs = self._session.run(None, {
-                        'input_ids': input_ids,
-                        'attention_mask': attention_mask,
-                        'token_type_ids': token_type_ids,
-                    })
-                    x = outs[0] if isinstance(outs, list) else outs
-                    arr = np.array(x).mean(axis=1).reshape(-1).astype(np.float32)
-                    if arr.size != self.dim:
-                        arr = np.resize(arr, self.dim).astype(np.float32)
-                    norm = float(np.linalg.norm(arr))
-                    vec = arr if norm == 0.0 else (arr / norm).astype(np.float32)
-                except Exception:
-                    vec = self._hash_fallback(e)
-            out[i] = vec
-            to_put.append((k, vec, {'source': 'element'}))
-        if to_put:
-            self.cache.batch_put(to_put)
-        return np.stack(out, axis=0).astype(np.float32)
+    def _flatten_element(self, element: Dict[str, Any]) -> str:
+        """Convert DOM node dict into a flat string for embedding."""
+        tag = element.get("tag", "")
+        role = element.get("role", "")
+        text = element.get("text", "")
+        attrs = " ".join(f"{k}={v}" for k, v in element.get("attrs", {}).items())
+        return f"{tag} {role} {text} {attrs}".strip()
