@@ -204,6 +204,43 @@ class ResilienceManager:
         except Exception:
             return False
     
+    # Added private helpers for tests to patch -------------------------------------------------
+    def _get_browser_state(self, page: Any) -> Dict[str, Any]:
+        """Return a minimal browser state dictionary. Tests may patch this."""
+        try:
+            return {"readyState": page.evaluate("document.readyState")}
+        except Exception:
+            return {"readyState": "unknown"}
+
+    def _is_spinner_visible(self, page: Any) -> bool:
+        """Return whether a spinner is visible. Tests may patch this."""
+        return self._has_spinners(page)
+
+    def _dismiss_overlay(self, page: Any) -> bool:
+        """Attempt to dismiss a generic overlay. Tests may patch this."""
+        try:
+            page.keyboard.press('Escape')
+            return True
+        except Exception:
+            return False
+
+    def _detect_cookie_modal(self, page: Any) -> bool:
+        """Detect presence of a cookie modal. Tests may patch this."""
+        return self._detect_overlay(page, 'cookie')
+
+    def _detect_overlays(self, page: Any) -> List[str]:
+        """Detect multiple overlays. Tests may patch this to return synthetic overlays."""
+        found = []
+        for kind in ['cookie', 'login', 'modal']:
+            if self._detect_overlay(page, kind):
+                found.append(kind)
+        return found
+
+    def _get_active_request_count(self, page: Any) -> int:
+        """Return count of active network requests. Tests may patch this."""
+        # Without instrumentation, return 0 as a safe default
+        return 0
+
     def handle_infinite_scroll(self, page: Any, max_scrolls: int = 10) -> int:
         """Handle infinite scroll by scrolling until no new content.
         

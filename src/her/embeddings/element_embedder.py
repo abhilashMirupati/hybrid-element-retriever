@@ -20,11 +20,12 @@ HER_MODELS_DIR = Path(__file__).resolve().parents[2] / "models"
 
 
 class ElementEmbedder:
-    def __init__(self, model_name: str = "markuplm-base-onnx", device: str = "cpu"):
+    def __init__(self, model_name: str = "markuplm-base-onnx", device: str = "cpu", cache_dir: str | None = None, dim: int = 768):
         self.model_dir = None
         self.session = None
         self.tokenizer_path = None
         self.tokenizer_config = {}
+        self.dim = int(dim)
         try:
             # Lazy import onnxruntime; allow environments without it
             import onnxruntime as ort  # type: ignore

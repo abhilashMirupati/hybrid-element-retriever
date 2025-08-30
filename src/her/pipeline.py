@@ -12,6 +12,21 @@ from her.embeddings.text_embedder import TextEmbedder
 from her.embeddings.element_embedder import ElementEmbedder
 from her.rank.fusion import FusionScorer
 from her.cache.two_tier import TwoTierCache
+# Note: Do NOT import HERPipeline here to avoid circular imports.
+
+
+class PipelineConfig:
+    """Legacy-friendly configuration shim.
+
+    Accepts arbitrary keyword options used by legacy tests. The modern pipeline
+    does not rely on these flags directly; they are stored for compatibility.
+    """
+
+    def __init__(self, **options: Any) -> None:
+        self.__dict__.update(options)
+
+# Legacy alias export so tests can `from her.pipeline import HERPipeline`
+from .compat import HERPipeline  # noqa: E402  (placed after class definitions)
 
 
 class HybridPipeline:

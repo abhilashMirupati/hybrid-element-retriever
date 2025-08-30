@@ -31,12 +31,15 @@ class FusionScorer:
 
     def score_elements(
         self,
+        query: Any,
         elements: List[Dict[str, Any]],
-        semantic_scores: List[float],
-        css_scores: List[float],
+        semantic_scores: Optional[List[float]] = None,
+        css_scores: Optional[List[float]] = None,
         promotions: Optional[List[float]] = None,
     ) -> List[ElementScore]:
         n = len(elements)
+        semantic_scores = semantic_scores or [0.0] * n
+        css_scores = css_scores or [0.0] * n
         promotions = promotions or [0.0] * n
         fused: List[Tuple[int, float]] = []
         for i in range(n):

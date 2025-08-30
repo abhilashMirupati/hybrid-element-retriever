@@ -31,7 +31,7 @@ from . import _resolve
 class TextEmbedder:
     """MiniLM / E5-small ONNX embedder (sentence-transformers)."""
 
-    def __init__(self, session: Optional[object] = None):
+    def __init__(self, session: Optional[object] = None, device: str = "cpu"):
         mp = _resolve.resolve_text_embedding()
         self.paths = mp
 
