@@ -1,63 +1,106 @@
-from __future__ import annotations
+import os
+import json
+import hashlib
+import pickle
+import threading
 from collections import OrderedDict
-from threading import Lock
-from typing import Generic, Optional, TypeVar
-
-K = TypeVar('K')
-V = TypeVar('V')
+from typing import Any, Optional
 
 
-class LRUCache(Generic[K, V]):
-    """Thread-safe LRU cache with hit/miss counters.
-
-    - Capacity-bounded with eviction of least-recently-used entries
-    - get promotes entry to most recently used
-    - put inserts/replaces entry and evicts when over capacity
-    - counters: hits, misses, gets, puts
+class TwoTierCache:
+    """
+    Two-tier cache with memory (LRU) and disk persistence.
+    Used for embeddings and DOM snapshots in HER.
     """
 
-    def __init__(self, capacity: int = 256) -> None:
-        if capacity <= 0:
-            raise ValueError("capacity must be positive")
-        self.capacity = int(capacity)
-        self._data: OrderedDict[K, V] = OrderedDict()
-        self._lock: Lock = Lock()
-        self.hits: int = 0
-        self.misses: int = 0
-        self.gets: int = 0
-        self.puts: int = 0
+    def __init__(self, cache_dir: str, max_memory_items: int = 1000):
+        self.cache_dir = os.path.abspath(cache_dir)
+        os.makedirs(self.cache_dir, exist_ok=True)
 
-    def get(self, key: K) -> Optional[V]:
-        """Get a value and mark as recently used."""
-        with self._lock:
-            self.gets += 1
-            if key in self._data:
-                value = self._data.pop(key)
-                self._data[key] = value
-                self.hits += 1
+        self.max_memory_items = max_memory_items
+        self.memory_cache = OrderedDict()
+        self.lock = threading.Lock()
+
+        self.hit_count = 0
+        self.miss_count = 0
+
+    def _hash_key(self, key: str) -> str:
+        return hashlib.sha256(key.encode("utf-8")).hexdigest()
+
+    def _disk_path(self, key: str) -> str:
+        return os.path.join(self.cache_dir, f"{self._hash_key(key)}.pkl")
+
+    def get_raw(self, key: str) -> Optional[Any]:
+        """
+        Direct fetch from memory or disk without triggering higher-level logic.
+        Used for cold-start detection and incremental prepopulation.
+        """
+        with self.lock:
+            if key in self.memory_cache:
+                return self.memory_cache[key]
+
+        path = self._disk_path(key)
+        if os.path.exists(path):
+            try:
+                with open(path, "rb") as f:
+                    return pickle.load(f)
+            except Exception:
+                return None
+        return None
+
+    def get(self, key: str) -> Optional[Any]:
+        """
+        Get value from cache, update stats.
+        """
+        with self.lock:
+            if key in self.memory_cache:
+                self.memory_cache.move_to_end(key)
+                self.hit_count += 1
+                return self.memory_cache[key]
+
+        path = self._disk_path(key)
+        if os.path.exists(path):
+            try:
+                with open(path, "rb") as f:
+                    value = pickle.load(f)
+                with self.lock:
+                    self.memory_cache[key] = value
+                    self.memory_cache.move_to_end(key)
+                    if len(self.memory_cache) > self.max_memory_items:
+                        self.memory_cache.popitem(last=False)
+                    self.hit_count += 1
                 return value
-            self.misses += 1
-            return None
+            except Exception:
+                pass
 
-    def put(self, key: K, value: V) -> None:
-        """Insert or update a value; evict LRU if capacity exceeded."""
-        with self._lock:
-            self.puts += 1
-            if key in self._data:
-                self._data.pop(key)
-            self._data[key] = value
-            while len(self._data) > self.capacity:
-                self._data.popitem(last=False)
+        self.miss_count += 1
+        return None
 
-    def clear(self) -> None:
-        with self._lock:
-            self._data.clear()
-            self.hits = 0
-            self.misses = 0
-            self.gets = 0
-            self.puts = 0
+    def put(self, key: str, value: Any) -> None:
+        """
+        Insert into memory and disk atomically.
+        """
+        with self.lock:
+            self.memory_cache[key] = value
+            self.memory_cache.move_to_end(key)
+            if len(self.memory_cache) > self.max_memory_items:
+                self.memory_cache.popitem(last=False)
 
-    def __len__(self) -> int:  # pragma: no cover - trivial
-        with self._lock:
-            return len(self._data)
+        path = self._disk_path(key)
+        try:
+            with open(path, "wb") as f:
+                pickle.dump(value, f)
+        except Exception:
+            pass
 
+    def stats(self) -> dict:
+        """
+        Return cache statistics.
+        """
+        with self.lock:
+            return {
+                "hits": self.hit_count,
+                "misses": self.miss_count,
+                "memory_items": len(self.memory_cache),
+                "disk_items": len(os.listdir(self.cache_dir)),
+            }
