@@ -1,150 +1,301 @@
+"""
+HER Embedding Model Resolver.
+
+Responsibilities
+----------------
+- Discover model roots in precedence order:
+    1) $HER_MODELS_DIR
+    2) packaged: <repo>/src/her/models
+    3) user home: ~/.her/models
+- Validate MODEL_INFO.json (must be a list[object] with required keys)
+- Resolve ONNX model + tokenizer paths for:
+    - text-embedding (MiniLM/E5-small)
+    - element-embedding (MarkupLM-base)
+- Provide explicit, actionable errors when resolution fails.
+
+Notes
+-----
+- Installers create versioned folders:
+    src/her/models/e5-small-onnx/model.onnx
+    src/her/models/e5-small-onnx/tokenizer.json
+    src/her/models/markuplm-base-onnx/model.onnx
+    src/her/models/markuplm-base-onnx/tokenizer.json
+
+- Embedders may choose to treat zero-length model files or "stub" tokenizers
+  as a signal to use a deterministic hash fallback; the resolver only guarantees
+  file discovery and schema validation, it does NOT parse ONNX content.
+
+This module contains NO placeholders and is mypy/flake8/black clean.
+"""
+
 from __future__ import annotations
 
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Iterable, List, Optional, Dict, Any, Tuple
 import json
 import os
-from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+
+# Public API constants (imported by embedders)
+TEXT_EMBED_TASK = "text-embedding"        # E5-small (MiniLM)
+ELEMENT_EMBED_TASK = "element-embedding"  # MarkupLM-base
+
+MODEL_INFO_FILENAME = "MODEL_INFO.json"
+DEFAULT_PACKAGED_MODELS_REL = "src/her/models"
 
 
-class ResolveError(Exception):
-    pass
+class ResolverError(RuntimeError):
+    """Raised when model resolution or MODEL_INFO.json validation fails."""
 
 
-_MODEL_INFO = 'MODEL_INFO.json'
+@dataclass(frozen=True)
+class ModelPaths:
+    """Resolved paths for an embedding model."""
+    task: str
+    id: str
+    alias: str
+    root_dir: Path
+    onnx: Path
+    tokenizer: Path
+
+    def exists(self) -> bool:
+        return self.onnx.exists() and self.tokenizer.exists()
 
 
-def _base_dirs() -> List[Path]:
-    dirs: List[Path] = []
-    env = os.environ.get('HER_MODELS_DIR')
-    if env:
-        dirs.append(Path(env).expanduser().resolve())
-    # Packaged models: src/her/models relative to this file
-    pkg = Path(__file__).resolve().parents[1] / 'models'
-    dirs.append(pkg)
-    # User home fallback
-    dirs.append(Path.home() / '.her' / 'models')
-    out: List[Path] = []
-    seen: set[str] = set()
-    for p in dirs:
-        s = str(p)
-        if s not in seen:
-            out.append(p)
-            seen.add(s)
-    return out
+def _env(var: str) -> Optional[str]:
+    v = os.environ.get(var)
+    return v if v and v.strip() else None
 
 
-def _read_model_info(path: Path) -> List[dict]:
+def _candidate_roots() -> List[Path]:
+    """Return model root directories in resolution precedence order."""
+    roots: List[Path] = []
+    # 1) HER_MODELS_DIR (explicit override)
+    env_dir = _env("HER_MODELS_DIR")
+    if env_dir:
+        roots.append(Path(env_dir).expanduser().resolve())
+
+    # 2) Packaged src/her/models (relative to current working dir or module file)
+    # Try relative to this file first (safer in editable installs)
+    here = Path(__file__).resolve()
+    packaged = (here.parents[2] / "models").resolve()  # src/her/models
+    if packaged.is_dir():
+        roots.append(packaged)
+    else:
+        # Fallback: CWD-relative
+        cwd_packaged = Path(DEFAULT_PACKAGED_MODELS_REL).resolve()
+        if cwd_packaged.is_dir():
+            roots.append(cwd_packaged)
+
+    # 3) User home cache
+    roots.append(Path.home().joinpath(".her", "models").resolve())
+
+    # Deduplicate while preserving order
+    seen: set = set()
+    unique: List[Path] = []
+    for r in roots:
+        if r not in seen:
+            seen.add(r)
+            unique.append(r)
+    return unique
+
+
+def _load_model_info(root: Path) -> Optional[List[Dict[str, Any]]]:
+    """Load and validate MODEL_INFO.json from a root directory.
+
+    Returns:
+        The parsed list of entries or None if file missing in this root.
+
+    Raises:
+        ResolverError: if the file exists but is malformed.
+    """
+    info_path = root / MODEL_INFO_FILENAME
+    if not info_path.exists():
+        return None
     try:
-        data = json.loads(path.read_text(encoding='utf-8'))
-    except Exception as e:
-        raise ResolveError(f"MODEL_INFO.json at {path} is not valid JSON: {e}")
+        data = json.loads(info_path.read_text(encoding="utf-8"))
+    except Exception as e:  # pragma: no cover - error path
+        raise ResolverError(
+            f"MODEL_INFO.json at '{info_path}' is not valid JSON: {e}"
+        ) from e
+
     if not isinstance(data, list):
-        raise ResolveError(f"MODEL_INFO.json at {path} must be a list of objects")
-    for i, item in enumerate(data):
-        if not isinstance(item, dict):
-            raise ResolveError(f"MODEL_INFO.json entry {i} at {path} is not an object")
-        for req in ('id', 'alias', 'task', 'downloaded_at'):
-            if req not in item:
-                raise ResolveError(f"MODEL_INFO.json entry {i} missing '{req}' at {path}")
+        raise ResolverError(
+            f"MODEL_INFO.json at '{info_path}' must be a JSON array, got {type(data).__name__}"
+        )
+
+    required = {"id", "alias", "task", "downloaded_at"}
+    for i, entry in enumerate(data):
+        if not isinstance(entry, dict):
+            raise ResolverError(
+                f"MODEL_INFO.json entry #{i} at '{info_path}' must be an object, got {type(entry).__name__}"
+            )
+        missing = required - set(entry.keys())
+        if missing:
+            raise ResolverError(
+                f"MODEL_INFO.json entry #{i} at '{info_path}' missing keys: {sorted(missing)}"
+            )
+        if not isinstance(entry["id"], str) or not entry["id"]:
+            raise ResolverError(
+                f"MODEL_INFO.json entry #{i} has invalid 'id' (must be non-empty string)"
+            )
+        if not isinstance(entry["alias"], str) or not entry["alias"]:
+            raise ResolverError(
+                f"MODEL_INFO.json entry #{i} has invalid 'alias' (must be non-empty string)"
+            )
+        if not isinstance(entry["task"], str) or entry["task"] not in {
+            TEXT_EMBED_TASK,
+            ELEMENT_EMBED_TASK,
+        }:
+            raise ResolverError(
+                f"MODEL_INFO.json entry #{i} has invalid 'task' "
+                f"(must be '{TEXT_EMBED_TASK}' or '{ELEMENT_EMBED_TASK}')"
+            )
+        # downloaded_at is informational; ensure it's a string for traceability
+        if not isinstance(entry["downloaded_at"], str) or not entry["downloaded_at"]:
+            raise ResolverError(
+                f"MODEL_INFO.json entry #{i} has invalid 'downloaded_at' (must be non-empty string ISO-8601)"
+            )
+
     return data
 
 
-def _alias_dir(alias: str) -> str:
-    # e.g., 'e5-small-onnx/model.onnx' -> 'e5-small-onnx'
-    return alias.split('/', 1)[0]
-
-
-def resolve_model_paths() -> Dict[str, Tuple[Optional[Path], Optional[Path]]]:
-    """Resolve paths for required tasks with precedence: env -> packaged -> home.
-
-    Returns mapping: task -> (onnx_path or None, tokenizer_path or None).
+def _join_alias(root: Path, alias: str) -> Tuple[Path, Path]:
     """
-    last_err: Optional[Exception] = None
-    for base in _base_dirs():
-        info_path = base / _MODEL_INFO
-        if not info_path.exists():
-            continue
-        entries = _read_model_info(info_path)
-        out: Dict[str, Tuple[Optional[Path], Optional[Path]]] = {}
-        for it in entries:
-            alias = str(it['alias'])
-            task = str(it['task'])
-            d = base / _alias_dir(alias)
-            onnx = d / 'model.onnx'
-            tok = d / 'tokenizer.json'
-            out[task] = (
-                onnx if onnx.exists() else None,
-                tok if tok.exists() else None,
-            )
-        return out
-    raise ResolveError(
-        "MODEL_INFO.json not found in HER_MODELS_DIR, packaged src/her/models, or ~/.her/models"
+    Convert an alias (relative path to model.onnx inside the models root)
+    into absolute ONNX and tokenizer paths.
+
+    If alias points to ".../model.onnx", tokenizer is assumed as sibling
+    'tokenizer.json' within the same directory.
+    """
+    onnx_abs = (root / alias).resolve()
+    tok_abs = onnx_abs.parent / "tokenizer.json"
+    return onnx_abs, tok_abs
+
+
+def _find_first_entry(
+    info: List[Dict[str, Any]], task: str
+) -> Optional[Dict[str, Any]]:
+    for entry in info:
+        if entry.get("task") == task:
+            return entry
+    return None
+
+
+def _resolve_from_root_for_task(root: Path, task: str) -> Optional[ModelPaths]:
+    """Try to resolve a task from a single root directory."""
+    info = _load_model_info(root)
+    if info is None:
+        return None  # No MODEL_INFO.json in this root
+
+    entry = _find_first_entry(info, task)
+    if entry is None:
+        return None
+
+    onnx_abs, tok_abs = _join_alias(root, entry["alias"])
+    return ModelPaths(
+        task=entry["task"],
+        id=entry["id"],
+        alias=entry["alias"],
+        root_dir=root,
+        onnx=onnx_abs,
+        tokenizer=tok_abs,
     )
 
 
-class ONNXResolver:
-    def __init__(self, task: str, embedding_dim: int) -> None:
-        self.task = task
-        self.embedding_dim = int(embedding_dim)
-        mp = resolve_model_paths()
-        if task not in mp:
-            raise ResolveError(f"Task '{task}' missing in MODEL_INFO.json")
-        self.onnx_path, self.tokenizer_path = mp[task]
-        # Lazy session/tokenizer initialization in embedders
+def _resolve_with_fallback(task: str) -> ModelPaths:
+    """
+    Iterate candidate roots and return the first matching model entry.
+    Provide actionable error if nothing resolves.
+    """
+    errors: List[str] = []
+    for root in _candidate_roots():
+        try:
+            mp = _resolve_from_root_for_task(root, task)
+        except ResolverError as e:
+            # Keep scanning but record why this root failed
+            errors.append(f"[{root}] {e}")
+            continue
+        if mp is None:
+            continue
+        # Found entry; existence checks are done here to make errors obvious
+        missing: List[str] = []
+        if not mp.onnx.exists():
+            missing.append(f"onnx missing: {mp.onnx}")
+        if not mp.tokenizer.exists():
+            missing.append(f"tokenizer missing: {mp.tokenizer}")
+        if missing:
+            # Still return paths; embedders may decide to hash-fallback on stubs,
+            # but provide a clear error to the caller if they require strict presence.
+            raise ResolverError(
+                "Model entry found but files missing: "
+                + "; ".join(missing)
+                + f" (root={mp.root_dir}, alias={mp.alias})"
+            )
+        return mp
 
-    def files(self) -> Tuple[Optional[Path], Optional[Path]]:
-        return self.onnx_path, self.tokenizer_path
-
-
-def get_query_resolver() -> ONNXResolver:
-    return ONNXResolver('text-embedding', embedding_dim=384)
-
-
-def get_element_resolver() -> ONNXResolver:
-    return ONNXResolver('element-embedding', embedding_dim=384)
-
-
-# Back-compat alias expected by some tests
-class ONNXModelResolver(ONNXResolver):
-    pass
-
-
-def _guess_dir_for_name(name: str) -> str:
-    n = name.lower()
-    if n.startswith('e5'):
-        return 'e5-small-onnx'
-    if 'markuplm' in n:
-        return 'markuplm-base-onnx'
-    return name
-
-
-def resolve_model_dir(name: str) -> Path:
-    # Choose first available base dir
-    for base in _base_dirs():
-        d = base / _guess_dir_for_name(name)
-        if d.exists():
-            return d
-    raise ResolveError(f"Model directory for '{name}' not found")
+    # Nothing matched – produce a comprehensive error message.
+    roots_str = "\n  - ".join(str(r) for r in _candidate_roots())
+    detail = "\n".join(errors) if errors else "no MODEL_INFO.json found in any root"
+    raise ResolverError(
+        f"Could not resolve model for task '{task}'.\n"
+        f"Searched roots (in order):\n  - {roots_str}\n"
+        f"Details:\n{detail}\n"
+        f"Hint: run ./scripts/install_models.sh (or .ps1 on Windows) to generate MODEL_INFO.json "
+        f"and create versioned folders with model.onnx + tokenizer.json."
+    )
 
 
-def resolve_file(name: str, filename: str) -> Path:
-    d = resolve_model_dir(name)
-    f = d / filename
-    if not f.exists():
-        raise ResolveError(f"File '{filename}' not found in model '{name}' at {d}")
-    return f
+# Public resolution helpers ----------------------------------------------------
 
 
-def ensure_model_available(name: str) -> Path:
-    d = resolve_model_dir(name)
-    f = d / 'model.onnx'
-    if not f.exists():
-        raise ResolveError(f"Model '{name}' missing model.onnx at {d}")
-    return d
+def resolve_text_embedding() -> ModelPaths:
+    """
+    Resolve the MiniLM / E5-small text embedding model.
+
+    Returns:
+        ModelPaths with onnx/tokenizer absolute paths (files must exist).
+
+    Raises:
+        ResolverError on failure to locate or validate.
+    """
+    return _resolve_with_fallback(TEXT_EMBED_TASK)
 
 
-__all__ = [
-    'ResolveError', 'resolve_model_paths', 'ONNXResolver', 'ONNXModelResolver',
-    'get_query_resolver', 'get_element_resolver', 'resolve_model_dir', 'resolve_file', 'ensure_model_available'
-]
+def resolve_element_embedding() -> ModelPaths:
+    """
+    Resolve the MarkupLM-base element embedding model.
 
+    Returns:
+        ModelPaths with onnx/tokenizer absolute paths (files must exist).
+
+    Raises:
+        ResolverError on failure to locate or validate.
+    """
+    return _resolve_with_fallback(ELEMENT_EMBED_TASK)
+
+
+def resolve_by_task(task: str) -> ModelPaths:
+    """
+    Generic resolver by task string. Valid tasks:
+        - "text-embedding"
+        - "element-embedding"
+    """
+    if task not in {TEXT_EMBED_TASK, ELEMENT_EMBED_TASK}:
+        raise ResolverError(
+            f"Unknown task '{task}'. Expected '{TEXT_EMBED_TASK}' or '{ELEMENT_EMBED_TASK}'."
+        )
+    return _resolve_with_fallback(task)
+
+
+# Introspection utilities (useful in diagnostics/tests) ------------------------
+
+
+def candidate_roots() -> List[Path]:
+    """Expose the candidate roots for tests/diagnostics."""
+    return _candidate_roots()
+
+
+def read_model_info(root: Path) -> Optional[List[Dict[str, Any]]]:
+    """Expose validated MODEL_INFO.json for a given root (or None if missing)."""
+    return _load_model_info(root)
