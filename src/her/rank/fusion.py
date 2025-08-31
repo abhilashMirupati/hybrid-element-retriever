@@ -65,14 +65,14 @@ class FusionScorer:
                 if 'email' in q and attrs.get('type') == 'email':
                     score_sem += 0.6
                 if 'password' in q and attrs.get('type') == 'password':
-                    score_sem += 0.6
+                    score_sem += 0.8
                 if 'username' in q and attrs.get('name') == 'username':
                     score_sem += 0.6
                 # If query mentions select laptop, prefer non-phone tokens
                 if 'laptop' in q and ('laptop' in text or 'macbook' in text or 'surface' in text):
                     score_sem += 0.6
                 if 'add to cart' in q and 'add to cart' in text:
-                    score_sem += 0.8
+                    score_sem += 0.9
                 if 'phone' in q and any(k in text for k in ['phone','iphone','galaxy']):
                     score_sem += 0.5
                 if 'laptop' in q and any(k in text for k in ['laptop','macbook','surface','pro']):

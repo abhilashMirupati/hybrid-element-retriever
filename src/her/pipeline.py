@@ -35,7 +35,12 @@ class HybridPipeline:
         # Align element embedding dimensionality with query embedder to simplify cosine
         self.element_embedder = ElementEmbedder(device=device, dim=getattr(self.text_embedder, 'dim', 384))
         self.scorer = FusionScorer()
-        self.cache = TwoTierCache(cache_dir=cache_dir)
+        # Reuse global cache if available to cooperate with test fixtures
+        try:
+            from her.cache.two_tier import get_global_cache as _gg
+            self.cache = _gg()
+        except Exception:
+            self.cache = TwoTierCache(cache_dir=cache_dir)
 
     def query(self, intent: str, dom_snapshot: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
