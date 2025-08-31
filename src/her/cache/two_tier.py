@@ -467,9 +467,14 @@ class TwoTierCache:
     def size(self) -> int:
         """Total number of entries across memory and disk (approx)."""
         try:
-            return int(self.memory_cache.stats().get("entries", 0))
+            mem = int(self.memory_cache.stats().get("entries", 0))
         except Exception:
-            return 0
+            mem = 0
+        try:
+            disk_entries = int(self.disk_cache.stats().get("entries", 0))
+        except Exception:
+            disk_entries = 0
+        return mem + disk_entries
 
     def compute_key(self, *args, **kwargs) -> str:
         """Compute cache key from arguments.

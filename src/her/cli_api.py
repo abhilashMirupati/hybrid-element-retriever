@@ -280,8 +280,10 @@ class HybridElementRetrieverClient:
             phrase = sanitized_phrase
             logger.info(f"Query: '{phrase}' at {url or 'current page'}")
             
-            # Ensure browser
-            page = self._ensure_browser()
+            # Ensure browser only if we need navigation or already have a browser
+            page = None
+            if url or self.browser is not None:
+                page = self._ensure_browser()
             
             # Navigate if URL provided
             if url and page:
@@ -299,11 +301,14 @@ class HybridElementRetrieverClient:
                     except Exception as e:
                         logger.debug(f"Navigation failed: {e}")
             
-            # Get descriptors
-            descriptors, dom_hash = self.session_manager.index_page(
-                self.current_session_id, 
-                page
-            ) if page else ([], "0"*64)
+            # Get descriptors (allow operation without a live page for tests)
+            if page:
+                descriptors, dom_hash = self.session_manager.index_page(
+                    self.current_session_id,
+                    page,
+                )
+            else:
+                descriptors, dom_hash = ([], "0" * 64)
             
             # Validate DOM size
             valid_dom, dom_warning = DOMValidator.validate_dom_size(descriptors)
@@ -315,12 +320,27 @@ class HybridElementRetrieverClient:
             
             # Use pipeline if enabled
             if self.enable_pipeline and self.pipeline:
-                result = self.pipeline.process(
-                    query=phrase,
-                    descriptors=descriptors,
-                    page=page,
-                    session_id=self.current_session_id
-                )
+                # Support both legacy compat signature (dom=...) and newer
+                # experimental signatures. Prefer the stable compat surface.
+                try:
+                    result = self.pipeline.process(
+                        query=phrase,
+                        dom={"elements": descriptors},
+                        page=page,
+                        session_id=self.current_session_id,
+                    )
+                except TypeError:
+                    # Fallback to descriptors kwarg if present in custom impls
+                    try:
+                        result = self.pipeline.process(
+                            query=phrase,
+                            descriptors=descriptors,
+                            page=page,
+                            session_id=self.current_session_id,
+                        )
+                    except TypeError:
+                        # Ultimate fallback: positional minimal call
+                        result = self.pipeline.process(phrase, {"elements": descriptors})
                 
                 # Check for unique XPath
                 if result['xpath']:
@@ -603,9 +623,14 @@ class HybridElementRetrieverClient:
                 selector = locators[0]
             else:
                 for loc in locators:
-                    if page and verify_locator(loc, desc, page):
-                        selector = loc
-                        break
+                    if page:
+                        try:
+                            ok, _, _ = self.verifier.verify(loc, page)
+                        except Exception:
+                            ok = False
+                        if ok:
+                            selector = loc
+                            break
             
             if selector:
                 results.append({

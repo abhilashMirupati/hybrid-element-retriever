@@ -1,32 +1,52 @@
 Hybrid Element Retriever (HER)
 
-Quick start (Phase 0 installability):
+Manual Tester Quickstart
 
-1. Install in editable mode with dev extras:
+1) Create and activate a virtual environment (recommended)
 
+   macOS/Linux:
    ```bash
-   pip install -e .[dev]
+   python3 -m venv .venv && source .venv/bin/activate
    ```
 
-2. Install Playwright Chromium browser:
+   Windows (PowerShell):
+   ```powershell
+   py -m venv .venv; .venv\\Scripts\\Activate.ps1
+   ```
+
+   If you see an "externally-managed-environment" error from pip, use a venv as shown above.
+
+2) Install dependencies from source
+
+   ```bash
+   pip install -e ".[dev]"
+   ```
+
+3) Install the Playwright Chromium browser (one-time)
 
    ```bash
    python -m playwright install chromium
    ```
 
-3. Install or stub models:
+4) Install or stub the models (works offline too)
 
    ```bash
    ./scripts/install_models.sh
    ```
 
-   On Windows PowerShell:
-
+   Windows (PowerShell):
    ```powershell
    ./scripts/install_models.ps1
    ```
 
-4. Verify sources compile:
+5) Quick CLI check
+
+   ```bash
+   her version
+   her query "Find the login button" --url https://example.com
+   ```
+
+6) Optional: verify sources compile
 
    ```bash
    python -m compileall src
@@ -51,7 +71,7 @@ Embedders will fall back to a deterministic hashing projection so the system rem
 
 [![CI](https://github.com/yourusername/her/actions/workflows/ci.yml/badge.svg)](https://github.com/yourusername/her/actions/workflows/ci.yml)
 [![Coverage](https://codecov.io/gh/yourusername/her/branch/main/graph/badge.svg)](https://codecov.io/gh/yourusername/her)
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 Production-ready natural language element location for web automation. HER combines semantic understanding with robust XPath generation to reliably find web elements using plain English descriptions.
