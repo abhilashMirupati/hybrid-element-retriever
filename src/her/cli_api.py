@@ -618,9 +618,14 @@ class HybridElementRetrieverClient:
                 selector = locators[0]
             else:
                 for loc in locators:
-                    if page and verify_locator(loc, desc, page):
-                        selector = loc
-                        break
+                    if page:
+                        try:
+                            ok, _, _ = self.verifier.verify(loc, page)
+                        except Exception:
+                            ok = False
+                        if ok:
+                            selector = loc
+                            break
             
             if selector:
                 results.append({
