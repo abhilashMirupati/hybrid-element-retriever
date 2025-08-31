@@ -108,6 +108,10 @@ class ElementEmbedder:
     def embed(self, element: Dict[str, Any]) -> np.ndarray:
         return self.batch_encode([element])[0]
 
+    # Compatibility alias used by enhanced session manager
+    def embed_batch(self, elements: List[Dict[str, Any]]) -> np.ndarray:
+        return self.batch_encode(elements)
+
     def info(self) -> Dict[str, Any]:
         mp = self._paths
         return {

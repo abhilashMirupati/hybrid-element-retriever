@@ -82,11 +82,13 @@ class FusionScorer:
                 # clickable preference
                 if tag in {'button','a','input'}:
                     score_css += 0.2
-                # penalties
+                # penalties (apply to both semantic and css so disabled/hidden are ranked lower)
                 if attrs.get('disabled') in (True, 'true', 'True'):
                     score_sem -= 0.8
+                    score_css -= 0.4
                 if el.get('is_visible') is False:
                     score_sem -= 0.4
+                    score_css -= 0.2
                 sem.append(min(1.0, score_sem))
                 css.append(min(1.0, score_css))
             semantic_scores = sem if semantic_scores is None else semantic_scores
@@ -96,30 +98,24 @@ class FusionScorer:
             css_scores = list(css_scores)
 
         promotions = promotions or [0.0] * n
-        fused: List[Tuple[int, float]] = []
+        # Compute fused scores without reordering so indices map to original elements
+        raw_scores: List[float] = []
         for i in range(n):
-            # Clamp inputs to [0,1] for stability
             se = max(0.0, min(1.0, float(semantic_scores[i])))
             cs = max(0.0, min(1.0, float(css_scores[i])))
             pr = max(0.0, min(1.0, float(promotions[i])))
-            s = self.fuse(se, cs, pr)
-            fused.append((i, s))
-        # Stable tie-breakers: score desc, xpath asc
-        def tie_xpath(idx: int) -> str:
-            return str(elements[idx].get('xpath') or '')
-        fused.sort(key=lambda t: (-t[1], tie_xpath(t[0])))
-        if fused:
-            scores_only = [sc for _, sc in fused]
-            mx = max(scores_only); mn = min(scores_only); rng = (mx - mn) if mx != mn else 1.0
-            normalized = [(i, (sc - mn) / rng) for i, sc in fused]
+            raw_scores.append(self.fuse(se, cs, pr))
+        if raw_scores:
+            mx = max(raw_scores); mn = min(raw_scores); rng = (mx - mn) if mx != mn else 1.0
+            norm_scores = [float((s - mn) / rng) for s in raw_scores]
         else:
-            normalized = []
+            norm_scores = []
         out: List[ElementScore] = []
-        for i, sc in normalized:
+        for i in range(n):
             out.append({
                 'element': elements[i],
                 'xpath': str(elements[i].get('xpath') or ''),
-                'score': float(sc),
+                'score': float(norm_scores[i] if i < len(norm_scores) else 0.0),
                 'meta': {
                     'semantic': float(semantic_scores[i]),
                     'css': float(css_scores[i]),
