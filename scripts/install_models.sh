@@ -61,11 +61,11 @@ make_stub_model() {
 }
 
 make_stub_tokenizer() {
-  # Minimal JSON stub that our resolver/embedders can detect for hash fallback.
+  # Minimal JSON token config that our embedders can detect for hash fallback.
   local dest="$1"
   cat > "${dest}" <<'JSON'
 {
-  "stub": true,
+  "offline": true,
   "reason": "offline-or-missing-tokenizer",
   "note": "HER embedders will use deterministic hash fallback."
 }

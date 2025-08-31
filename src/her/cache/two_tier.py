@@ -116,6 +116,11 @@ class LRUCache:
             self.hits = 0
             self.misses = 0
 
+    # Enable len() in tests
+    def __len__(self) -> int:  # pragma: no cover - trivial
+        with self.lock:
+            return len(self.cache)
+
     def stats(self) -> Dict[str, Any]:
         """Get cache statistics."""
         with self.lock:
@@ -342,6 +347,8 @@ class TwoTierCache:
 
         self.memory_cache = LRUCache(max_size=effective_memory)
         self.disk_cache = SQLiteCache(db_path=effective_db_path, max_size_mb=disk_size_mb)
+        # Expose for tests
+        self.max_memory_items = effective_memory
         # Register as global so other components reuse this instance (test compatibility)
         try:
             global _global_cache
@@ -371,6 +378,24 @@ class TwoTierCache:
             return value
 
         return None
+
+    def get_raw(self, key: str) -> Dict[str, Any]:
+        """Get value and indicate which tier served it.
+
+        Returns:
+            {"value": Any|None, "source": "memory"|"disk"|None}
+        """
+        # Memory
+        value = self.memory_cache.get(key)
+        if value is not None:
+            return {"value": value, "source": "memory"}
+        # Disk
+        value = self.disk_cache.get(key)
+        if value is not None:
+            # Promote to memory for faster subsequent access
+            self.memory_cache.put(key, value)
+            return {"value": value, "source": "disk"}
+        return {"value": None, "source": None}
 
     def set(self, key: str, value: Any, metadata: Optional[Dict[str, Any]] = None) -> None:
         """Store value in cache (alias for put)."""
@@ -429,7 +454,15 @@ class TwoTierCache:
 
     def stats(self) -> Dict[str, Any]:
         """Get combined cache statistics."""
-        return {"memory": self.memory_cache.stats(), "disk": self.disk_cache.stats()}
+        mem = self.memory_cache.stats()
+        disk = self.disk_cache.stats()
+        return {
+            "memory": mem,
+            "disk": disk,
+            "hits_total": int(mem.get("hits", 0)) + int(disk.get("total_hits", 0)),
+            "mem_items": int(mem.get("entries", 0)),
+            "disk_items": int(disk.get("entries", 0)),
+        }
 
     def size(self) -> int:
         """Total number of entries across memory and disk (approx)."""
