@@ -315,12 +315,27 @@ class HybridElementRetrieverClient:
             
             # Use pipeline if enabled
             if self.enable_pipeline and self.pipeline:
-                result = self.pipeline.process(
-                    query=phrase,
-                    descriptors=descriptors,
-                    page=page,
-                    session_id=self.current_session_id
-                )
+                # Support both legacy compat signature (dom=...) and newer
+                # experimental signatures. Prefer the stable compat surface.
+                try:
+                    result = self.pipeline.process(
+                        query=phrase,
+                        dom={"elements": descriptors},
+                        page=page,
+                        session_id=self.current_session_id,
+                    )
+                except TypeError:
+                    # Fallback to descriptors kwarg if present in custom impls
+                    try:
+                        result = self.pipeline.process(
+                            query=phrase,
+                            descriptors=descriptors,
+                            page=page,
+                            session_id=self.current_session_id,
+                        )
+                    except TypeError:
+                        # Ultimate fallback: positional minimal call
+                        result = self.pipeline.process(phrase, {"elements": descriptors})
                 
                 # Check for unique XPath
                 if result['xpath']:
