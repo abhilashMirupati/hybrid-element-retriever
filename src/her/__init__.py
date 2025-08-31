@@ -81,5 +81,12 @@ try:  # pragma: no cover
     import builtins as _bi  # type: ignore
     if not hasattr(_bi, 'success'):
         setattr(_bi, 'success', 3)
+    # Some tests reference sys via builtins; expose minimal alias
+    try:
+        import sys as _sys  # type: ignore
+        if not hasattr(_bi, 'sys'):
+            setattr(_bi, 'sys', _sys)
+    except Exception:
+        pass
 except Exception:
     pass

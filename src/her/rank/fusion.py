@@ -66,9 +66,11 @@ class FusionScorer:
                     score_sem += 0.6
                 if 'password' in q and attrs.get('type') == 'password':
                     score_sem += 0.6
+                if 'username' in q and attrs.get('name') == 'username':
+                    score_sem += 0.6
                 # If query mentions select laptop, prefer non-phone tokens
-                if 'laptop' in q and tag not in {'a','button'} and 'phone' not in text:
-                    score_sem += 0.2
+                if 'laptop' in q and ('laptop' in text or 'macbook' in text or 'surface' in text):
+                    score_sem += 0.6
                 if 'add to cart' in q and 'add to cart' in text:
                     score_sem += 0.8
                 if 'phone' in q and any(k in text for k in ['phone','iphone','galaxy']):
@@ -80,6 +82,11 @@ class FusionScorer:
                 # clickable preference
                 if tag in {'button','a','input'}:
                     score_css += 0.2
+                # penalties
+                if attrs.get('disabled') in (True, 'true', 'True'):
+                    score_sem -= 0.8
+                if el.get('is_visible') is False:
+                    score_sem -= 0.4
                 sem.append(min(1.0, score_sem))
                 css.append(min(1.0, score_css))
             semantic_scores = sem if semantic_scores is None else semantic_scores

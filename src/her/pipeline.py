@@ -56,19 +56,38 @@ class HybridPipeline:
         elements = []
         cache_hits = 0
         cache_misses = 0
+        batch: List[Dict[str, Any]] = []
         for el in dom_snapshot:
+            # Visibility filtering for performance
+            if el.get('is_visible') is False:
+                continue
             el_hash = self._hash_el(el)
             raw = self.cache.get_raw(el_hash)
             cached = raw.get("value")
             if cached is not None:
                 emb = cached
                 cache_hits += 1
+                embeddings.append(emb)
+                elements.append(el)
             else:
-                emb = self.element_embedder.batch_encode([el])[0]
-                self.cache.put(el_hash, emb)
+                batch.append((el, el_hash))
+                # Flush batch at size 100
+                if len(batch) >= 100:
+                    enc = self.element_embedder.batch_encode([b[0] for b in batch])
+                    for (e, h), emb in zip(batch, enc):
+                        self.cache.put(h, emb)
+                        embeddings.append(emb)
+                        elements.append(e)
+                        cache_misses += 1
+                    batch = []
+        # Flush remaining batch
+        if batch:
+            enc = self.element_embedder.batch_encode([b[0] for b in batch])
+            for (e, h), emb in zip(batch, enc):
+                self.cache.put(h, emb)
+                embeddings.append(emb)
+                elements.append(e)
                 cache_misses += 1
-            embeddings.append(emb)
-            elements.append(el)
 
         # --- 3. Retrieval scoring
         # Compute simple cosine similarities as semantic proxy
