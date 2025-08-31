@@ -280,8 +280,10 @@ class HybridElementRetrieverClient:
             phrase = sanitized_phrase
             logger.info(f"Query: '{phrase}' at {url or 'current page'}")
             
-            # Ensure browser
-            page = self._ensure_browser()
+            # Ensure browser only if we need navigation or already have a browser
+            page = None
+            if url or self.browser is not None:
+                page = self._ensure_browser()
             
             # Navigate if URL provided
             if url and page:
@@ -299,11 +301,14 @@ class HybridElementRetrieverClient:
                     except Exception as e:
                         logger.debug(f"Navigation failed: {e}")
             
-            # Get descriptors
-            descriptors, dom_hash = self.session_manager.index_page(
-                self.current_session_id, 
-                page
-            ) if page else ([], "0"*64)
+            # Get descriptors (allow operation without a live page for tests)
+            if page:
+                descriptors, dom_hash = self.session_manager.index_page(
+                    self.current_session_id,
+                    page,
+                )
+            else:
+                descriptors, dom_hash = ([], "0" * 64)
             
             # Validate DOM size
             valid_dom, dom_warning = DOMValidator.validate_dom_size(descriptors)
