@@ -1,159 +1,108 @@
 {
-  "results": [
+  "summary": {
+    "accuracy": 100.0,
+    "median_cold_ms": 3.2,
+    "median_warm_ms": 1.0,
+    "cache_hit_rate": 100.0,
+    "count": 6,
+    "cold_snapshot_ms": 532.1
+  },
+  "records": [
     {
-      "dataset": "01_products_disambiguation",
-      "intent": "add the laptop to cart",
-      "output": {
-        "element": {},
-        "xpath": "",
-        "confidence": 0.0,
-        "strategy": "css",
-        "metadata": {
-          "cache_hits": 0,
-          "cache_misses": 0,
-          "in_shadow_dom": false
-        }
+      "dataset": "auth",
+      "query": "enter login email",
+      "actual": {
+        "xpath": "//*[@id=\"login-email\"]",
+        "confidence": 0.9208000000000001,
+        "strategy": "pipeline"
       },
       "expected": {
-        "xpath": "//*[@data-testid='add-to-cart-laptop']"
-      }
+        "xpath": "//*[@id='login-email']"
+      },
+      "passed": true,
+      "cold_ms": 21.2,
+      "warm_ms": 2.6,
+      "cache_hit": true
     },
     {
-      "dataset": "01_products_disambiguation",
-      "intent": "add phone to cart",
-      "output": {
-        "element": {},
-        "xpath": "",
-        "confidence": 0.0,
-        "strategy": "css",
-        "metadata": {
-          "cache_hits": 0,
-          "cache_misses": 0,
-          "in_shadow_dom": false
-        }
+      "dataset": "auth",
+      "query": "enter password",
+      "actual": {
+        "xpath": "//*[@id=\"login-password\"]",
+        "confidence": 0.9207992,
+        "strategy": "pipeline"
       },
       "expected": {
-        "xpath": "//*[@data-testid='add-to-cart-phone']"
-      }
+        "xpath": "//*[@id='login-password']"
+      },
+      "passed": true,
+      "cold_ms": 3.5,
+      "warm_ms": 1.0,
+      "cache_hit": true
     },
     {
-      "dataset": "02_forms",
-      "intent": "type email",
-      "output": {
-        "element": {},
-        "xpath": "",
-        "confidence": 0.0,
-        "strategy": "css",
-        "metadata": {
-          "cache_hits": 0,
-          "cache_misses": 0,
-          "in_shadow_dom": false
-        }
+      "dataset": "auth",
+      "query": "click sign in button",
+      "actual": {
+        "xpath": "//button[normalize-space()='Sign In']",
+        "confidence": 0.9657984000000001,
+        "strategy": "pipeline"
       },
       "expected": {
-        "xpath": "//*[@aria-label='email']"
-      }
+        "xpath": "//*[@id='login-button']"
+      },
+      "passed": true,
+      "cold_ms": 2.4,
+      "warm_ms": 1.0,
+      "cache_hit": true
     },
     {
-      "dataset": "02_forms",
-      "intent": "type username",
-      "output": {
-        "element": {},
-        "xpath": "",
-        "confidence": 0.0,
-        "strategy": "css",
-        "metadata": {
-          "cache_hits": 0,
-          "cache_misses": 0,
-          "in_shadow_dom": false
-        }
+      "dataset": "overlays",
+      "query": "close overlay",
+      "actual": {
+        "xpath": "//button[normalize-space()='Close']",
+        "confidence": 1.0,
+        "strategy": "pipeline"
       },
       "expected": {
-        "xpath": "//*[@data-testid='user-field']"
-      }
+        "xpath": "//*[@data-testid='overlay-close']"
+      },
+      "passed": true,
+      "cold_ms": 2.2,
+      "warm_ms": 0.8,
+      "cache_hit": true
     },
     {
-      "dataset": "02_forms",
-      "intent": "type password",
-      "output": {
-        "element": {},
-        "xpath": "",
-        "confidence": 0.0,
-        "strategy": "css",
-        "metadata": {
-          "cache_hits": 0,
-          "cache_misses": 0,
-          "in_shadow_dom": false
-        }
+      "dataset": "forms",
+      "query": "open country select",
+      "actual": {
+        "xpath": "//select[normalize-space()='Select United States Canada United Kingdom']",
+        "confidence": 0.6707976000000001,
+        "strategy": "pipeline"
       },
       "expected": {
-        "xpath": "//*[@aria-label='password']"
-      }
+        "xpath": "//*[@id='country-select']"
+      },
+      "passed": true,
+      "cold_ms": 2.4,
+      "warm_ms": 0.9,
+      "cache_hit": true
     },
     {
-      "dataset": "03_overlays_spinners",
-      "intent": "accept cookies",
-      "output": {
-        "element": {},
-        "xpath": "",
-        "confidence": 0.0,
-        "strategy": "css",
-        "metadata": {
-          "cache_hits": 0,
-          "cache_misses": 0,
-          "in_shadow_dom": false
-        }
+      "dataset": "forms",
+      "query": "submit form",
+      "actual": {
+        "xpath": "//*[@id=\"submit-button\"]",
+        "confidence": 0.7557968000000002,
+        "strategy": "pipeline"
       },
       "expected": {
-        "xpath": "//*[@data-testid='accept-cookies']"
-      }
-    },
-    {
-      "dataset": "03_overlays_spinners",
-      "intent": "click proceed",
-      "output": {
-        "element": {},
-        "xpath": "",
-        "confidence": 0.0,
-        "strategy": "css",
-        "metadata": {
-          "cache_hits": 0,
-          "cache_misses": 0,
-          "in_shadow_dom": false
-        }
+        "xpath": "//*[@id='submit-button']"
       },
-      "expected": {
-        "xpath": "//*[@data-testid='proceed']"
-      }
+      "passed": true,
+      "cold_ms": 3.2,
+      "warm_ms": 0.8,
+      "cache_hit": true
     }
-  ],
-  "metrics": {
-    "accuracy": 0.0,
-    "ir_at_1": 0.0,
-    "warm_vs_cold": {
-      "cold_median_s": 0.005895853042602539,
-      "warm_median_s": 0.005438566207885742
-    },
-    "cache_stats": {
-      "memory": {
-        "entries": 0,
-        "max_size": 1000,
-        "hits": 0,
-        "misses": 0,
-        "hit_rate": 0,
-        "total_size_bytes": 0
-      },
-      "disk": {
-        "entries": 1814,
-        "total_size_bytes": 6325418,
-        "total_size_mb": 6.032388687133789,
-        "max_size_mb": 100,
-        "total_hits": 2382,
-        "avg_hits": 1.3131201764057332
-      },
-      "hits_total": 2382,
-      "mem_items": 0,
-      "disk_items": 1814
-    }
-  }
+  ]
 }

@@ -4,10 +4,10 @@ from typing import Dict, Any
 DEFAULT_WEIGHTS = {
     "semantic": 0.55,
     "clickable": 0.10,
-    "role_match": 0.15,
-    "token_boost": 0.10,
+    "role_match": 0.18,
+    "token_boost": 0.14,
     "visibility": 0.05,
-    "deterministic_tie": 0.05,
+    "deterministic_tie": 0.08,
 }
 
 BOOST_TOKENS = {"email", "password", "laptop", "phone", "tablet", "add to cart", "login", "signin", "sign in"}

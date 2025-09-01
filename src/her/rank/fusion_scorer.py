@@ -55,11 +55,19 @@ class FusionScorer:
         # Structural match score
         structural_score = self._compute_structural_score(element_descriptor, intent)
         
-        # Weighted fusion
+        # Weighted fusion with small token/role/click boosts
+        from .fusion import _contains_token
+        attrs = element_descriptor.get('attributes', {}) or {}
+        text = element_descriptor.get('text') or ''
+        token_bonus = 0.05 if _contains_token(text, attrs) else 0.0
+        tag = str(element_descriptor.get('tag', '')).lower()
+        role = str(attrs.get('role') or '').lower()
+        role_bonus = 0.05 if (role in ['button','link'] or tag in ['button','a']) else 0.0
         fusion_score = (
             self.alpha * semantic_score +
             self.beta * keyword_score +
-            self.gamma * structural_score
+            self.gamma * structural_score +
+            token_bonus + role_bonus
         )
         
         # Normalize to [0, 1]

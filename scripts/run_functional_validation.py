@@ -76,7 +76,7 @@ def equal_or_identical(page, xpath_a: str, xpath_b: str) -> bool:
     cnt_b = page.evaluate("xpath => window.evaluateXPathCount(xpath)", xpath_b)
     if cnt_a == 1 and cnt_b == 1:
         js = """
-        (a, b) => {
+        ([a, b]) => {
           function nth(xpath) {
             const r = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
             return r.singleNodeValue;
@@ -85,7 +85,7 @@ def equal_or_identical(page, xpath_a: str, xpath_b: str) -> bool:
           return na === nb;
         }
         """
-        return bool(page.evaluate(js, xpath_a, xpath_b))
+        return bool(page.evaluate(js, [xpath_a, xpath_b]))
     return False
 
 def main():
