@@ -1,11 +1,11 @@
 {
   "summary": {
     "accuracy": 100.0,
-    "median_cold_ms": 3.2,
-    "median_warm_ms": 1.0,
+    "median_cold_ms": 4.9,
+    "median_warm_ms": 2.5,
     "cache_hit_rate": 100.0,
     "count": 6,
-    "cold_snapshot_ms": 532.1
+    "cold_snapshot_ms": 540.0
   },
   "records": [
     {
@@ -20,8 +20,8 @@
         "xpath": "//*[@id='login-email']"
       },
       "passed": true,
-      "cold_ms": 21.2,
-      "warm_ms": 2.6,
+      "cold_ms": 14.2,
+      "warm_ms": 2.3,
       "cache_hit": true
     },
     {
@@ -36,8 +36,8 @@
         "xpath": "//*[@id='login-password']"
       },
       "passed": true,
-      "cold_ms": 3.5,
-      "warm_ms": 1.0,
+      "cold_ms": 8.0,
+      "warm_ms": 2.2,
       "cache_hit": true
     },
     {
@@ -52,8 +52,8 @@
         "xpath": "//*[@id='login-button']"
       },
       "passed": true,
-      "cold_ms": 2.4,
-      "warm_ms": 1.0,
+      "cold_ms": 4.9,
+      "warm_ms": 2.5,
       "cache_hit": true
     },
     {
@@ -68,8 +68,8 @@
         "xpath": "//*[@data-testid='overlay-close']"
       },
       "passed": true,
-      "cold_ms": 2.2,
-      "warm_ms": 0.8,
+      "cold_ms": 3.5,
+      "warm_ms": 2.7,
       "cache_hit": true
     },
     {
@@ -84,8 +84,8 @@
         "xpath": "//*[@id='country-select']"
       },
       "passed": true,
-      "cold_ms": 2.4,
-      "warm_ms": 0.9,
+      "cold_ms": 3.4,
+      "warm_ms": 2.5,
       "cache_hit": true
     },
     {
@@ -100,8 +100,8 @@
         "xpath": "//*[@id='submit-button']"
       },
       "passed": true,
-      "cold_ms": 3.2,
-      "warm_ms": 0.8,
+      "cold_ms": 3.8,
+      "warm_ms": 2.6,
       "cache_hit": true
     }
   ]
