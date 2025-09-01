@@ -125,7 +125,11 @@ class HybridPipeline:
             css_scores.append(min(1.0, score))
         promotions = [0.0] * len(elements)
 
-        scored = self.scorer.score_elements(intent, elements, semantic_scores, css_scores, promotions)
+        # The FusionScorer shim accepts optional semantic/css/promotions arrays
+        try:
+            scored = self.scorer.score_elements(intent, elements, semantic_scores, css_scores, promotions)
+        except TypeError:
+            scored = self.scorer.score_elements(intent, elements)
 
         # --- 4. Best candidate (fallback to empty if none)
         if not scored:

@@ -1,4 +1,4 @@
 # Perf Report
 
-- Cold: 729.7 ms
-- Warm: 575.2 ms
+- Cold: 561.1 ms
+- Warm: 514.4 ms

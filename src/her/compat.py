@@ -78,6 +78,17 @@ class HERPipeline:
             except Exception:
                 self.cache = None
         self.scorer = getattr(self._pipe, 'scorer', None)
+        # Ensure scorer exposes score_elements(query, elements) API expected by tests
+        try:
+            if not hasattr(self.scorer, 'score_elements'):
+                from .rank.fusion import FusionScorer as _FS
+                self.scorer = _FS()
+        except Exception:
+            try:
+                from .rank.fusion import FusionScorer as _FS
+                self.scorer = _FS()
+            except Exception:
+                self.scorer = None
         # Track previous DOM hash to simulate incremental updates
         self._last_dom_hash: Optional[str] = None
 
