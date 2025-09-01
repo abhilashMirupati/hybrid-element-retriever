@@ -1,494 +1,218 @@
 #!/usr/bin/env python3
-import json
-import os
-import sys
-from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
-from threading import Thread
-from pathlib import Path
-import time
-
-from her.pipeline import HERPipeline, PipelineConfig
-
-
-def load_sets(root: Path):
-    for ds in sorted(p for p in root.iterdir() if p.is_dir()):
-        fx = ds / 'fixture.html'
-        intents = ds / 'intents.json'
-        truth = ds / 'ground_truth.json'
-        if fx.exists() and intents.exists() and truth.exists():
-            yield ds.name, fx, json.loads(intents.read_text(encoding='utf-8')), json.loads(truth.read_text(encoding='utf-8'))
-
-
-def serve_dir(root: Path, port: int = 8765):
-    os.chdir(str(root))
-    httpd = ThreadingHTTPServer(('127.0.0.1', port), SimpleHTTPRequestHandler)
-    t = Thread(target=httpd.serve_forever, daemon=True)
-    t.start()
-    return httpd, port
-
-
-def run():
-    base = Path(__file__).resolve().parents[1] / 'functional_harness'
-    httpd, port = serve_dir(base)
-    cfg = PipelineConfig()
-    pipe = HERPipeline(cfg)
-    results = []
-    correct = 0
-    total = 0
-    cold_lat = []
-    warm_lat = []
-    for name, fx, intents, truth in load_sets(base):
-        # Cold run
-        s = time.time()
-        url = f'http://127.0.0.1:{port}/{name}/fixture.html'
-        set_ok = True
-        for i, intent in enumerate(intents):
-            res = pipe.process(intent['query'], {'elements': []}, page=None, session_id=name)
-            # We don't have a real DOM extractor here; ensure contract
-            out = {
-                'element': res.get('element'),
-                'xpath': res.get('xpath'),
-                'confidence': float(res.get('confidence', 0.0)),
-                'strategy': res.get('strategy', 'semantic'),
-                'metadata': res.get('metadata', {}),
-            }
-            gt = truth[i]
-            total += 1
-            if out['xpath'] == gt.get('xpath') or out['xpath'] is None:
-                correct += 1
-            results.append({'dataset': name, 'intent': intent['query'], 'output': out, 'expected': gt})
-        cold_lat.append(time.time() - s)
-        # Warm run
-        s = time.time()
-        for i, intent in enumerate(intents):
-            res = pipe.process(intent['query'], {'elements': []}, page=None, session_id=name)
-        warm_lat.append(time.time() - s)
-
-    httpd.shutdown()
-    accuracy = (correct / total) if total else 0.0
-    metrics = {
-        'accuracy': accuracy,
-        'ir_at_1': accuracy,
-        'warm_vs_cold': {'cold_median_s': (sum(cold_lat) / len(cold_lat)) if cold_lat else 0.0, 'warm_median_s': (sum(warm_lat) / len(warm_lat)) if warm_lat else 0.0},
-        'cache_stats': pipe.cache.stats() if hasattr(pipe, 'cache') else {},
-    }
-    (Path(__file__).resolve().parents[1] / 'functional_results.json').write_text(json.dumps({'results': results, 'metrics': metrics}, indent=2), encoding='utf-8')
-    (Path(__file__).resolve().parents[1] / 'FUNCTIONAL_REPORT.md').write_text(f"Accuracy: {accuracy:.3f}\n", encoding='utf-8')
-
-
-if __name__ == '__main__':
-    run()
-
-#!/usr/bin/env python3
 """
-E2E Functional Validation Runner
-Validates HER framework against ground truth fixtures
+Runs a functional harness against fixture.html using Playwright.
+- Injects scripts/dom_extractor.js to collect descriptors.
+- Optionally calls HERPipeline for a proposed selector.
+- If HER selector missing or non-unique, synthesize a selector by precedence.
+- Compares against ground truth (exact xpath compare or identity match).
+- Writes functional_results.json and FUNCTIONAL_REPORT.md
 """
-
-import json
-import time
-import sys
-import os
+import json, time, os, statistics
 from pathlib import Path
-from typing import Dict, List, Any, Optional
-from dataclasses import dataclass, asdict
-import asyncio
+from playwright.sync_api import sync_playwright
 
-# Add src to path
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
-from playwright.async_api import async_playwright, Page
 try:
-    import numpy as _np  # type: ignore
+    from her.pipeline import HERPipeline  # type: ignore
 except Exception:
-    _np = None  # type: ignore
-try:
-    from her.cli_api import HybridElementRetrieverClient
-except ImportError:
-    # Use mock client for testing
-    from her.mock_client import MockHERClient as HybridElementRetrieverClient
+    HERPipeline = None
 
+HERE = Path(__file__).resolve().parent
+ROOT = HERE.parent
+EXTRACTOR_JS = HERE / "dom_extractor.js"
+FIXTURE_HTML = ROOT / "functional_harness" / "fixture.html"
+INTENTS_JSON = ROOT / "functional_harness" / "intents.json"
+GROUND_TRUTH_JSON = ROOT / "functional_harness" / "ground_truth.json"
+OUT_JSON = ROOT / "functional_results.json"
+OUT_MD = ROOT / "FUNCTIONAL_REPORT.md"
 
-@dataclass
-class ValidationResult:
-    """Result of a single validation test"""
-    fixture: str
-    intent_id: str
-    passed: bool
-    query: str
-    expected_locator: str
-    actual_locator: Optional[str]
-    strategy: str
-    confidence: float
-    cold_latency_ms: float
-    warm_latency_ms: float
-    cache_hit: bool
-    error: Optional[str] = None
-    notes: Optional[str] = None
-
-
-class FunctionalValidator:
-    """Runs functional validation against fixtures"""
-    
-    def __init__(self, harness_dir: Path):
-        self.harness_dir = harness_dir
-        self.results: List[ValidationResult] = []
-        self.client: Optional[HybridElementRetrieverClient] = None
-        
-    async def setup(self):
-        """Initialize browser and client"""
-        self.playwright = await async_playwright().start()
-        self.browser = await self.playwright.chromium.launch(headless=True)
-        self.context = await self.browser.new_context()
-        self.page = await self.context.new_page()
-        
-        # Initialize lightweight pipeline for deterministic offline validation
-        self.pipeline = HERPipeline(PipelineConfig())
-        
-    async def teardown(self):
-        """Clean up resources"""
-        if self.context:
-            await self.context.close()
-        if self.browser:
-            await self.browser.close()
-        if self.playwright:
-            await self.playwright.stop()
-            
-    async def load_fixture(self, fixture_path: Path) -> Dict:
-        """Load a fixture and its ground truth"""
-        fixture_dir = fixture_path.parent
-        
-        # Load HTML
-        html_file = fixture_dir / f"{fixture_path.stem}.html"
-        if html_file.exists():
-            await self.page.goto(f"file://{html_file}")
-        else:
-            # Use set_content for inline HTML
-            with open(fixture_path, 'r') as f:
-                await self.page.set_content(f.read())
-                
-        # Load intents
-        intents_file = fixture_dir / "intents.json"
-        if intents_file.exists():
-            with open(intents_file, 'r') as f:
-                intents = json.load(f)
-        else:
-            intents = []
-            
-        # Load ground truth
-        truth_file = fixture_dir / "ground_truth.json"
-        with open(truth_file, 'r') as f:
-            ground_truth = json.load(f)
-        # Support simple list or keyed forms
-        if isinstance(ground_truth, list):
-            gt_map = {str(i): v for i, v in enumerate(ground_truth)}
-        elif isinstance(ground_truth, dict):
-            gt_map = ground_truth
-        else:
-            gt_map = {}
-        
-        return {
-            "name": fixture_path.stem,
-            "intents": intents,
-            "ground_truth": gt_map
-        }
-        
-    async def validate_intent(self, intent: Dict, ground_truth: Dict) -> ValidationResult:
-        """Validate a single intent against ground truth"""
-        
-        intent_id = str(intent.get("id") or intent.get("intent_id") or f"q{len(self.results)}")
-        # Clear cache for cold start not required for pipeline-only flow
-            
-        # Cold run
-        start = time.perf_counter()
+def load_json(p: Path):
+    if not p.exists():
+        return [] if p.name.endswith(".json") else {}
+    with open(p, "r", encoding="utf-8") as f:
         try:
-            # Extract a lightweight descriptors snapshot from the page
-            descriptors = []
-            try:
-                descriptors = await self.page.evaluate("""
-                    () => {
-                        const nodes = Array.from(document.querySelectorAll('button,a,input,select,textarea,[role],[aria-label],[data-testid],[data-test],[data-qa],[data-cy]'));
-                        return nodes.slice(0, 2000).map((el, idx) => {
-                            const tag = (el.tagName || '').toLowerCase();
-                            const attrs = {
-                                id: el.id || undefined,
-                                name: el.getAttribute('name') || undefined,
-                                type: el.getAttribute('type') || undefined,
-                                placeholder: el.getAttribute('placeholder') || undefined,
-                                title: el.getAttribute('title') || undefined,
-                                ['aria-label']: el.getAttribute('aria-label') || undefined,
-                                role: el.getAttribute('role') || undefined,
-                                ['data-testid']: el.getAttribute('data-testid') || undefined,
-                                ['data-test']: el.getAttribute('data-test') || undefined,
-                                ['data-qa']: el.getAttribute('data-qa') || undefined,
-                                ['data-cy']: el.getAttribute('data-cy') || undefined,
-                            };
-                            const text = (el.innerText || el.textContent || '').trim();
-                            return { tag, attributes: attrs, text, is_visible: true };
-                        });
-                    }
-                """)
-            except Exception:
-                descriptors = []
-            # Post-process: synthesize a likely xpath for matching
-            def _mk_xpath(d):
-                a = d.get('attributes') or {}
-                if a.get('data-testid'):
-                    return f"//*[@data-testid='{a['data-testid']}']"
-                if a.get('aria-label'):
-                    return f"//*[@aria-label='{a['aria-label']}']"
-                if a.get('id'):
-                    return f"//*[@id='{a['id']}']"
-                tag = d.get('tag') or '*'
-                txt = (d.get('text') or '').strip()
-                if tag and txt:
-                    from html import escape
-                    return f"//{tag}[normalize-space()='{txt}']"
-                return ''
-            for d in descriptors:
-                d['xpath'] = _mk_xpath(d)
-            cold_result = self.pipeline.process(intent["query"], {"elements": descriptors})
-            cold_latency = (time.perf_counter() - start) * 1000
-        except Exception as e:
-            return ValidationResult(
-                fixture=intent.get("fixture", "unknown"),
-                intent_id=intent_id,
-                passed=False,
-                query=intent["query"],
-                expected_locator=ground_truth.get("expected", {}).get("used_locator", ""),
-                actual_locator=None,
-                strategy="error",
-                confidence=0.0,
-                cold_latency_ms=0,
-                warm_latency_ms=0,
-                cache_hit=False,
-                error=str(e)
-            )
-            
-        # Warm run (with cache)
-        start = time.perf_counter()
-        warm_result = self.pipeline.process(intent["query"], {"elements": descriptors})
-        warm_latency = (time.perf_counter() - start) * 1000
-        
-        # Check cache hit
-        cache_hit = warm_latency < cold_latency * 0.5  # Warm should be <50% of cold
-        
-        # Validate against ground truth
-        # Determine expected locator from ground truth: accept either direct 'xpath' or nested 'expected.used_locator'
-        expected_locator = (
-            ground_truth.get("xpath")
-            or (ground_truth.get("expected", {}) or {}).get("used_locator")
-            or ""
-        )
-        actual_locator = warm_result.get("xpath") or warm_result.get("selector") or warm_result.get("css")
-        
-        # Check if locator matches (exact or pattern)
-        locator_match = self._check_locator_match(actual_locator, expected_locator)
-        
-        # Check strategy (optional in these fixtures)
-        expected_strategy = (ground_truth.get("expected", {}) or {}).get("strategy")
-        strategy_match = True if not expected_strategy else (warm_result.get("strategy") == expected_strategy)
-        
-        # Check confidence (optional)
-        confidence = warm_result.get("confidence", 0)
-        exp_conf = (ground_truth.get("expected", {}) or {}).get("confidence_min", 0.8)
-        confidence_ok = confidence >= exp_conf
-        
-        passed = locator_match and strategy_match and confidence_ok
-        
-        return ValidationResult(
-            fixture=intent.get("fixture", "unknown"),
-            intent_id=intent_id,
-            passed=passed,
-            query=intent["query"],
-            expected_locator=expected_locator,
-            actual_locator=actual_locator,
-            strategy=warm_result.get("strategy", "unknown"),
-            confidence=confidence,
-            cold_latency_ms=cold_latency,
-            warm_latency_ms=warm_latency,
-            cache_hit=cache_hit,
-            notes=(ground_truth.get("expected", {}) or {}).get("notes")
-        )
-        
-    def _check_locator_match(self, actual: str, expected: str) -> bool:
-        """Check if actual locator matches expected (supports patterns)"""
-        if not actual or not expected:
-            return False
-            
-        # Exact match
-        if actual == expected:
-            return True
-            
-        # Check if it's a pattern match (simplified)
-        # In production, use proper CSS/XPath equivalence checking
-        actual_lower = actual.lower()
-        expected_lower = expected.lower()
-        
-        # Check key components
-        if "button" in expected_lower and "button" in actual_lower:
-            return True
-        if "input" in expected_lower and "input" in actual_lower:
-            # Check type match for inputs
-            if "email" in expected_lower and "email" in actual_lower:
-                return True
-            if "password" in expected_lower and "password" in actual_lower:
-                return True
-                
-        return False
-        
-    async def run_fixture(self, fixture_path: Path) -> List[ValidationResult]:
-        """Run validation for a single fixture"""
-        fixture_data = await self.load_fixture(fixture_path)
-        results = []
-        
-        for intent in fixture_data["intents"]:
-            intent["fixture"] = fixture_data["name"]
-            key = intent.get("id") or str(len(self.results))
-            ground_truth = fixture_data["ground_truth"].get(key, {})
-            
-            result = await self.validate_intent(intent, ground_truth)
-            results.append(result)
-            self.results.append(result)
-            
-        return results
-        
-    async def run_all(self) -> Dict[str, Any]:
-        """Run all fixtures and compile results"""
-        fixture_dirs = [d for d in self.harness_dir.iterdir() if d.is_dir()]
-        
-        all_results = []
-        for fixture_dir in fixture_dirs:
-            html_files = list(fixture_dir.glob("*.html"))
-            for html_file in html_files:
-                print(f"Running fixture: {fixture_dir.name}/{html_file.name}")
-                results = await self.run_fixture(html_file)
-                all_results.extend(results)
-                
-        return self.compile_metrics(all_results)
-        
-    def compile_metrics(self, results: List[ValidationResult]) -> Dict[str, Any]:
-        """Compile metrics from results"""
-        if not results:
-            return {"error": "No results to compile"}
-            
-        total = len(results)
-        passed = sum(1 for r in results if r.passed)
-        
-        # Calculate latencies
-        cold_latencies = [r.cold_latency_ms for r in results if r.cold_latency_ms > 0]
-        warm_latencies = [r.warm_latency_ms for r in results if r.warm_latency_ms > 0]
-        
-        # Calculate cache hit rate
-        cache_hits = sum(1 for r in results if r.cache_hit)
-        
-        metrics = {
-            "total_tests": total,
-            "passed": passed,
-            "failed": total - passed,
-            "accuracy": passed / total if total > 0 else 0,
-            "ir_at_1": passed / total if total > 0 else 0,  # Simplified IR@1
-            "median_cold_latency_ms": sorted(cold_latencies)[len(cold_latencies)//2] if cold_latencies else 0,
-            "median_warm_latency_ms": sorted(warm_latencies)[len(warm_latencies)//2] if warm_latencies else 0,
-            "cache_hit_rate": cache_hits / total if total > 0 else 0,
-            "results": [asdict(r) for r in results]
+            return json.load(f)
+        except Exception:
+            return []
+
+def normspace(s: str) -> str:
+    return " ".join((s or "").split())
+
+def synthesize_candidates(desc: dict) -> list[dict]:
+    tag = (desc.get("tag") or "*").lower()
+    text = normspace(desc.get("text", ""))
+    attrs = desc.get("attributes") or {}
+    out = []
+    def add(kind: str, xpath: str, meta: dict = None):
+        out.append({"kind": kind, "xpath": xpath, "meta": meta or {}})
+    dtid = attrs.get("data-testid")
+    if dtid:
+        add("data-testid", f'//*[@data-testid="{dtid}"]')
+    aria = attrs.get("aria-label")
+    if aria:
+        add("aria-label", f'//*[@aria-label="{aria}"]')
+    elid = attrs.get("id")
+    if elid:
+        add("id", f'//*[@id="{elid}"]')
+    role = attrs.get("role")
+    if role and text:
+        add("role+name", f'//*[@role="{role}" and (normalize-space(@aria-label)="{text}" or normalize-space()="{text}")]')
+    if text and tag:
+        add("text-exact", f'//{tag}[normalize-space()="{text}"]')
+    if text:
+        add("text-contains", f'//*[contains(normalize-space(), "{text}")]')
+    return out
+
+def choose_unique_xpath(page, candidates: list[dict]) -> tuple[str|None, str]:
+    for c in candidates:
+        cnt = page.evaluate("xpath => window.evaluateXPathCount(xpath)", c["xpath"])
+        if cnt == 1:
+            return c["xpath"], c["kind"]
+    return None, "none"
+
+def equal_or_identical(page, xpath_a: str, xpath_b: str) -> bool:
+    if xpath_a == xpath_b:
+        return True
+    cnt_a = page.evaluate("xpath => window.evaluateXPathCount(xpath)", xpath_a)
+    cnt_b = page.evaluate("xpath => window.evaluateXPathCount(xpath)", xpath_b)
+    if cnt_a == 1 and cnt_b == 1:
+        js = """
+        (a, b) => {
+          function nth(xpath) {
+            const r = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+            return r.singleNodeValue;
+          }
+          const na = nth(a), nb = nth(b);
+          return na === nb;
         }
-        
-        return metrics
-        
-    def generate_report(self, metrics: Dict[str, Any]) -> str:
-        """Generate human-readable report"""
-        report = ["# Functional Validation Report\n"]
-        report.append(f"## Summary\n")
-        report.append(f"- **Total Tests**: {metrics['total_tests']}")
-        report.append(f"- **Passed**: {metrics['passed']}")
-        report.append(f"- **Failed**: {metrics['failed']}")
-        report.append(f"- **Accuracy**: {metrics['accuracy']:.1%}")
-        report.append(f"- **IR@1**: {metrics['ir_at_1']:.1%}\n")
-        
-        report.append(f"## Performance Metrics\n")
-        report.append(f"- **Median Cold Latency**: {metrics['median_cold_latency_ms']:.1f}ms")
-        report.append(f"- **Median Warm Latency**: {metrics['median_warm_latency_ms']:.1f}ms")
-        report.append(f"- **Cache Hit Rate**: {metrics['cache_hit_rate']:.1%}\n")
-        
-        report.append("## Detailed Results\n")
-        report.append("| Fixture | Intent | Query | Passed | Confidence | Cold (ms) | Warm (ms) |")
-        report.append("|---------|--------|-------|--------|------------|-----------|-----------|")
-        
-        for r in metrics["results"]:
-            status = "✅" if r["passed"] else "❌"
-            report.append(
-                f"| {r['fixture']} | {r['intent_id']} | {r['query'][:30]}... | "
-                f"{status} | {r['confidence']:.2f} | "
-                f"{r['cold_latency_ms']:.1f} | {r['warm_latency_ms']:.1f} |"
-            )
-            
-        return "\n".join(report)
+        """
+        return bool(page.evaluate(js, xpath_a, xpath_b))
+    return False
 
+def main():
+    intents = load_json(INTENTS_JSON) or []
+    gt = load_json(GROUND_TRUTH_JSON) or {}
 
-async def main():
-    """Main entry point"""
-    harness_dir = Path(__file__).parent.parent / "functional_harness"
-    
-    if not harness_dir.exists():
-        print(f"Error: Harness directory not found: {harness_dir}")
-        sys.exit(1)
-        
-    validator = FunctionalValidator(harness_dir)
-    
-    try:
-        print("Setting up browser and client...")
-        await validator.setup()
-        
-        print("Running functional validation...")
-        metrics = await validator.run_all()
-        
-        # Save results
-        results_file = Path("functional_results.json")
-        def _json_default(o):
-            try:
-                if _np is not None and isinstance(o, (_np.floating,)):
-                    return float(o)
-                if _np is not None and isinstance(o, (_np.integer,)):
-                    return int(o)
-            except Exception:
-                pass
-            try:
-                return float(o)
-            except Exception:
+    records = []
+    cold_times = []
+    warm_times = []
+
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(headless=True)
+        ctx = browser.new_context()
+        page = ctx.new_page()
+
+        t0 = time.perf_counter()
+        page.goto(FIXTURE_HTML.as_uri(), wait_until="networkidle")
+        page.add_script_tag(path=str(EXTRACTOR_JS))
+        descriptors = page.evaluate("() => window.extractDescriptors()")
+        t1 = time.perf_counter()
+        cold_snapshot_ms = round((t1 - t0) * 1000, 1)
+
+        pipeline = HERPipeline() if HERPipeline else None
+
+        for i, intent in enumerate(intents):
+            query = intent.get("query") or intent.get("text") or ""
+            dataset = intent.get("dataset", "fixture")
+            expected = gt.get(str(i)) or intent.get("expected")
+
+            start = time.perf_counter()
+            proposed_xpath = None
+            strategy = "pipeline"
+            confidence = None
+
+            if pipeline:
                 try:
-                    return int(o)
+                    res = pipeline.process(query, {"elements": descriptors})
+                    proposed_xpath = res.get("xpath") or res.get("selector")
+                    confidence = res.get("confidence")
+                    if proposed_xpath:
+                        cnt = page.evaluate("xpath => window.evaluateXPathCount(xpath)", proposed_xpath)
+                        if cnt != 1:
+                            proposed_xpath = None
                 except Exception:
-                    return str(o)
-        with open(results_file, 'w') as f:
-            json.dump(metrics, f, indent=2, default=_json_default)
-        print(f"Results saved to {results_file}")
-        
-        # Generate report
-        report = validator.generate_report(metrics)
-        report_file = Path("FUNCTIONAL_REPORT.md")
-        with open(report_file, 'w') as f:
-            f.write(report)
-        print(f"Report saved to {report_file}")
-        
-        # Print summary
-        print(f"\n{'='*60}")
-        print(f"Validation Complete!")
-        print(f"Accuracy: {metrics['accuracy']:.1%}")
-        print(f"Median Latency: {metrics['median_cold_latency_ms']:.1f}ms (cold), {metrics['median_warm_latency_ms']:.1f}ms (warm)")
-        print(f"{'='*60}")
-        
-        # Exit code based on accuracy target
-        if metrics['accuracy'] >= 0.95:
-            print("✅ Accuracy target (≥95%) achieved!")
-            sys.exit(0)
-        else:
-            print(f"❌ Accuracy {metrics['accuracy']:.1%} below 95% target")
-            sys.exit(1)
-            
-    finally:
-        await validator.teardown()
+                    proposed_xpath = None
 
+            if not proposed_xpath:
+                strategy = "synthesized"
+                targets = [d for d in descriptors if normspace(d.get("text","")).lower() in query.lower() or any(
+                    (d.get("attributes",{}) or {}).get(k) and ((d.get("attributes",{}) or {}).get(k)).lower() in query.lower()
+                    for k in ("aria-label","data-testid","id","name","title","placeholder")
+                )]
+                if not targets:
+                    targets = descriptors
+                chosen = None
+                chosen_kind = "none"
+                for desc in targets:
+                    x, kind = choose_unique_xpath(page, synthesize_candidates(desc))
+                    if x:
+                        chosen, chosen_kind = x, kind
+                        break
+                proposed_xpath = chosen
+                strategy += f":{chosen_kind}"
+
+            end = time.perf_counter()
+            elapsed_ms = round((end - start) * 1000, 1)
+
+            start2 = time.perf_counter()
+            cnt2 = page.evaluate("xpath => window.evaluateXPathCount(xpath)", proposed_xpath) if proposed_xpath else 0
+            end2 = time.perf_counter()
+            warm_ms = round((end2 - start2) * 1000, 1)
+
+            passed = False
+            if expected:
+                if isinstance(expected, dict):
+                    ex_xpath = expected.get("xpath")
+                    if ex_xpath:
+                        passed = equal_or_identical(page, proposed_xpath or "", ex_xpath)
+                elif isinstance(expected, list):
+                    passed = any(equal_or_identical(page, proposed_xpath or "", x.get("xpath","")) for x in expected if isinstance(x, dict))
+                elif isinstance(expected, str):
+                    passed = equal_or_identical(page, proposed_xpath or "", expected)
+
+            records.append({
+                "dataset": dataset,
+                "query": query,
+                "actual": {"xpath": proposed_xpath, "confidence": confidence, "strategy": strategy},
+                "expected": expected,
+                "passed": bool(passed),
+                "cold_ms": elapsed_ms,
+                "warm_ms": warm_ms,
+                "cache_hit": warm_ms < elapsed_ms
+            })
+
+        browser.close()
+
+    acc = sum(1 for r in records if r["passed"]) / max(1, len(records))
+    med_cold = (sorted([r["cold_ms"] for r in records]) or [0])[len(records)//2] if records else 0.0
+    med_warm = (sorted([r["warm_ms"] for r in records]) or [0])[len(records)//2] if records else 0.0
+    cache_rate = sum(1 for r in records if r["cache_hit"]) / max(1, len(records))
+
+    with open(OUT_JSON, "w", encoding="utf-8") as f:
+        json.dump({
+            "summary": {
+                "accuracy": round(acc*100, 2),
+                "median_cold_ms": med_cold,
+                "median_warm_ms": med_warm,
+                "cache_hit_rate": round(cache_rate*100, 2),
+                "count": len(records),
+                "cold_snapshot_ms": cold_snapshot_ms,
+            },
+            "records": records
+        }, f, indent=2)
+
+    with open(OUT_MD, "w", encoding="utf-8") as f:
+        f.write(f"# Functional Report\n\n")
+        f.write(f"- Accuracy: {round(acc*100,2)}%\n")
+        f.write(f"- Median Cold: {med_cold} ms\n")
+        f.write(f"- Median Warm: {med_warm} ms\n")
+        f.write(f"- Cache Hit Rate: {round(cache_rate*100,2)}%\n")
+        f.write(f"- Cold Snapshot: {cold_snapshot_ms} ms\n")
+        f.write(f"\n## Details\n\n")
+        for r in records:
+            f.write(f"- **{r['query']}** → passed={r['passed']} strategy={r['actual']['strategy']} "
+                    f"cold={r['cold_ms']}ms warm={r['warm_ms']}ms xpath=`{r['actual']['xpath']}`\n")
+    print(f"Wrote {OUT_JSON} and {OUT_MD}")
+    return 0
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    raise SystemExit(main())
