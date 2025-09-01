@@ -192,27 +192,10 @@ class HERPipeline:
             if self.cache:
                 qkey = f"query::{(query or '').strip().lower()}::{dh}"
                 raw = self.cache.get_raw(qkey)  # avoid counting against element cache hit/miss
-                if raw and raw.get('value') is not None:
-                    # Pick first visible, clickable element as a quick winner and return full metadata
-                    for el in elements:
-                        tag_l = str(el.get('tag', '')).lower()
-                        attrs_l = el.get('attributes', {}) or {}
-                        clickable = bool(attrs_l.get('role') in ['button','link','menuitem','tab','checkbox','radio','combobox'] or tag_l in ['button','a'])
-                        if el.get('is_visible', True) and clickable:
-                            sel = el.get('xpath') or ''
-                            if sel:
-                                used_frame = el.get('__frame_id')
-                                meta = {"from_cache": True, "in_shadow_dom": bool(el.get('shadow_elements'))}
-                                out = {
-                                    "element": el,
-                                    "xpath": sel,
-                                    "confidence": 0.97,
-                                    "strategy": "warm-cache",
-                                    "metadata": meta,
-                                    "used_frame_id": (used_frame if used_frame is not None else "main"),
-                                    "frame_path": el.get('__frame_path', []),
-                                }
-                                return out
+                cached_out = (raw or {}).get('value')
+                if isinstance(cached_out, dict) and cached_out.get('xpath'):
+                    # Return the exact prior result to preserve strategy/metadata assertions
+                    return cached_out
         except Exception:
             pass
 
@@ -252,18 +235,13 @@ class HERPipeline:
         embed_budget = max_embed if max_embed > 0 else None
 
         # Prefer visible elements when embedding under a budget
-        embed_iter = (e for e in (visible_elements if embed_budget is not None else elements))
-        for el in embed_iter:
-            k = _key_for_element(el)
-            val = None
-            if (not cold_start) and self.cache:
-                try:
-                    val = self.cache.get(k)
-                except Exception:
-                    val = None
-            if cold_start or val is None:
+        if cold_start:
+            embed_iter = (e for e in (visible_elements if embed_budget is not None else elements))
+            for el in embed_iter:
+                k = _key_for_element(el)
+                val = None
+                # On cold start, force embedding regardless of cache
                 cache_misses += 1
-                # Embed via hook to allow tests to patch
                 try:
                     _ = self._embed_element(el)
                 except Exception:
@@ -292,16 +270,11 @@ class HERPipeline:
                     embed_budget -= 1
                     if embed_budget <= 0:
                         break
-            else:
-                cache_hits += 1
-
-        # Record a quick query-level cache entry to accelerate warm queries dramatically
-        try:
-            if self.cache:
-                qkey = f"query::{(query or '').strip().lower()}::{dh}"
-                self.cache.set(qkey, {"ts": 1})
-        except Exception:
+        else:
+            # Warm path: skip per-element cache lookups entirely for speed
             pass
+
+        # Do not write query-level entry yet; we'll persist the final result below to preserve strategy/metadata
 
         # Strategy pipeline: semantic -> css -> xpath with per-frame uniqueness
         q = (query or '').lower()
@@ -478,6 +451,13 @@ class HERPipeline:
         used_frame = chosen_el.get('__frame_id') if isinstance(chosen_el, dict) else None
         out["used_frame_id"] = used_frame if used_frame is not None else ("main" if isinstance(chosen_el, dict) else None)
         out["frame_path"] = chosen_el.get('__frame_path') if isinstance(chosen_el, dict) else []
+        # Persist query-level warm entry with the full result so warm-path preserves strategy/metadata
+        try:
+            if self.cache:
+                qkey = f"query::{(query or '').strip().lower()}::{dh}"
+                self.cache.set(qkey, out)
+        except Exception:
+            pass
         return out
 
     # The following methods are present so tests can patch them. Implement
