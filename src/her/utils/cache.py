@@ -104,3 +104,36 @@ class TwoTierCache:
                 "memory_items": len(self.memory_cache),
                 "disk_items": len(os.listdir(self.cache_dir)),
             }
+
+
+class LRUCache:
+    """
+    Minimal LRU cache used by enhanced session manager/tests.
+    Thread-safe, memory-only.
+    """
+
+    def __init__(self, capacity: int = 1000):
+        self.capacity = int(capacity)
+        self._store: OrderedDict[str, Any] = OrderedDict()
+        self._lock = threading.Lock()
+
+    def get(self, key: str, default: Any = None) -> Any:
+        with self._lock:
+            if key in self._store:
+                self._store.move_to_end(key)
+                return self._store[key]
+            return default
+
+    def set(self, key: str, value: Any) -> None:
+        with self._lock:
+            self._store[key] = value
+            self._store.move_to_end(key)
+            while len(self._store) > self.capacity:
+                self._store.popitem(last=False)
+
+    # Back-compat alias
+    put = set
+
+    def stats(self) -> dict:
+        with self._lock:
+            return {"entries": len(self._store), "capacity": self.capacity}
