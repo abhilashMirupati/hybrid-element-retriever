@@ -3,12 +3,12 @@
     "id": "sentence-transformers/ms-marco-MiniLM-L-6-v3",
     "alias": "e5-small-onnx/model.onnx",
     "task": "text-embedding",
-    "downloaded_at": "2025-08-31T02:48:56Z"
+    "downloaded_at": "2025-08-31T19:14:33Z"
   },
   {
     "id": "microsoft/markuplm-base",
     "alias": "markuplm-base-onnx/model.onnx",
     "task": "element-embedding",
-    "downloaded_at": "2025-08-31T02:48:56Z"
+    "downloaded_at": "2025-08-31T19:14:33Z"
   }
 ]

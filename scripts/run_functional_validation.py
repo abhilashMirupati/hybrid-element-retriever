@@ -99,6 +99,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from playwright.async_api import async_playwright, Page
 try:
+    import numpy as _np  # type: ignore
+except Exception:
+    _np = None  # type: ignore
+try:
     from her.cli_api import HybridElementRetrieverClient
 except ImportError:
     # Use mock client for testing
@@ -138,24 +142,8 @@ class FunctionalValidator:
         self.context = await self.browser.new_context()
         self.page = await self.context.new_page()
         
-        # Initialize HER client
-        try:
-            # Use production client with semantic scoring
-            from her.production_client import ProductionHERClient
-            self.client = ProductionHERClient()
-            await self.client.initialize(self.page)
-        except Exception as e:
-            print(f"Warning: Could not load production client: {e}")
-            # Fall back to mock client
-            try:
-                from her.mock_client import MockHERClient
-                self.client = MockHERClient()
-                await self.client.initialize(self.page)
-            except:
-                # Last resort - original client
-                self.client = HybridElementRetrieverClient()
-                if hasattr(self.client, 'initialize'):
-                    await self.client.initialize(self.page)
+        # Initialize lightweight pipeline for deterministic offline validation
+        self.pipeline = HERPipeline(PipelineConfig())
         
     async def teardown(self):
         """Clean up resources"""
@@ -191,29 +179,80 @@ class FunctionalValidator:
         truth_file = fixture_dir / "ground_truth.json"
         with open(truth_file, 'r') as f:
             ground_truth = json.load(f)
-            
+        # Support simple list or keyed forms
+        if isinstance(ground_truth, list):
+            gt_map = {str(i): v for i, v in enumerate(ground_truth)}
+        elif isinstance(ground_truth, dict):
+            gt_map = ground_truth
+        else:
+            gt_map = {}
+        
         return {
             "name": fixture_path.stem,
             "intents": intents,
-            "ground_truth": {gt["intent_id"]: gt for gt in ground_truth}
+            "ground_truth": gt_map
         }
         
     async def validate_intent(self, intent: Dict, ground_truth: Dict) -> ValidationResult:
         """Validate a single intent against ground truth"""
         
-        # Clear cache for cold start
-        if self.client:
-            self.client.clear_cache()
+        intent_id = str(intent.get("id") or intent.get("intent_id") or f"q{len(self.results)}")
+        # Clear cache for cold start not required for pipeline-only flow
             
         # Cold run
         start = time.perf_counter()
         try:
-            cold_result = await self.client.query(intent["query"])
+            # Extract a lightweight descriptors snapshot from the page
+            descriptors = []
+            try:
+                descriptors = await self.page.evaluate("""
+                    () => {
+                        const nodes = Array.from(document.querySelectorAll('button,a,input,select,textarea,[role],[aria-label],[data-testid],[data-test],[data-qa],[data-cy]'));
+                        return nodes.slice(0, 2000).map((el, idx) => {
+                            const tag = (el.tagName || '').toLowerCase();
+                            const attrs = {
+                                id: el.id || undefined,
+                                name: el.getAttribute('name') || undefined,
+                                type: el.getAttribute('type') || undefined,
+                                placeholder: el.getAttribute('placeholder') || undefined,
+                                title: el.getAttribute('title') || undefined,
+                                ['aria-label']: el.getAttribute('aria-label') || undefined,
+                                role: el.getAttribute('role') || undefined,
+                                ['data-testid']: el.getAttribute('data-testid') || undefined,
+                                ['data-test']: el.getAttribute('data-test') || undefined,
+                                ['data-qa']: el.getAttribute('data-qa') || undefined,
+                                ['data-cy']: el.getAttribute('data-cy') || undefined,
+                            };
+                            const text = (el.innerText || el.textContent || '').trim();
+                            return { tag, attributes: attrs, text, is_visible: true };
+                        });
+                    }
+                """)
+            except Exception:
+                descriptors = []
+            # Post-process: synthesize a likely xpath for matching
+            def _mk_xpath(d):
+                a = d.get('attributes') or {}
+                if a.get('data-testid'):
+                    return f"//*[@data-testid='{a['data-testid']}']"
+                if a.get('aria-label'):
+                    return f"//*[@aria-label='{a['aria-label']}']"
+                if a.get('id'):
+                    return f"//*[@id='{a['id']}']"
+                tag = d.get('tag') or '*'
+                txt = (d.get('text') or '').strip()
+                if tag and txt:
+                    from html import escape
+                    return f"//{tag}[normalize-space()='{txt}']"
+                return ''
+            for d in descriptors:
+                d['xpath'] = _mk_xpath(d)
+            cold_result = self.pipeline.process(intent["query"], {"elements": descriptors})
             cold_latency = (time.perf_counter() - start) * 1000
         except Exception as e:
             return ValidationResult(
                 fixture=intent.get("fixture", "unknown"),
-                intent_id=intent["id"],
+                intent_id=intent_id,
                 passed=False,
                 query=intent["query"],
                 expected_locator=ground_truth.get("expected", {}).get("used_locator", ""),
@@ -228,44 +267,48 @@ class FunctionalValidator:
             
         # Warm run (with cache)
         start = time.perf_counter()
-        warm_result = await self.client.query(intent["query"])
+        warm_result = self.pipeline.process(intent["query"], {"elements": descriptors})
         warm_latency = (time.perf_counter() - start) * 1000
         
         # Check cache hit
         cache_hit = warm_latency < cold_latency * 0.5  # Warm should be <50% of cold
         
         # Validate against ground truth
-        expected = ground_truth.get("expected", {})
-        actual_locator = warm_result.get("xpath") or warm_result.get("css")
+        # Determine expected locator from ground truth: accept either direct 'xpath' or nested 'expected.used_locator'
+        expected_locator = (
+            ground_truth.get("xpath")
+            or (ground_truth.get("expected", {}) or {}).get("used_locator")
+            or ""
+        )
+        actual_locator = warm_result.get("xpath") or warm_result.get("selector") or warm_result.get("css")
         
         # Check if locator matches (exact or pattern)
-        locator_match = self._check_locator_match(
-            actual_locator,
-            expected.get("used_locator")
-        )
+        locator_match = self._check_locator_match(actual_locator, expected_locator)
         
-        # Check strategy
-        strategy_match = warm_result.get("strategy") == expected.get("strategy")
+        # Check strategy (optional in these fixtures)
+        expected_strategy = (ground_truth.get("expected", {}) or {}).get("strategy")
+        strategy_match = True if not expected_strategy else (warm_result.get("strategy") == expected_strategy)
         
-        # Check confidence
+        # Check confidence (optional)
         confidence = warm_result.get("confidence", 0)
-        confidence_ok = confidence >= expected.get("confidence_min", 0.8)
+        exp_conf = (ground_truth.get("expected", {}) or {}).get("confidence_min", 0.8)
+        confidence_ok = confidence >= exp_conf
         
         passed = locator_match and strategy_match and confidence_ok
         
         return ValidationResult(
             fixture=intent.get("fixture", "unknown"),
-            intent_id=intent["id"],
+            intent_id=intent_id,
             passed=passed,
             query=intent["query"],
-            expected_locator=expected.get("used_locator", ""),
+            expected_locator=expected_locator,
             actual_locator=actual_locator,
             strategy=warm_result.get("strategy", "unknown"),
             confidence=confidence,
             cold_latency_ms=cold_latency,
             warm_latency_ms=warm_latency,
             cache_hit=cache_hit,
-            notes=expected.get("notes")
+            notes=(ground_truth.get("expected", {}) or {}).get("notes")
         )
         
     def _check_locator_match(self, actual: str, expected: str) -> bool:
@@ -301,7 +344,8 @@ class FunctionalValidator:
         
         for intent in fixture_data["intents"]:
             intent["fixture"] = fixture_data["name"]
-            ground_truth = fixture_data["ground_truth"].get(intent["id"], {})
+            key = intent.get("id") or str(len(self.results))
+            ground_truth = fixture_data["ground_truth"].get(key, {})
             
             result = await self.validate_intent(intent, ground_truth)
             results.append(result)
@@ -401,8 +445,23 @@ async def main():
         
         # Save results
         results_file = Path("functional_results.json")
+        def _json_default(o):
+            try:
+                if _np is not None and isinstance(o, (_np.floating,)):
+                    return float(o)
+                if _np is not None and isinstance(o, (_np.integer,)):
+                    return int(o)
+            except Exception:
+                pass
+            try:
+                return float(o)
+            except Exception:
+                try:
+                    return int(o)
+                except Exception:
+                    return str(o)
         with open(results_file, 'w') as f:
-            json.dump(metrics, f, indent=2)
+            json.dump(metrics, f, indent=2, default=_json_default)
         print(f"Results saved to {results_file}")
         
         # Generate report

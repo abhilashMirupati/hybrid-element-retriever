@@ -1,0 +1,159 @@
+{
+  "results": [
+    {
+      "dataset": "01_products_disambiguation",
+      "intent": "add the laptop to cart",
+      "output": {
+        "element": {},
+        "xpath": "",
+        "confidence": 0.0,
+        "strategy": "css",
+        "metadata": {
+          "cache_hits": 0,
+          "cache_misses": 0,
+          "in_shadow_dom": false
+        }
+      },
+      "expected": {
+        "xpath": "//*[@data-testid='add-to-cart-laptop']"
+      }
+    },
+    {
+      "dataset": "01_products_disambiguation",
+      "intent": "add phone to cart",
+      "output": {
+        "element": {},
+        "xpath": "",
+        "confidence": 0.0,
+        "strategy": "css",
+        "metadata": {
+          "cache_hits": 0,
+          "cache_misses": 0,
+          "in_shadow_dom": false
+        }
+      },
+      "expected": {
+        "xpath": "//*[@data-testid='add-to-cart-phone']"
+      }
+    },
+    {
+      "dataset": "02_forms",
+      "intent": "type email",
+      "output": {
+        "element": {},
+        "xpath": "",
+        "confidence": 0.0,
+        "strategy": "css",
+        "metadata": {
+          "cache_hits": 0,
+          "cache_misses": 0,
+          "in_shadow_dom": false
+        }
+      },
+      "expected": {
+        "xpath": "//*[@aria-label='email']"
+      }
+    },
+    {
+      "dataset": "02_forms",
+      "intent": "type username",
+      "output": {
+        "element": {},
+        "xpath": "",
+        "confidence": 0.0,
+        "strategy": "css",
+        "metadata": {
+          "cache_hits": 0,
+          "cache_misses": 0,
+          "in_shadow_dom": false
+        }
+      },
+      "expected": {
+        "xpath": "//*[@data-testid='user-field']"
+      }
+    },
+    {
+      "dataset": "02_forms",
+      "intent": "type password",
+      "output": {
+        "element": {},
+        "xpath": "",
+        "confidence": 0.0,
+        "strategy": "css",
+        "metadata": {
+          "cache_hits": 0,
+          "cache_misses": 0,
+          "in_shadow_dom": false
+        }
+      },
+      "expected": {
+        "xpath": "//*[@aria-label='password']"
+      }
+    },
+    {
+      "dataset": "03_overlays_spinners",
+      "intent": "accept cookies",
+      "output": {
+        "element": {},
+        "xpath": "",
+        "confidence": 0.0,
+        "strategy": "css",
+        "metadata": {
+          "cache_hits": 0,
+          "cache_misses": 0,
+          "in_shadow_dom": false
+        }
+      },
+      "expected": {
+        "xpath": "//*[@data-testid='accept-cookies']"
+      }
+    },
+    {
+      "dataset": "03_overlays_spinners",
+      "intent": "click proceed",
+      "output": {
+        "element": {},
+        "xpath": "",
+        "confidence": 0.0,
+        "strategy": "css",
+        "metadata": {
+          "cache_hits": 0,
+          "cache_misses": 0,
+          "in_shadow_dom": false
+        }
+      },
+      "expected": {
+        "xpath": "//*[@data-testid='proceed']"
+      }
+    }
+  ],
+  "metrics": {
+    "accuracy": 0.0,
+    "ir_at_1": 0.0,
+    "warm_vs_cold": {
+      "cold_median_s": 0.005895853042602539,
+      "warm_median_s": 0.005438566207885742
+    },
+    "cache_stats": {
+      "memory": {
+        "entries": 0,
+        "max_size": 1000,
+        "hits": 0,
+        "misses": 0,
+        "hit_rate": 0,
+        "total_size_bytes": 0
+      },
+      "disk": {
+        "entries": 1814,
+        "total_size_bytes": 6325418,
+        "total_size_mb": 6.032388687133789,
+        "max_size_mb": 100,
+        "total_hits": 2382,
+        "avg_hits": 1.3131201764057332
+      },
+      "hits_total": 2382,
+      "mem_items": 0,
+      "disk_items": 1814
+    }
+  }
+}
