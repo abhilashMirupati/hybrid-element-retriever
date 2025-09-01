@@ -1,3 +1,3 @@
 # Performance Report
-- small: cold=1.191s, warm=0.027s, speedup=43.85x
-- medium: cold=5.732s, warm=0.108s, speedup=52.85x
+- small: cold=0.568s, warm=0.026s, speedup=21.49x
+- medium: cold=2.257s, warm=0.109s, speedup=20.66x

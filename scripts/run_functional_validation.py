@@ -99,6 +99,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from playwright.async_api import async_playwright, Page
 try:
+    import numpy as _np  # type: ignore
+except Exception:
+    _np = None  # type: ignore
+try:
     from her.cli_api import HybridElementRetrieverClient
 except ImportError:
     # Use mock client for testing
@@ -208,6 +212,7 @@ class FunctionalValidator:
     async def validate_intent(self, intent: Dict, ground_truth: Dict) -> ValidationResult:
         """Validate a single intent against ground truth"""
         
+        intent_id = str(intent.get("id") or intent.get("intent_id") or f"q{len(self.results)}")
         # Clear cache for cold start
         if self.client:
             self.client.clear_cache()
@@ -220,7 +225,7 @@ class FunctionalValidator:
         except Exception as e:
             return ValidationResult(
                 fixture=intent.get("fixture", "unknown"),
-                intent_id=intent["id"],
+                intent_id=intent_id,
                 passed=False,
                 query=intent["query"],
                 expected_locator=ground_truth.get("expected", {}).get("used_locator", ""),
@@ -262,7 +267,7 @@ class FunctionalValidator:
         
         return ValidationResult(
             fixture=intent.get("fixture", "unknown"),
-            intent_id=intent["id"],
+            intent_id=intent_id,
             passed=passed,
             query=intent["query"],
             expected_locator=expected.get("used_locator", ""),
@@ -409,8 +414,23 @@ async def main():
         
         # Save results
         results_file = Path("functional_results.json")
+        def _json_default(o):
+            try:
+                if _np is not None and isinstance(o, (_np.floating,)):
+                    return float(o)
+                if _np is not None and isinstance(o, (_np.integer,)):
+                    return int(o)
+            except Exception:
+                pass
+            try:
+                return float(o)
+            except Exception:
+                try:
+                    return int(o)
+                except Exception:
+                    return str(o)
         with open(results_file, 'w') as f:
-            json.dump(metrics, f, indent=2)
+            json.dump(metrics, f, indent=2, default=_json_default)
         print(f"Results saved to {results_file}")
         
         # Generate report
