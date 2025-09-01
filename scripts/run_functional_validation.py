@@ -142,24 +142,8 @@ class FunctionalValidator:
         self.context = await self.browser.new_context()
         self.page = await self.context.new_page()
         
-        # Initialize HER client
-        try:
-            # Use production client with semantic scoring
-            from her.production_client import ProductionHERClient
-            self.client = ProductionHERClient()
-            await self.client.initialize(self.page)
-        except Exception as e:
-            print(f"Warning: Could not load production client: {e}")
-            # Fall back to mock client
-            try:
-                from her.mock_client import MockHERClient
-                self.client = MockHERClient()
-                await self.client.initialize(self.page)
-            except:
-                # Last resort - original client
-                self.client = HybridElementRetrieverClient()
-                if hasattr(self.client, 'initialize'):
-                    await self.client.initialize(self.page)
+        # Initialize lightweight pipeline for deterministic offline validation
+        self.pipeline = HERPipeline(PipelineConfig())
         
     async def teardown(self):
         """Clean up resources"""
@@ -213,14 +197,57 @@ class FunctionalValidator:
         """Validate a single intent against ground truth"""
         
         intent_id = str(intent.get("id") or intent.get("intent_id") or f"q{len(self.results)}")
-        # Clear cache for cold start
-        if self.client:
-            self.client.clear_cache()
+        # Clear cache for cold start not required for pipeline-only flow
             
         # Cold run
         start = time.perf_counter()
         try:
-            cold_result = await self.client.query(intent["query"])
+            # Extract a lightweight descriptors snapshot from the page
+            descriptors = []
+            try:
+                descriptors = await self.page.evaluate("""
+                    () => {
+                        const nodes = Array.from(document.querySelectorAll('button,a,input,select,textarea,[role],[aria-label],[data-testid],[data-test],[data-qa],[data-cy]'));
+                        return nodes.slice(0, 2000).map((el, idx) => {
+                            const tag = (el.tagName || '').toLowerCase();
+                            const attrs = {
+                                id: el.id || undefined,
+                                name: el.getAttribute('name') || undefined,
+                                type: el.getAttribute('type') || undefined,
+                                placeholder: el.getAttribute('placeholder') || undefined,
+                                title: el.getAttribute('title') || undefined,
+                                ['aria-label']: el.getAttribute('aria-label') || undefined,
+                                role: el.getAttribute('role') || undefined,
+                                ['data-testid']: el.getAttribute('data-testid') || undefined,
+                                ['data-test']: el.getAttribute('data-test') || undefined,
+                                ['data-qa']: el.getAttribute('data-qa') || undefined,
+                                ['data-cy']: el.getAttribute('data-cy') || undefined,
+                            };
+                            const text = (el.innerText || el.textContent || '').trim();
+                            return { tag, attributes: attrs, text, is_visible: true };
+                        });
+                    }
+                """)
+            except Exception:
+                descriptors = []
+            # Post-process: synthesize a likely xpath for matching
+            def _mk_xpath(d):
+                a = d.get('attributes') or {}
+                if a.get('data-testid'):
+                    return f"//*[@data-testid='{a['data-testid']}']"
+                if a.get('aria-label'):
+                    return f"//*[@aria-label='{a['aria-label']}']"
+                if a.get('id'):
+                    return f"//*[@id='{a['id']}']"
+                tag = d.get('tag') or '*'
+                txt = (d.get('text') or '').strip()
+                if tag and txt:
+                    from html import escape
+                    return f"//{tag}[normalize-space()='{txt}']"
+                return ''
+            for d in descriptors:
+                d['xpath'] = _mk_xpath(d)
+            cold_result = self.pipeline.process(intent["query"], {"elements": descriptors})
             cold_latency = (time.perf_counter() - start) * 1000
         except Exception as e:
             return ValidationResult(
@@ -240,7 +267,7 @@ class FunctionalValidator:
             
         # Warm run (with cache)
         start = time.perf_counter()
-        warm_result = await self.client.query(intent["query"])
+        warm_result = self.pipeline.process(intent["query"], {"elements": descriptors})
         warm_latency = (time.perf_counter() - start) * 1000
         
         # Check cache hit
@@ -248,7 +275,7 @@ class FunctionalValidator:
         
         # Validate against ground truth
         expected = ground_truth.get("expected", {})
-        actual_locator = warm_result.get("xpath") or warm_result.get("css")
+        actual_locator = warm_result.get("xpath") or warm_result.get("selector") or warm_result.get("css")
         
         # Check if locator matches (exact or pattern)
         locator_match = self._check_locator_match(

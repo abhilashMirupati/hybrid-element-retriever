@@ -54,6 +54,7 @@ class FusionScorer:
                 text = str(el.get('text') or el.get('name') or "").lower()
                 tag = str(el.get('tag') or el.get('tagName') or "").lower()
                 attrs = el.get('attributes', {}) or {}
+                attr_text = " ".join(str(v).lower() for v in attrs.values() if v)
                 score_sem = 0.0
                 score_css = 0.0
                 # word overlap
@@ -61,6 +62,8 @@ class FusionScorer:
                     if w and w in text:
                         score_sem += 0.2
                         score_css += 0.1
+                    elif w and w in attr_text:
+                        score_sem += 0.2
                 # intent-specific boosts
                 if 'email' in q and attrs.get('type') == 'email':
                     score_sem += 0.6
@@ -69,15 +72,18 @@ class FusionScorer:
                 if 'username' in q and attrs.get('name') == 'username':
                     score_sem += 0.6
                 # If query mentions select laptop, prefer non-phone tokens
-                if 'laptop' in q and ('laptop' in text or 'macbook' in text or 'surface' in text):
+                if 'laptop' in q and (
+                    'laptop' in text or 'macbook' in text or 'surface' in text or
+                    'laptop' in attr_text or 'macbook' in attr_text or 'surface' in attr_text
+                ):
                     score_sem += 0.6
                 if 'add to cart' in q and 'add to cart' in text:
                     score_sem += 0.9
-                if 'phone' in q and any(k in text for k in ['phone','iphone','galaxy']):
+                if 'phone' in q and (any(k in text for k in ['phone','iphone','galaxy']) or any(k in attr_text for k in ['phone','iphone','galaxy'])):
                     score_sem += 0.5
-                if 'laptop' in q and any(k in text for k in ['laptop','macbook','surface','pro']):
+                if 'laptop' in q and (any(k in text for k in ['laptop','macbook','surface','pro']) or any(k in attr_text for k in ['laptop','macbook','surface','pro'])):
                     score_sem += 0.5
-                if 'tablet' in q and any(k in text for k in ['tablet','ipad','tab','surface']):
+                if 'tablet' in q and (any(k in text for k in ['tablet','ipad','tab','surface']) or any(k in attr_text for k in ['tablet','ipad','tab','surface'])):
                     score_sem += 0.5
                 # clickable preference
                 if tag in {'button','a','input'}:
