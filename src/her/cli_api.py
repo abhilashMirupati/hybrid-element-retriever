@@ -705,3 +705,35 @@ class QueryResult:
     selector: str
     score: float
     element: Dict[str, Any]
+
+
+class HER:
+    """Minimal compatibility wrapper used by examples.
+
+    Provides a simple `resolve(intent)` API returning a dict with keys {ok, selector}.
+    Internally delegates to HybridElementRetrieverClient.query for best-effort resolution.
+    """
+
+    def __init__(self, page: Optional[Page] = None, headless: bool = True) -> None:
+        try:
+            self._client = HybridElementRetrieverClient(headless=headless)
+            if page is not None:
+                # Attach provided page to reuse browser context when possible
+                self._client.page = page
+        except Exception:
+            self._client = None
+
+    def resolve(self, intent: str) -> Dict[str, Any]:
+        try:
+            if not self._client:
+                return {"ok": False, "selector": "", "error": "client unavailable"}
+            res = self._client.query(intent)
+            if isinstance(res, dict) and res.get("selector"):
+                return {"ok": True, "selector": res["selector"]}
+            # Fallback to first candidate if list
+            if isinstance(res, list) and res:
+                sel = str(res[0].get("selector", ""))
+                return {"ok": bool(sel), "selector": sel}
+            return {"ok": False, "selector": ""}
+        except Exception as e:
+            return {"ok": False, "selector": "", "error": str(e)}

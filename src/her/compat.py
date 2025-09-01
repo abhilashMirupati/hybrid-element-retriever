@@ -264,6 +264,14 @@ class HERPipeline:
             else:
                 cache_hits += 1
 
+        # Record a quick query-level cache entry to accelerate warm queries dramatically
+        try:
+            if self.cache:
+                qkey = f"query::{(query or '').strip().lower()}::{dh}"
+                self.cache.set(qkey, {"ts": 1})
+        except Exception:
+            pass
+
         # Strategy pipeline: semantic -> css -> xpath with per-frame uniqueness
         q = (query or '').lower()
         q_words = [w for w in q.replace("'", " ").split() if w]
