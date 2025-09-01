@@ -23,6 +23,7 @@ import hashlib
 import json
 
 from .embeddings import _resolve
+from .rank.fusion import fuse_scores
 from .cache.two_tier import get_global_cache
 
 
@@ -266,6 +267,14 @@ class HERPipeline:
             for w in q_words:
                 if w in text:
                     score += 0.2
+                # Also match common attribute fields to align with intents
+                for k in ('aria-label','data-testid','id','name','title','placeholder'):
+                    try:
+                        v = str(attrs.get(k) or '').lower()
+                    except Exception:
+                        v = ''
+                    if v and w in v:
+                        score += 0.2
             if 'email' in q and attrs.get('type') == 'email':
                 score += 0.6
             if 'password' in q and attrs.get('type') == 'password':
@@ -320,7 +329,17 @@ class HERPipeline:
             if kw in q:
                 preferred_frame_id = fid
                 break
-        for el in elements:
+        # Infer intended action from query tokens for fusion
+        def _intent_action_from_query(qs: str) -> str:
+            if any(w in qs for w in ['type', 'enter', 'fill']):
+                return 'type'
+            if any(w in qs for w in ['select', 'choose', 'open']):
+                return 'select'
+            return 'click'
+
+        intent_action = _intent_action_from_query(q)
+
+        for idx_el, el in enumerate(elements):
             # semantic first
             s = _semantic_score(el)
             sel = None; strat = None
@@ -364,7 +383,12 @@ class HERPipeline:
                     bias += 0.2
                 if 'welcome' in q and ('welcome' in text_l):
                     bias += 0.2
-                eff = s + bias
+                # Clickability/visibility heuristics for fusion
+                tag_l = str(el.get('tag', '')).lower()
+                attrs_l = el.get('attributes', {}) or {}
+                clickable = bool(attrs_l.get('role') in ['button','link','menuitem','tab','checkbox','radio','combobox'] or tag_l in ['button','a'])
+                fused = float(fuse_scores(s, intent_action, el, True, clickable, None, idx_el))
+                eff = fused + bias
                 if eff > best_score:
                     best_score = eff; best_global = {'element': el, 'selector': sel, 'strategy': strat}
 
@@ -379,7 +403,14 @@ class HERPipeline:
         else:
             chosen = best_global
 
-        sel_out = (chosen['selector'] if chosen else '') or str((chosen['element'].get('xpath') if chosen and isinstance(chosen.get('element'), dict) else '') or '')
+        # Determine a valid XPath for runner strictness. Prefer actual XPath; fallback to descriptor's computed_xpath.
+        raw_selector = (chosen['selector'] if chosen else '') or ''
+        chosen_el = chosen['element'] if chosen else {}
+        is_xpath = isinstance(raw_selector, str) and (raw_selector.startswith('//') or raw_selector.startswith('//*[@'))
+        fallback_xpath = ''
+        if isinstance(chosen_el, dict):
+            fallback_xpath = str(chosen_el.get('computed_xpath') or chosen_el.get('xpath') or '')
+        sel_out = raw_selector if is_xpath else fallback_xpath or raw_selector
         # Build output and metadata after selection
         metadata = {
             "cache_hits": cache_hits,
@@ -394,7 +425,6 @@ class HERPipeline:
             metadata=metadata,
         )
         out = cr.to_dict()
-        chosen_el = chosen['element'] if chosen else {}
         used_frame = chosen_el.get('__frame_id') if isinstance(chosen_el, dict) else None
         out["used_frame_id"] = used_frame if used_frame is not None else ("main" if isinstance(chosen_el, dict) else None)
         out["frame_path"] = chosen_el.get('__frame_path') if isinstance(chosen_el, dict) else []

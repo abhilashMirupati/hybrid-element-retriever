@@ -1,0 +1,1 @@
+from .synthesize import LocatorSynthesizer  # re-export for compatibility

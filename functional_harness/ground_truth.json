@@ -1,0 +1,9 @@
+{
+  "0": {"xpath": "//*[@id='login-email']"},
+  "1": {"xpath": "//*[@id='login-password']"},
+  "2": {"xpath": "//*[@id='login-button']"},
+  "3": {"xpath": "//*[@data-testid='overlay-close']"},
+  "4": {"xpath": "//*[@id='country-select']"},
+  "5": {"xpath": "//*[@id='submit-button']"}
+}
+

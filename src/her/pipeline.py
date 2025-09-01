@@ -10,7 +10,7 @@ import time
 
 from her.embeddings.query_embedder import QueryEmbedder
 from her.embeddings.element_embedder import ElementEmbedder
-from her.rank.fusion import FusionScorer
+from her.rank.fusion_scorer import FusionScorer
 from her.cache.two_tier import TwoTierCache
 # Note: Do NOT import HERPipeline here to avoid circular imports.
 
