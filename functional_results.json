@@ -131,8 +131,8 @@
     "accuracy": 0.0,
     "ir_at_1": 0.0,
     "warm_vs_cold": {
-      "cold_median_s": 0.007490396499633789,
-      "warm_median_s": 0.006870428721110026
+      "cold_median_s": 0.005895853042602539,
+      "warm_median_s": 0.005438566207885742
     },
     "cache_stats": {
       "memory": {
@@ -144,16 +144,16 @@
         "total_size_bytes": 0
       },
       "disk": {
-        "entries": 1800,
-        "total_size_bytes": 6276600,
-        "total_size_mb": 5.985832214355469,
+        "entries": 1814,
+        "total_size_bytes": 6325418,
+        "total_size_mb": 6.032388687133789,
         "max_size_mb": 100,
-        "total_hits": 2335,
-        "avg_hits": 1.2972222222222223
+        "total_hits": 2382,
+        "avg_hits": 1.3131201764057332
       },
-      "hits_total": 2335,
+      "hits_total": 2382,
       "mem_items": 0,
-      "disk_items": 1800
+      "disk_items": 1814
     }
   }
 }

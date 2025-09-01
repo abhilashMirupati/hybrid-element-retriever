@@ -274,21 +274,25 @@ class FunctionalValidator:
         cache_hit = warm_latency < cold_latency * 0.5  # Warm should be <50% of cold
         
         # Validate against ground truth
-        expected = ground_truth.get("expected", {})
+        # Determine expected locator from ground truth: accept either direct 'xpath' or nested 'expected.used_locator'
+        expected_locator = (
+            ground_truth.get("xpath")
+            or (ground_truth.get("expected", {}) or {}).get("used_locator")
+            or ""
+        )
         actual_locator = warm_result.get("xpath") or warm_result.get("selector") or warm_result.get("css")
         
         # Check if locator matches (exact or pattern)
-        locator_match = self._check_locator_match(
-            actual_locator,
-            expected.get("used_locator")
-        )
+        locator_match = self._check_locator_match(actual_locator, expected_locator)
         
-        # Check strategy
-        strategy_match = warm_result.get("strategy") == expected.get("strategy")
+        # Check strategy (optional in these fixtures)
+        expected_strategy = (ground_truth.get("expected", {}) or {}).get("strategy")
+        strategy_match = True if not expected_strategy else (warm_result.get("strategy") == expected_strategy)
         
-        # Check confidence
+        # Check confidence (optional)
         confidence = warm_result.get("confidence", 0)
-        confidence_ok = confidence >= expected.get("confidence_min", 0.8)
+        exp_conf = (ground_truth.get("expected", {}) or {}).get("confidence_min", 0.8)
+        confidence_ok = confidence >= exp_conf
         
         passed = locator_match and strategy_match and confidence_ok
         
@@ -297,14 +301,14 @@ class FunctionalValidator:
             intent_id=intent_id,
             passed=passed,
             query=intent["query"],
-            expected_locator=expected.get("used_locator", ""),
+            expected_locator=expected_locator,
             actual_locator=actual_locator,
             strategy=warm_result.get("strategy", "unknown"),
             confidence=confidence,
             cold_latency_ms=cold_latency,
             warm_latency_ms=warm_latency,
             cache_hit=cache_hit,
-            notes=expected.get("notes")
+            notes=(ground_truth.get("expected", {}) or {}).get("notes")
         )
         
     def _check_locator_match(self, actual: str, expected: str) -> bool:
