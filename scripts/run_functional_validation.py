@@ -191,11 +191,18 @@ class FunctionalValidator:
         truth_file = fixture_dir / "ground_truth.json"
         with open(truth_file, 'r') as f:
             ground_truth = json.load(f)
-            
+        # Support simple list or keyed forms
+        if isinstance(ground_truth, list):
+            gt_map = {str(i): v for i, v in enumerate(ground_truth)}
+        elif isinstance(ground_truth, dict):
+            gt_map = ground_truth
+        else:
+            gt_map = {}
+        
         return {
             "name": fixture_path.stem,
             "intents": intents,
-            "ground_truth": {gt["intent_id"]: gt for gt in ground_truth}
+            "ground_truth": gt_map
         }
         
     async def validate_intent(self, intent: Dict, ground_truth: Dict) -> ValidationResult:
@@ -301,7 +308,8 @@ class FunctionalValidator:
         
         for intent in fixture_data["intents"]:
             intent["fixture"] = fixture_data["name"]
-            ground_truth = fixture_data["ground_truth"].get(intent["id"], {})
+            key = intent.get("id") or str(len(self.results))
+            ground_truth = fixture_data["ground_truth"].get(key, {})
             
             result = await self.validate_intent(intent, ground_truth)
             results.append(result)

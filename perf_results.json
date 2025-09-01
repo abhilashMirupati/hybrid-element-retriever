@@ -1,0 +1,21 @@
+{
+  "profiles": [
+    {
+      "name": "small",
+      "query": "find element 10",
+      "elements": 200,
+      "cold_s": 1.191028768022079,
+      "warm_s": 0.0271630430361256,
+      "speedup": 43.84739833596941
+    },
+    {
+      "name": "medium",
+      "query": "find element 50",
+      "elements": 1000,
+      "cold_s": 5.732427968992852,
+      "warm_s": 0.10846880794269964,
+      "speedup": 52.84863065906558
+    }
+  ],
+  "notes": "Cold vs warm timings of HERPipeline on synthetic DOM snapshots."
+}
