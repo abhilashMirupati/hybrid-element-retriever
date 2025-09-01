@@ -1,57 +1,26 @@
 #!/usr/bin/env python3
-import time
-import json
+import json, time
 from pathlib import Path
-
-from her.pipeline import HERPipeline, PipelineConfig
-
-
-def profile_once(name: str, query: str, dom_elements: int = 200):
-    cfg = PipelineConfig()
-    pipe = HERPipeline(cfg)
-    dom = {"elements": [
-        {"tag": "div", "text": f"Element {i}", "xpath": f"//div[{i}]"}
-        for i in range(dom_elements)
-    ]}
-    # Cold
-    t0 = time.perf_counter()
-    pipe.process(query, dom)
-    cold = time.perf_counter() - t0
-    # Warm
-    t1 = time.perf_counter()
-    pipe.process(query, dom)
-    warm = time.perf_counter() - t1
-    return {
-        "name": name,
-        "query": query,
-        "elements": dom_elements,
-        "cold_s": cold,
-        "warm_s": warm,
-        "speedup": (cold / warm) if warm > 0 else None,
-    }
-
+from playwright.sync_api import sync_playwright
 
 def main():
-    cases = [
-        ("small", "find element 10", 200),
-        ("medium", "find element 50", 1000),
-    ]
-    results = [profile_once(n, q, k) for n, q, k in cases]
-    perf = {
-        "profiles": results,
-        "notes": "Cold vs warm timings of HERPipeline on synthetic DOM snapshots.",
-    }
-    Path("PERF_REPORT.md").write_text(
-        "\n".join(
-            [
-                "# Performance Report",
-                *(f"- {r['name']}: cold={r['cold_s']:.3f}s, warm={r['warm_s']:.3f}s, speedup={r['speedup']:.2f}x" for r in results),
-            ]
-        )
-    )
-    Path("perf_results.json").write_text(json.dumps(perf, indent=2))
-
+    out = {"runs": []}
+    with sync_playwright() as pw:
+        b = pw.chromium.launch(headless=True)
+        ctx = b.new_context()
+        page = ctx.new_page()
+        t0 = time.perf_counter()
+        page.goto("https://example.com", wait_until="networkidle")
+        t1 = time.perf_counter()
+        cold_ms = round((t1 - t0) * 1000, 1)
+        t2 = time.perf_counter()
+        page.reload(wait_until="networkidle")
+        t3 = time.perf_counter()
+        warm_ms = round((t3 - t2) * 1000, 1)
+        out["runs"].append({"cold_ms": cold_ms, "warm_ms": warm_ms})
+        b.close()
+    Path("PERF_REPORT.md").write_text(f"# Perf Report\n\n- Cold: {cold_ms} ms\n- Warm: {warm_ms} ms\n", encoding="utf-8")
+    print(json.dumps(out, indent=2))
 
 if __name__ == "__main__":
     main()
-
