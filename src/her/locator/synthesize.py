@@ -36,3 +36,15 @@ def synthesize_xpath(desc: Dict) -> List[Tuple[str, str]]:
         add("text-contains", f'//*[contains(normalize-space(), "{text}")]')
 
     return out
+
+
+class LocatorSynthesizer:
+    """Minimal class wrapper used by cli_api and tests.
+
+    synthesize(desc) -> List[Dict]: each dict has {'kind','selector'} keys
+    """
+    def synthesize(self, desc: Dict) -> List[Dict[str, str]]:
+        cands: List[Dict[str, str]] = []
+        for kind, xp in synthesize_xpath(desc):
+            cands.append({"kind": kind, "selector": xp})
+        return cands
