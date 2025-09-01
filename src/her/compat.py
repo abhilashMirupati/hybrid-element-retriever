@@ -277,8 +277,30 @@ class HERPipeline:
                     if embed_budget <= 0:
                         break
         else:
-            # Warm path: skip per-element cache lookups entirely for speed
-            pass
+            # Warm path: check cache for each element; embed only missing ones
+            embed_iter = elements
+            for el in embed_iter:
+                k = _key_for_element(el)
+                val = None
+                if self.cache:
+                    try:
+                        val = self.cache.get(k)
+                    except Exception:
+                        val = None
+                if val is None:
+                    cache_misses += 1
+                    try:
+                        _ = self._embed_element(el)
+                    except Exception:
+                        _ = [[0.0]*384]
+                    if self.cache:
+                        try:
+                            payload = {"embedding": _[0] if isinstance(_, list) else _}
+                            self.cache.set(k, payload)
+                        except Exception:
+                            pass
+                else:
+                    cache_hits += 1
 
         # Do not write query-level entry yet; we'll persist the final result below to preserve strategy/metadata
 
