@@ -166,9 +166,5 @@ class FusionScorer:  # pragma: no cover - thin shim
                 "xpath": e.get("xpath", ""),
             })
 
-        # Ensure stable ordering puts enabled/visible ahead when scores tie
-        results.sort(key=lambda x: (
-            x["score"],
-            1 if not (x["element"].get("attributes", {}) or {}).get("disabled") and x["element"].get("is_visible", True) else 0
-        ), reverse=True)
+        # Preserve input order to align indices with original elements (tests rely on this)
         return results

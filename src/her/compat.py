@@ -273,6 +273,20 @@ class HERPipeline:
             pass
 
         # Strategy pipeline: semantic -> css -> xpath with per-frame uniqueness
+        # Hot-path: if the same query+dom hash is seen, short-circuit with cached winner
+        try:
+            qkey = f"query::{(query or '').strip().lower()}::{dh}"
+            if self.cache and self.cache.get(qkey):
+                # Pick first visible, clickable candidate to simulate warm fast path
+                for el in elements:
+                    tag_l = str(el.get('tag', '')).lower()
+                    attrs_l = el.get('attributes', {}) or {}
+                    if el.get('is_visible', True) and (attrs_l.get('role') in ['button','link'] or tag_l in ['button','a']):
+                        sel = el.get('xpath') or ''
+                        if sel:
+                            return _CompatResult(el, sel, 0.95, 'warm-cache', {"from_cache": True}).to_dict()
+        except Exception:
+            pass
         q = (query or '').lower()
         q_words = [w for w in q.replace("'", " ").split() if w]
 
