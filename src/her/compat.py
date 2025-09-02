@@ -405,9 +405,17 @@ class HERPipeline:
         # Compute missing keys constrained to DOM delta since last call
         try:
             prev_keys: set[str] = set(getattr(self, '_last_element_keys', set()))
+            last_len = int(getattr(self, '_last_elements_len', 0) or 0)
         except Exception:
             prev_keys = set()
-        delta_keys = [k for k in keys if k not in prev_keys] or keys
+            last_len = 0
+        # Heuristic: if elements were appended, prefer only new tail keys
+        appended_count = len(keys) - last_len
+        if appended_count > 0 and appended_count <= 64:
+            appended_keys = keys[-appended_count:]
+            delta_keys = [k for k in appended_keys if k not in prev_keys] or appended_keys
+        else:
+            delta_keys = [k for k in keys if k not in prev_keys] or keys
         missing_keys = [k for k in delta_keys if k not in hits_map]
         if embed_budget is not None and missing_keys:
             missing_keys = missing_keys[: max(0, int(embed_budget))]
@@ -436,6 +444,7 @@ class HERPipeline:
         # Update last element keys snapshot for next incremental pass
         try:
             self._last_element_keys = set(keys)
+            self._last_elements_len = len(keys)
         except Exception:
             pass
 
