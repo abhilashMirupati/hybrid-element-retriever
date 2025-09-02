@@ -65,7 +65,24 @@ def main(argv: list[str] | None = None) -> int:
                 url = args[args.index('--url') + 1]
             except Exception:
                 url = None
-        hc = HybridClient()
+        try:
+            hc = HybridClient()
+        except Exception as e:
+            # If client cannot initialize (e.g., browsers not installed), act/query should still
+            # return strict JSON instead of raising. Provide minimal error contract.
+            if cmd == 'act':
+                return _print({
+                    'status': 'failure',
+                    'method': 'click',
+                    'confidence': 0.0,
+                    'dom_hash': '',
+                    'used_locator': None,
+                    'overlay_events': [],
+                    'retries': {'attempts': 0},
+                    'error': 'client initialization failed'
+                })
+            else:
+                return _print({'ok': False, 'error': 'client initialization failed'})
         if cmd == 'query':
             res = hc.query(text, url=url)
             if isinstance(res, dict) and 'selector' in res and 'element' in res:
@@ -88,7 +105,20 @@ def main(argv: list[str] | None = None) -> int:
                 })
             return _print(res if isinstance(res, dict) else {'ok': True, 'result': res})
         else:
-            res = hc.act(text, url=url)
+            try:
+                res = hc.act(text, url=url)
+            except Exception as e:
+                # Normalize failures (e.g., Playwright missing browsers) to strict JSON
+                return _print({
+                    'status': 'failure',
+                    'method': 'click',
+                    'confidence': 0.0,
+                    'dom_hash': '',
+                    'used_locator': None,
+                    'overlay_events': [],
+                    'retries': {'attempts': 0},
+                    'error': str(e)
+                })
             return _print(res if isinstance(res, dict) else {'ok': True, 'result': res})
 
     return _print({"ok": False, "error": f"Unknown command: {cmd}"})
