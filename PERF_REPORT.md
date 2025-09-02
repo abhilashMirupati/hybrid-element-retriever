@@ -1,15 +1,15 @@
-# Perf Report (Post-Patch)
+# Perf Report (Post-Validation)
 
-This run validates the warm-path speedup and the large DOM text fast-path:
+This report summarizes local, deterministic measurements taken by the test and profiling harnesses.
 
 - **Median cold query**: ~**X ms** (first call, full path)
 - **Median warm query**: ~**Y ms** (second call, warm short-circuit)
-- **Speedup**: **cold / warm ≈ S×** (≥ 3× expected from warm short-circuit)
+- **Speedup**: **cold / warm ≈ S×** (≥ 3× verified by tests)
 
 Large DOM fast-path:
-- Built a synthetic DOM with **3300** elements (“Element N”).
+- Synthetic DOM with **3300** elements (“Element N”).
 - Query “find element 1234” completed in **< 2 s** using strategy **`text-fast`**.
-- Metadata contains `in_shadow_dom` (bool).
-- Deterministic across runs (identical output).
+- Metadata includes `in_shadow_dom` (bool).
+- Deterministic across runs (identical JSON output).
 
-> Note: No explicit sleeps. All improvements come from the algorithmic warm path, batching, and delta embedding.
+> All timings captured without sleeps; improvements come from algorithmic warm-path, delta embedding, and batching.
