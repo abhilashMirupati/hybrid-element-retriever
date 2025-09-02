@@ -1,14 +1,14 @@
-# Functional Report (Post-Patch)
+# Functional Validation Report
 
-**Status:** Functional suite unchanged and stable.
+**Status:** Functional suite stable and unchanged in logic.
 
-- Harness entrypoint: `scripts/run_functional_validation.py`
-- DOM extractor: `scripts/dom_extractor.js`
+- Harness: `scripts/run_functional_validation.py`
+- Extractor: `scripts/dom_extractor.js`
 - Selector precedence (fallback): `data-testid > aria-label > id > role[name] > text exact > text contains`
 - **Overall accuracy:** ≥ 95% (target)
 - **Login / overlays / forms:** **100%** (target)
 - Outputs:
-  - `functional_results.json` — strict JSON records
+  - `functional_results.json` — strict JSON per-intent
   - `FUNCTIONAL_REPORT.md` — this summary
 
-**Non-functional changes:** None since last functional run (only tests and docs were added).
+**Changes in this revision:** Tests and docs only; pipeline unchanged.
