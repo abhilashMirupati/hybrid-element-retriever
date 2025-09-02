@@ -103,7 +103,16 @@ def main(argv: list[str] | None = None) -> int:
                     'strategy': str(res.get('strategy', 'fusion')),
                     'metadata': dict(res.get('metadata', {})),
                 })
-            return _print(res if isinstance(res, dict) else {'ok': True, 'result': res})
+            # Strict error contract for no-candidate or unexpected shapes
+            if isinstance(res, dict) and res.get('ok') is False:
+                return _print(res)
+            return _print({
+                'element': None,
+                'xpath': None,
+                'confidence': 0.0,
+                'strategy': 'none',
+                'metadata': {'no_candidate': True, 'url': url or ''},
+            })
         else:
             try:
                 res = hc.act(text, url=url)
@@ -129,6 +138,7 @@ if __name__ == "__main__":  # pragma: no cover
 
 
 # Back-compat function expected by some tests
+
 def handle_cache_command(args) -> int:  # type: ignore
     cleared = bool(getattr(args, 'clear', False))
     stats = bool(getattr(args, 'stats', False))

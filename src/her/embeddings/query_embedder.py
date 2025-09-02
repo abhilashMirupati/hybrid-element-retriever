@@ -54,3 +54,10 @@ class QueryEmbedder:
             return np.zeros((0, self.dim), dtype=np.float32)
         mats = [self._hash_to_vector(t) for t in texts]
         return np.stack(mats, axis=0)
+
+    # Back-compat aliases expected by some call sites
+    def embed(self, text: str) -> np.ndarray:  # type: ignore[override]
+        return self.encode(text)
+
+    def embed_batch(self, texts: List[str]) -> np.ndarray:  # type: ignore[override]
+        return self.batch_encode(texts)

@@ -5,7 +5,7 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass
 
-from .verify import verify_locator
+from .verify import verify_selector as verify_locator
 from .synthesize import LocatorSynthesizer
 from ..vectordb.sqlite_cache import SQLiteKV
 

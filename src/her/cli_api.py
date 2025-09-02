@@ -379,7 +379,17 @@ class HybridElementRetrieverClient:
                     return self._fallback_query(phrase, descriptors, page)
             else:
                 # Use legacy flow
-                return self._legacy_query(phrase, descriptors, page)
+                result = self._legacy_query(phrase, descriptors, page)
+                # Normalize to strict schema when legacy returns error/no-candidate
+                if isinstance(result, dict) and 'ok' in result and result.get('ok') is False:
+                    return {
+                        'element': None,
+                        'xpath': None,
+                        'confidence': 0.0,
+                        'strategy': 'none',
+                        'metadata': {'no_candidate': True}
+                    }
+                return result
             
         except Exception as e:
             logger.error(f"Query failed: {e}", exc_info=True)

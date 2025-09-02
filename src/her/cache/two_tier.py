@@ -402,6 +402,7 @@ class TwoTierCache:
         *,
         cache_dir: Optional[Path] = None,
         max_memory_items: Optional[int] = None,
+        memory_limit: Optional[int] = None,
     ):
         """Initialize two-tier cache.
 
@@ -411,12 +412,17 @@ class TwoTierCache:
             db_path: Optional database path
             cache_dir: Optional directory to place the SQLite db (embeddings.db)
             max_memory_items: Override for memory LRU capacity
+            memory_limit: Alias for memory_size (legacy tests)
         """
         # Resolve effective paths and capacities
         effective_db_path = (
             (Path(cache_dir) / "embeddings.db") if cache_dir is not None else (db_path or (get_cache_dir() / "embeddings.db"))
         )
-        effective_memory = max_memory_items if max_memory_items is not None else memory_size
+        effective_memory = (
+            max_memory_items if max_memory_items is not None else (
+                memory_limit if memory_limit is not None else memory_size
+            )
+        )
 
         self.memory_cache = LRUCache(max_size=effective_memory)
         self.disk_cache = SQLiteCache(db_path=effective_db_path, max_size_mb=disk_size_mb)
