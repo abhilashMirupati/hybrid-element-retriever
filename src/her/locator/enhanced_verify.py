@@ -44,12 +44,12 @@ class VerificationResult:
         }
 
 
-class EnhancedVerifier:
+class EnhancedLocatorVerifier:
     """Enhanced locator verifier with self-healing and frame support."""
     
     STRATEGY_ORDER = ["semantic", "css", "xpath_contextual", "xpath_text"]
     
-    def __init__(self, cache_path: Optional[str] = None):
+    def __init__(self, cache_path: Optional[str] = None, auto_handle_popups: bool = True):
         """Initialize enhanced verifier.
         
         Args:
@@ -57,6 +57,7 @@ class EnhancedVerifier:
         """
         self.synthesizer = LocatorSynthesizer()
         self.promotion_cache = SQLiteKV(cache_path) if cache_path else None
+        self.auto_handle_popups = auto_handle_popups
     
     def verify_with_healing(
         self,
@@ -210,6 +211,38 @@ class EnhancedVerifier:
         
         return results
     
+    def verify(self, selector: str, page: Any):
+        """Compatibility API used in examples: returns tuple (ok, reason, details).
+
+        Falls back to simple uniqueness/visibility checks. If auto popups enabled,
+        attempts a soft close before final verification.
+        """
+        try:
+            if self.auto_handle_popups and hasattr(PopupHandler, 'close_any'):
+                try:
+                    PopupHandler.close_any(page)
+                except Exception:
+                    pass
+            ok = False; reason = ""; details = {"unique": False, "count": 0, "visible": False}
+            cnt = self._count_elements(selector, page)
+            details["count"] = cnt
+            if cnt == 0:
+                return (False, "No elements matched.", details)
+            if cnt != 1:
+                return (False, f"Matched {cnt} elements; not unique.", details)
+            el = page.query_selector(selector)
+            vis = True
+            try:
+                vis = bool(el.is_visible()) if el else False
+            except Exception:
+                vis = True
+            details["visible"] = vis
+            if not vis:
+                return (False, "Not visible.", details)
+            return (True, "successfully verified", details)
+        except Exception as e:
+            return (False, f"Verify error: {e}", {"unique": False, "count": 0, "visible": False})
+
     def _verify_unique_in_frame(
         self,
         selector: str,
@@ -380,6 +413,63 @@ class EnhancedVerifier:
             return frame.evaluate("window.frameElement ? window.frameElement.id : null")
         except Exception:
             return None
+
+
+class PopupHandler:
+    """Minimal popup detector/closer used by examples.
+
+    Implements detect_popup(page) -> locator|None and close_popup(page, locator)->bool
+    and a convenience close_any(page).
+    """
+
+    @staticmethod
+    def detect_popup(page: Any):
+        try:
+            # Common overlay patterns
+            sels = [
+                "[role='dialog']",
+                ".modal, .modal-dialog, .overlay, .backdrop",
+                "text=/cookie/i",
+            ]
+            for s in sels:
+                try:
+                    loc = page.locator(s)
+                    if loc and loc.count() > 0 and loc.first.is_visible():
+                        return loc.first
+                except Exception:
+                    continue
+        except Exception:
+            return None
+        return None
+
+    @staticmethod
+    def close_popup(page: Any, locator: Any) -> bool:
+        try:
+            # Try common close patterns inside locator
+            close_sels = ["button:has-text('Close')", "button[aria-label='Close']", "[data-test*='close']", "text=/accept|agree|ok/i"]
+            for s in close_sels:
+                try:
+                    btn = locator.locator(s)
+                    if btn and btn.count() > 0:
+                        btn.first.click()
+                        return True
+                except Exception:
+                    continue
+            # Fallback: press Escape
+            try:
+                page.keyboard.press('Escape')
+                return True
+            except Exception:
+                return False
+        except Exception:
+            return False
+
+    @staticmethod
+    def close_any(page: Any) -> bool:
+        loc = PopupHandler.detect_popup(page)
+        if loc is not None:
+            return PopupHandler.close_popup(page, loc)
+        return False
     
     def _get_frame_url(self, frame: Any) -> Optional[str]:
         """Get frame URL.

@@ -4,8 +4,9 @@ numpy>=1.24
 pydantic==1.10.12
 
 # Optional dependencies (install if available)
-faiss-cpu==1.7.3
-onnxruntime==1.15.0
+# Skip heavy optional deps on Python 3.13 where these pins lack wheels
+faiss-cpu==1.7.3; python_version < "3.13"
+onnxruntime==1.15.0; python_version < "3.13"
 py4j==0.10.9.7
 
 # Optional ML dependencies (can work without these)

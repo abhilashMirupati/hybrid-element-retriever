@@ -70,6 +70,20 @@ class FusionScorer:
             token_bonus + role_bonus
         )
         
+        # Penalties and small tie-break nudges
+        is_visible = bool(element_descriptor.get('is_visible', True))
+        is_disabled = False
+        try:
+            is_disabled = bool(attrs.get('disabled') == 'true' or attrs.get('aria-disabled') == 'true')
+        except Exception:
+            is_disabled = False
+        if not is_visible:
+            fusion_score -= 0.15
+        if is_disabled:
+            fusion_score -= 0.15
+        if is_visible and not is_disabled:
+            fusion_score += 0.01
+        
         # Normalize to [0, 1]
         return min(max(fusion_score, 0.0), 1.0)
     
