@@ -210,6 +210,37 @@ class SQLiteCache:
 
                 return None
 
+    def get_batch(self, keys: List[str]) -> Dict[str, Any]:
+        """Get multiple values from cache using a single SQL roundtrip when possible.
+
+        Args:
+            keys: List of cache keys
+
+        Returns:
+            Mapping of key to cached value for hits only.
+        """
+        if not keys:
+            return {}
+        with self.lock:
+            with sqlite3.connect(str(self.db_path)) as conn:
+                placeholders = ",".join("?" * len(keys))
+                cursor = conn.execute(
+                    f"SELECT key, value, hits FROM cache WHERE key IN ({placeholders})",
+                    keys,
+                )
+                results: Dict[str, Any] = {}
+                rows = cursor.fetchall()
+                if rows:
+                    # Update hits in one pass
+                    for k, value_blob, hits in rows:
+                        try:
+                            results[k] = pickle.loads(value_blob)
+                        except Exception:
+                            continue
+                        conn.execute("UPDATE cache SET hits = ? WHERE key = ?", (int(hits) + 1, k))
+                    conn.commit()
+                return results
+
     def put(
         self, key: str, value: Any, metadata: Optional[Dict[str, Any]] = None
     ) -> None:
@@ -253,6 +284,47 @@ class SQLiteCache:
 
             except Exception as e:
                 logger.error(f"Failed to cache value: {e}")
+
+    def put_batch(self, items: Dict[str, Any], metadata: Optional[Dict[str, Any]] = None) -> None:
+        """Store multiple values in a single transaction.
+
+        Args:
+            items: Mapping of key->value to store
+            metadata: Optional metadata applied to all records
+        """
+        if not items:
+            return
+        with self.lock:
+            try:
+                rows: List[tuple] = []
+                total_size = 0
+                now = time.time()
+                meta_json = json.dumps(metadata or {})
+                for k, v in items.items():
+                    blob = pickle.dumps(v)
+                    sz = len(blob)
+                    rows.append((k, blob, now, sz, meta_json))
+                    total_size += sz
+
+                with sqlite3.connect(str(self.db_path)) as conn:
+                    # Ensure space: evict if needed once for the whole batch
+                    cursor = conn.execute("SELECT SUM(size_bytes) FROM cache")
+                    current_size = cursor.fetchone()[0] or 0
+                    max_bytes = self.max_size_mb * 1024 * 1024
+                    needed = (current_size + total_size) - max_bytes
+                    if needed > 0:
+                        self._evict_lru(conn, int(needed))
+
+                    conn.executemany(
+                        """
+                        INSERT OR REPLACE INTO cache (key, value, timestamp, hits, size_bytes, metadata)
+                        VALUES (?, ?, ?, 0, ?, ?)
+                        """,
+                        rows,
+                    )
+                    conn.commit()
+            except Exception as e:
+                logger.error(f"Failed to batch cache values: {e}")
 
     def _evict_lru(self, conn: sqlite3.Connection, needed_bytes: int) -> None:
         """Evict least recently used entries.
@@ -454,34 +526,51 @@ class TwoTierCache:
         self.disk_cache.put(key, value, metadata)
 
     def get_batch(self, keys: List[str]) -> Dict[str, Any]:
-        """Get multiple values from cache.
+        """Get multiple values from cache with memory-first and batched disk read."""
+        results: Dict[str, Any] = {}
+        if not keys:
+            return results
 
-        Args:
-            keys: List of cache keys
-
-        Returns:
-            Dictionary of key-value pairs
-        """
-        results = {}
-
+        # First pass: memory LRU
+        remaining: List[str] = []
         for key in keys:
-            value = self.get(key)
+            value = self.memory_cache.get(key)
             if value is not None:
                 results[key] = value
+            else:
+                remaining.append(key)
 
+        if not remaining:
+            return results
+
+        # Second pass: batched disk read
+        disk_hits = self.disk_cache.get_batch(remaining)
+        for k, v in disk_hits.items():
+            # Promote to memory
+            self.memory_cache.put(k, v)
+            results[k] = v
         return results
 
     def put_batch(
         self, items: Dict[str, Any], metadata: Optional[Dict[str, Any]] = None
     ) -> None:
-        """Put multiple values in cache.
-
-        Args:
-            items: Dictionary of key-value pairs
-            metadata: Optional metadata for all items
-        """
+        """Put multiple values in cache using single-database transaction where possible."""
+        if not items:
+            return
+        # Memory first
         for key, value in items.items():
-            self.put(key, value, metadata)
+            self.memory_cache.put(key, value, metadata)
+        # Disk batch
+        try:
+            if hasattr(self.disk_cache, 'put_batch'):
+                self.disk_cache.put_batch(items, metadata)
+            else:
+                # Fallback: individual puts
+                for key, value in items.items():
+                    self.disk_cache.put(key, value, metadata)
+        except Exception:
+            # Best-effort; ignore disk batch errors to avoid cascading failures
+            pass
 
     def clear(self) -> None:
         """Clear both cache tiers."""
