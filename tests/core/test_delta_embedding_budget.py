@@ -1,10 +1,18 @@
-import time
+# tests/core/test_delta_embedding_budget.py
+"""
+Delta-embedding budget test:
+- Cold run embeds many elements.
+- Warm run after appending ONE element should embed only a tiny number (<= 11).
+- Also asserts cache hits non-decreasing if stats are available.
+- Pure-Python; no browsers; safe for -n auto.
+"""
+
 import pytest
 
 from src.her.compat import HERPipeline  # type: ignore
 
 
-def _many(n=500):
+def _many(n=800):
     return [
         {
             "tag": "div",
@@ -12,57 +20,79 @@ def _many(n=500):
             "attributes": {"data-row": str(i)},
             "is_visible": True,
             "computed_xpath": f"//div[@data-row='{i}']",
+            "frame_path": [],
+            "in_shadow_dom": False,
         }
         for i in range(n)
     ]
 
 
-def test_delta_embedding_budget_and_cache_hits(monkeypatch):
-    p = HERPipeline()  # type: ignore[call-arg]
-    elements = _many(800)
+@pytest.mark.parametrize("n", [800])
+def test_delta_embedding_budget_and_cache_hits(tmp_path, n):
+    p = HERPipeline(cache_dir=tmp_path)  # isolated cache dir for -n auto
+    elements = _many(n)
     query = "find row 123"
 
-    # First run (cold)
+    # If pipeline doesn't expose _embed_element, we still run but skip strict budget assert
+    can_count = hasattr(p, "_embed_element")
     embed_calls = {"n": 0}
-    orig = getattr(p, "_embed_element", None)
+    original = getattr(p, "_embed_element", None)
 
     def wrapped_embed(desc):
         embed_calls["n"] += 1
-        if callable(orig):
-            return orig(desc)
-        return None
+        return original(desc)  # type: ignore[misc]
 
-    # Wrap embed to count calls
-    if orig:
-        monkeypatch.setattr(p, "_embed_element", wrapped_embed)
+    if can_count and callable(original):
+        # Count cold path embed calls
+        p._embed_element = wrapped_embed  # type: ignore[attr-defined]
 
+    # First run (cold)
     _ = p.process(query, {"elements": elements})  # type: ignore[attr-defined]
-    cold_calls = embed_calls["n"]
+    cold_calls = embed_calls["n"] if can_count else None
 
-    # Append one new element; second run should embed <= (1 + small overhead)
+    # Append one new element
     embed_calls["n"] = 0
-    elements2 = elements + [{
-        "tag": "div",
-        "text": "Row 800",
-        "attributes": {"data-row": "800"},
-        "is_visible": True,
-        "computed_xpath": "//div[@data-row='800']",
-    }]
+    elements2 = elements + [
+        {
+            "tag": "div",
+            "text": f"Row {n}",
+            "attributes": {"data-row": str(n)},
+            "is_visible": True,
+            "computed_xpath": f"//div[@data-row='{n}']",
+            "frame_path": [],
+            "in_shadow_dom": False,
+        }
+    ]
 
+    # Second run (warm, delta-only)
     _ = p.process(query, {"elements": elements2})  # type: ignore[attr-defined]
-    warm_calls = embed_calls["n"]
+    warm_calls = embed_calls["n"] if can_count else None
 
-    assert warm_calls <= 11, f"Delta embedding should be small; got {warm_calls}"
+    if can_count:
+        assert warm_calls is not None
+        # Budget: ONE new element + small bookkeeping overhead
+        assert warm_calls <= 11, f"Delta embedding too high: {warm_calls}"
 
-    # Cache hits should increase across runs if stats exist
+    # Cache hits non-decreasing if stats exist
     stats = {}
     for attr in ("stats", "get_stats"):
         fn = getattr(p, attr, None)
         if callable(fn):
             stats = fn()  # type: ignore[misc]
             break
+
     if isinstance(stats, dict):
-        # allow any of these keys
-        hits_before = stats.get("cache_hits_before") or stats.get("cache_hits", 0)
-        hits_after = stats.get("cache_hits_after") or stats.get("cache_hits", 0)
-        assert hits_after >= hits_before
+        # Accept either explicit before/after or single monotonically increasing counter
+        ch = stats.get("cache_hits")
+        if isinstance(ch, int):
+            # Run a third warm call to ensure monotonic increase
+            _ = p.process(query, {"elements": elements2})
+            stats2 = {}
+            for attr in ("stats", "get_stats"):
+                fn = getattr(p, attr, None)
+                if callable(fn):
+                    stats2 = fn()  # type: ignore[misc]
+                    break
+            ch2 = stats2.get("cache_hits")
+            if isinstance(ch2, int):
+                assert ch2 >= ch
