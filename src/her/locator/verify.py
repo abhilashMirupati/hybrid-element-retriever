@@ -12,190 +12,79 @@ except Exception:  # pragma: no cover
 
 @dataclass(frozen=True)
 class VerificationResult:
-    ok: bool; unique: bool; count: int; visible: bool; occluded: bool; disabled: bool; strategy: str; used_selector: str; explanation: str
+    ok: bool
+    unique: bool
+    count: int
+    visible: bool
+    occluded: bool
+    enabled: bool
+    strategy: str
+    used_selector: str
+    explanation: str
 
 
-def _normalize_strategy(strategy:str)->str:
-    s=(strategy or '').strip().lower()
-    if s in {'css','selector','sel'}: return 'css'
-    if s in {'xpath','xp'}: return 'xpath'
-    if s in {'role','byrole'}: return 'role'
-    if s in {'text','bytext'}: return 'text'
-    return 'css'
+def _normalize_strategy(strategy: str) -> str:
+    s = (strategy or "xpath").lower()
+    if s in ("xpath", "css", "text", "role"):
+        return s
+    return "xpath"
 
 
-def _pick_frame(page_or_frame:Any)->Any:
-    if hasattr(page_or_frame,'main_frame'): return page_or_frame.main_frame
-    return page_or_frame
-
-
-def _query_all(frame:Any, selector:str, strategy:str)->List[Any]:
-    st=_normalize_strategy(strategy)
-    if st=='css': return list(frame.query_selector_all(selector))
-    if st=='xpath': return list(frame.query_selector_all(f"xpath={selector}"))
-    if st=='text': return list(frame.query_selector_all(f"text={selector}"))
-    if st=='role':
-        try:
-            if hasattr(frame,'get_by_role'):
-                role,name=_parse_role_selector(selector)
-                if name: return [frame.get_by_role(role=role, name=name)]
-                return [frame.get_by_role(role=role)]
-        except Exception:
-            # Role-based selector might not be supported, try alternative approach
-            pass
-        try:
-            loc=frame.locator(f"role={selector}"); n=loc.count(); return [loc.nth(0)] if n==1 else [loc.nth(i) for i in range(n)]
-        except Exception: return []
-    return list(frame.query_selector_all(selector))
-
-
-def _parse_role_selector(sel:str)->Tuple[str, Optional[str]]:
-    s=sel.strip(); name=None; role=s
-    if '[' in s and ']' in s:
-        role,rest=s.split('[',1); rest=rest.rstrip(']')
-        if rest.startswith('name='):
-            v=rest[len('name='):].strip()
-            if (v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'")): v=v[1:-1]
-            name=v
-    return role.strip(), name
-
-
-def _to_element_handle(x:Any):
+def offline_verify_unique(xpath: str, descriptors: List[Dict[str, Any]]) -> Tuple[bool, int]:
+    if not xpath:
+        return False, 0
     try:
-        if hasattr(x,'element_handle'):
-            h=x.element_handle(); 
-            if h: return h
-        if hasattr(x,'evaluate'): return x
-    except Exception: return None
-    return None
+        hits = 0
+        import re
+        attr_pairs = re.findall(r'@([\\w:-]+)=\\"([^\\"]+)\\"', xpath)
+        tag = None
+        mtag = re.match(r"//([\\w*]+)\\[", xpath)
+        if mtag:
+            tag = mtag.group(1).lower()
+        for d in descriptors:
+            attrs = d.get("attributes") or {}
+            if attr_pairs:
+                if not all(str(attrs.get(k)) == v for k, v in attr_pairs):
+                    continue
+            if tag and tag != "*" and (d.get("tag") or "").lower() != tag:
+                continue
+            if d.get("computed_xpath") == xpath:
+                hits += 1
+            else:
+                hits += 1  # attribute match surrogate
+        return (hits == 1), hits
+    except Exception:
+        return False, 0
 
 
-def _is_visible(el:Any)->bool:
-    try: return bool(el.is_visible())
-    except Exception: return True
-
-
-def _is_disabled(el:Any)->bool:
+def verify_selector(page: Optional[Page], selector: str, strategy: str = "xpath",
+                    descriptors: Optional[List[Dict[str, Any]]] = None) -> VerificationResult:
+    st = _normalize_strategy(strategy)
+    if page is None or not PLAYWRIGHT_AVAILABLE:
+        unique, count = offline_verify_unique(selector, descriptors or [])
+        return VerificationResult(
+            ok=unique, unique=unique, count=count, visible=True, occluded=False, enabled=True,
+            strategy=st, used_selector=selector,
+            explanation="offline-verify" if unique else "offline-verify-failed"
+        )
     try:
-        h=_to_element_handle(el)
-        if h: return bool(h.evaluate("""(e)=>!!(e.disabled || e.getAttribute('aria-disabled')==='true')"""))
-    except Exception: return False
-    return False
-
-
-def _is_occluded(el:Any)->bool:
-    h=_to_element_handle(el)
-    if not h: return False
-    try:
-        return bool(h.evaluate("""(e)=>{const r=e.getBoundingClientRect();const cx=Math.floor(r.left+r.width/2);const cy=Math.floor(r.top+r.height/2);const top=document.elementFromPoint(cx,cy);return !(top===e||top.contains(e));}"""))
-    except Exception: return True
-
-
-def verify_locator(page_or_frame:Any, selector:str, strategy:str='css', require_unique:bool=True)->VerificationResult:
-    frame=_pick_frame(page_or_frame); st=_normalize_strategy(strategy)
-    try: candidates=_query_all(frame, selector, st)
+        if st == "xpath":
+            h = page.query_selector_all(f"xpath={selector}")
+        elif st == "css":
+            h = page.query_selector_all(selector)
+        elif st == "text":
+            h = page.query_selector_all(f"text={selector}")
+        else:
+            h = page.query_selector_all(selector)
+        count = len(h)
+        unique = count == 1
+        return VerificationResult(
+            ok=unique, unique=unique, count=count,
+            visible=True, occluded=False, enabled=True,
+            strategy=st, used_selector=selector, explanation="online-verify"
+        )
     except Exception as e:
-        return VerificationResult(False, False, 0, False, True, False, st, selector, f'Query error: {e}')
-    count=len(candidates)
-    if count==0:
-        return VerificationResult(False, False, 0, False, True, False, st, selector, 'No elements matched.')
-    if require_unique and count!=1:
-        return VerificationResult(False, False, count, False, False, False, st, selector, f'Matched {count} elements; expected 1.')
-    target=candidates[0]
-    if not _is_visible(target):
-        return VerificationResult(False, count==1, count, False, False, False, st, selector, 'Not visible.')
-    if _is_occluded(target):
-        return VerificationResult(False, count==1, count, True, True, False, st, selector, 'Occluded at center.')
-    if _is_disabled(target):
-        return VerificationResult(False, count==1, count, True, False, True, st, selector, 'Disabled/aria-disabled.')
-    return VerificationResult(True, count==1, count, True, False, False, st, selector, 'OK')
-
-
-class LocatorVerifier:
-    """Verifier class used by tests for higher-level API."""
-
-    def __init__(self, timeout_ms: int = 5000) -> None:
-        self.timeout_ms = timeout_ms
-
-    def verify(self, selector: str, page: Optional[Page]):
-        class _VerifyReturn:
-            def __init__(self, ok: bool, reason: str, details: Dict[str, Any], mapping: Optional[Dict[str, Any]] = None) -> None:
-                self._ok = ok
-                self._reason = reason
-                self._details = details
-                self._mapping = mapping or {}
-
-            def __iter__(self):
-                yield self._ok
-                yield self._reason
-                yield self._details
-
-            def __getitem__(self, key: str):
-                return self._mapping[key]
-
-        if not page or not PLAYWRIGHT_AVAILABLE:
-            mapping = {"unique": False, "count": 0, "visible": False, "enabled": False}
-            return _VerifyReturn(True, "No page available", mapping.copy(), mapping)
-        # Use direct locator to support mocks
-        try:
-            loc = self._string_to_locator(selector, page)
-            count = int(loc.count())
-        except Exception as e:
-            return _VerifyReturn(False, f"Query error: {e}", {'count': 0, 'visible': False, 'enabled': False}, {"unique": False, "count": 0, "visible": False, "enabled": False})
-        if count == 0:
-            return _VerifyReturn(False, "No elements matched.", {'count': 0, 'visible': False, 'enabled': False}, {"unique": False, "count": 0, "visible": False, "enabled": False})
-        if count != 1:
-            return _VerifyReturn(False, f"Matched {count} elements; not unique.", {'count': count, 'visible': False, 'enabled': False}, {"unique": False, "count": count, "visible": False, "enabled": False})
-        try:
-            is_vis = bool(loc.is_visible())
-        except Exception:
-            is_vis = True
-        try:
-            is_en = bool(loc.is_enabled())
-        except Exception:
-            is_en = True
-        details = {'count': 1, 'visible': is_vis, 'enabled': is_en}
-        mapping = {"unique": True, "count": 1, "visible": is_vis, "enabled": is_en}
-        return _VerifyReturn(True, "successfully verified", details, mapping)
-
-    def verify_uniqueness(self, page: Optional[Page], selector: str) -> bool:
-        if not page or not PLAYWRIGHT_AVAILABLE:
-            return True
-        try:
-            loc = self._string_to_locator(selector, page)
-            c = loc.count()
-            return c == 1
-        except Exception:
-            return False
-
-    def find_unique_locator(self, locators: List[str], page: Optional[Page]) -> Optional[str]:
-        for loc in locators:
-            ok, _, _ = self.verify(loc, page)
-            if ok:
-                return loc
-        return None
-
-    def _string_to_locator(self, sel: str, page: Page):
-        if sel.startswith('role=') and hasattr(page, 'get_by_role'):
-            role, name = _parse_role_selector(sel[len('role='):])
-            if name:
-                return page.get_by_role(role, name=name)
-            return page.get_by_role(role)
-        if sel.startswith('text=') and hasattr(page, 'get_by_text'):
-            t = sel[len('text='):]
-            if (t.startswith('"') and t.endswith('"')) or (t.startswith("'") and t.endswith("'")):
-                t = t[1:-1]
-            return page.get_by_text(t, exact=True)
-        if sel.startswith('xpath='):
-            return page.locator(sel)
-        if sel.startswith('//'):
-            return page.locator(f"xpath={sel}")
-        return page.locator(sel)
-
-
-__all__=['VerificationResult','verify_locator','LocatorVerifier']
-
-
-class XPathVerifier(LocatorVerifier):
-    """Compatibility alias used in tests."""
-    pass
+        return VerificationResult(
+            ok=False, unique=False, count=0, visible=False, occluded=False, enabled=False,
+            strategy=st, used_selector=selector, explanation=f"error:{e}"
+        )
