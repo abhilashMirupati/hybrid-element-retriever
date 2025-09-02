@@ -152,6 +152,8 @@ class SQLiteCache:
             db_path: Path to database file
             max_size_mb: Maximum cache size in MB
         """
+        if db_path is not None and isinstance(db_path, str):
+            db_path = Path(db_path)
         self.db_path = db_path or (get_cache_dir() / "embeddings.db")
         self.max_size_mb = max_size_mb
         self.lock = Lock()

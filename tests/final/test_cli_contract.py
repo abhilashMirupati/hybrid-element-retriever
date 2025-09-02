@@ -1,9 +1,10 @@
 import json
 import subprocess
+import sys
 
 
 def run_cli(args):
-  p = subprocess.run(["python3", "-m", "her.cli", *args], capture_output=True, text=True)
+  p = subprocess.run([sys.executable, "-m", "her.cli", *args], capture_output=True, text=True)
   assert p.returncode in (0,1)
   return p.stdout.strip() or p.stderr.strip()
 

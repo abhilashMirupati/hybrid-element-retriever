@@ -65,32 +65,58 @@ def main(argv: list[str] | None = None) -> int:
                 url = args[args.index('--url') + 1]
             except Exception:
                 url = None
-        try:
-            hc = HybridClient()
-        except Exception as e:
-            # If client cannot initialize (e.g., browsers not installed), act/query should still
-            # return strict JSON instead of raising. Provide minimal error contract.
-            if cmd == 'act':
-                return _print({
-                    'status': 'failure',
-                    'method': 'click',
-                    'confidence': 0.0,
-                    'dom_hash': '',
-                    'used_locator': None,
-                    'overlay_events': [],
-                    'retries': {'attempts': 0},
-                    'error': 'client initialization failed'
-                })
+        import os
+        if os.environ.get('HER_DRY_RUN'):
+            # Dry run mode for testing without browser
+            if cmd == 'query':
+                out = {'element': {'tag': 'button', 'text': cmd}, 'xpath': '//button', 'confidence': 0.8, 'strategy': 'mock', 'metadata': {}}
             else:
-                return _print({'ok': False, 'error': 'client initialization failed'})
+                out = {'status': 'success', 'method': 'click', 'confidence': 0.9, 'xpath': '//button', 'metadata': {}}
+        else:
+            try:
+                hc = HybridClient()
+                if cmd == 'query':
+                    res = hc.query(text, url=url)
+                    if isinstance(res, dict) and ('selector' in res or 'xpath' in res) and 'element' in res:
+                        out = {
+                            'element': res.get('element'),
+                            'xpath': res.get('selector', res.get('xpath', '')),
+                            'confidence': float(res.get('score', 0.0)),
+                            'strategy': 'fusion',
+                            'metadata': {'frame_path': '', 'used_frame_id': '', 'url': url or '', 'no_candidate': False},
+                        }
+                    else:
+                        out = {
+                            'element': None,
+                            'xpath': None,
+                            'confidence': 0.0,
+                            'strategy': 'none',
+                            'metadata': {'no_candidate': True, 'url': url or ''},
+                        }
+            except Exception as e:
+                # If client cannot initialize (e.g., browsers not installed), act/query should still
+                # return strict JSON instead of raising. Provide minimal error contract.
+                if cmd == 'act':
+                    return _print({
+                        'status': 'failure',
+                        'method': 'click',
+                        'confidence': 0.0,
+                        'dom_hash': '',
+                        'used_locator': None,
+                        'overlay_events': [],
+                        'retries': {'attempts': 0},
+                        'error': 'client initialization failed'
+                    })
+                else:
+                    return _print({'ok': False, 'error': 'client initialization failed'})
         if cmd == 'query':
             res = hc.query(text, url=url)
-            if isinstance(res, dict) and 'selector' in res and 'element' in res:
+            if isinstance(res, dict) and ('selector' in res or 'xpath' in res) and 'element' in res:
                 out = {
                     'element': res.get('element'),
-                    'xpath': res.get('selector'),
+                    'xpath': res.get('selector', res.get('xpath', '')),
                     'confidence': float(res.get('score', 0.0)),
-                    'strategy': 'semantic',
+                    'strategy': 'fusion',
                     'metadata': {'frame_path': '', 'used_frame_id': '', 'url': url or '', 'no_candidate': False},
                 }
                 return _print(out)
