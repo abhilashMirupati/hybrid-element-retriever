@@ -2,7 +2,7 @@ from __future__ import annotations
 import time
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from ..utils.context import make_context_key
 from .promotion import PromotionStore, PromotionRecord
@@ -12,7 +12,6 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class VerifyResult:
-    """Minimal verify contract (kept inline for decoupling)."""
     ok: bool
     unique: bool = True
 
@@ -29,15 +28,6 @@ class SelfHealResult:
 
 
 class SelfHealer:
-    """
-    Self-healing flow:
-      1) Build context key (url + optional dom hash + extra_context)
-      2) Pull top promoted selectors for that context (TTL/decay filtered)
-      3) Verify in rank order; on success -> promote & return (cache-hit)
-      4) On failure -> slight demotion; continue
-      5) Callers can then proceed with live ranking/generation
-    """
-
     def __init__(
         self,
         store: PromotionStore,
@@ -56,12 +46,10 @@ class SelfHealer:
 
     @staticmethod
     def split_locator(locator: str) -> Tuple[str, str]:
-        """Return (strategy, selector) from 'css=...'/'xpath=...' or raw."""
         if locator.startswith("css="):
             return "css", locator[4:]
         if locator.startswith("xpath="):
             return "xpath", locator[6:]
-        # Heuristic: XPath if starts with // or /(…
         if locator.startswith("//") or locator.startswith("(/"):
             return "xpath", locator
         return "css", locator
@@ -109,7 +97,6 @@ class SelfHealer:
                     confidence_boost=self.cache_hit_confidence_boost,
                 )
 
-            # demote a little and continue
             self.store.record_failure(locator=rec.locator, context=ctx, penalty=0.05)
 
         return SelfHealResult(ok=False, reason="candidates-failed", used_context=ctx)
