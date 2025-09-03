@@ -27,13 +27,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Mirrors requirements.txt optional sections & pins (Windows/Py3.12 friendly)
-ml = [
-  "faiss-cpu>=1.8.0; python_version < '3.13'",
-  "onnxruntime>=1.17,<1.23; python_version < '3.13'",
-  "transformers>=4.38,<4.45",
-  "tokenizers>=0.15.2,<0.21",
-  "huggingface_hub>=0.20.0",
+dev = [
+  "pytest>=7.4",
+  "pytest-cov>=4.1",
 ]
 java = [
   "py4j==0.10.9.7",
@@ -49,18 +45,19 @@ dev = [
 ]
 
 [project.scripts]
-her = "her.cli:main"
+her = "her.cli.main:main"
 
 [tool.setuptools]
-package-dir = { "" = "src" }
-include-package-data = true
+package-dir = {"" = "src"}
+packages = ["her", "her.cli", "her.bridge", "her.embeddings", "her.recovery", "her.handlers", "her.utils", "her.vectordb"]
+
 
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["her*"]
 
 [tool.setuptools.package-data]
-her = ["models/**/*"]
+her = ["py.typed"]
 
 [tool.black]
 line-length = 100
