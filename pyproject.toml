@@ -7,36 +7,52 @@ name = "her"
 version = "0.1.0"
 description = "Hybrid Element Retriever (HER)"
 readme = "README.md"
-requires-python = ">=3.10"
-authors = [
-  { name = "HER Maintainers", email = "maintainers@example.com" }
-]
+requires-python = "==3.12.*"
+authors = [{ name = "HER Maintainers", email = "maintainers@example.com" }]
 license = { text = "MIT" }
 keywords = ["hybrid", "retrieval", "automation", "embeddings", "onnx"]
 classifiers = [
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.12",
   "License :: OSI Approved :: MIT License",
   "Operating System :: OS Independent"
 ]
+
+# Keep core small; heavy/optional stuff lives under extras below.
 dependencies = [
   "numpy>=1.24",
+  "pydantic==1.10.12",
+  "playwright>=1.45",
 ]
 
 [project.optional-dependencies]
+# Mirrors requirements.txt optional sections & pins (Windows/Py3.12 friendly)
+ml = [
+  "faiss-cpu>=1.8.0; python_version < '3.13'",
+  "onnxruntime>=1.17,<1.23; python_version < '3.13'",
+  "transformers>=4.38,<4.45",
+  "tokenizers>=0.15.2,<0.21",
+  "huggingface_hub>=0.20.0",
+]
+java = [
+  "py4j==0.10.9.7",
+]
 dev = [
   "pytest>=7",
-  "playwright>=1.45",
   "black>=24.0",
   "flake8>=6.0",
   "mypy>=1.6",
+  "types-requests==2.31.0.4",
+  # Helpful for Playwright tests:
+  "playwright>=1.45",
 ]
 
 [project.scripts]
 her = "her.cli:main"
 
 [tool.setuptools]
-package-dir = {"" = "src"}
+package-dir = { "" = "src" }
 include-package-data = true
 
 [tool.setuptools.packages.find]
@@ -44,26 +60,19 @@ where = ["src"]
 include = ["her*"]
 
 [tool.setuptools.package-data]
-her = [
-  "models/**/*",
-]
+her = ["models/**/*"]
 
 [tool.black]
 line-length = 100
-target-version = ["py310", "py311", "py312"]
+target-version = ["py312"]
 
 [tool.flake8]
 max-line-length = 100
 extend-ignore = ["E203", "W503"]
-exclude = [
-  ".git",
-  "__pycache__",
-  "build",
-  "dist",
-]
+exclude = [".git", "__pycache__", "build", "dist"]
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.12"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
