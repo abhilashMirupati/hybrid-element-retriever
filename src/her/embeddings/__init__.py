@@ -1,18 +1,25 @@
-"""Embeddings package exports and resolver re-exports."""
+"""Embeddings package exports with safe, optional heavy imports."""
+from . import _resolve
 
-from . import _resolve  # re-export submodule for callers/tests
-from .text_embedder import TextEmbedder
+# Hard deps
 from .query_embedder import QueryEmbedder
 from .element_embedder import ElementEmbedder
+
+# Optional deps: make import safe if onnxruntime/transformers missing
 try:
-    from .markuplm_embedder import MarkupLMEmbedder  # type: ignore
-except Exception:
+    from .text_embedder import TextEmbedder  # MiniLM/E5 (ONNX)
+except Exception:  # pragma: no cover
+    TextEmbedder = None  # type: ignore
+
+try:
+    from .markuplm_embedder import MarkupLMEmbedder  # Transformers
+except Exception:  # pragma: no cover
     MarkupLMEmbedder = None  # type: ignore
 
 __all__ = [
     "_resolve",
-    "TextEmbedder",
     "QueryEmbedder",
     "ElementEmbedder",
+    "TextEmbedder",
     "MarkupLMEmbedder",
 ]
