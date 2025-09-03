@@ -1,137 +1,61 @@
-"""
-Canonical element-to-text normalization for element embeddings.
-
-Builds a robust, deterministic string from mixed DOM/AX element dicts.
-
-Order of included signals:
-  [role] [aria-label] [title] [alt] [placeholder] [name] [value] [tag]
-  [id/class] [text] [href-host/path]
-
-Whitespace is collapsed and control characters are stripped. The result
-is truncated to ``max_length`` characters. When no usable signals are
-present, an empty string is returned.
-"""
-
 from __future__ import annotations
-
-from typing import Dict, Iterable, Optional, List
-from urllib.parse import urlparse
 import re
+from typing import Dict, Iterable
+from urllib.parse import urlparse
 
-
-_CONTROL_CHARS_RE = re.compile(r"[\x00-\x1F\x7F]")
-_WS_RE = re.compile(r"\s+")
-
-
-def _get_attr(el: Dict, key: str) -> Optional[str]:
-    """Fetch attribute from top-level or nested ``attributes`` dict.
-
-    Returns a string if present and non-empty after stripping; otherwise None.
-    """
-    if key in el and el[key] is not None:
-        v = str(el[key]).strip()
-        if v:
-            return v
-    attrs = el.get("attributes") or {}
-    if isinstance(attrs, dict):
-        v = attrs.get(key)
-        if v is not None:
-            v = str(v).strip()
-            if v:
-                return v
-    return None
-
+# Collapse whitespace and strip control chars (but preserve visible spacing).
+_WS = re.compile(r"\s+")
+_CTRL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 
 def _clean(s: str) -> str:
-    """Remove control chars and trim."""
-    if not s:
-        return ""
-    s = _CONTROL_CHARS_RE.sub(" ", s)
-    return s.strip()
+    s = s or ""
+    s = _CTRL.sub("", s)
+    s = _WS.sub(" ", s).strip()
+    return s
 
-
-def _collapse_ws(s: str) -> str:
-    """Collapse all whitespace runs to a single space and trim."""
-    if not s:
-        return ""
-    return _WS_RE.sub(" ", s).strip()
-
-
-def _id_and_classes(el: Dict) -> str:
-    ident = _get_attr(el, "id")
-    classes_raw = _get_attr(el, "class") or _get_attr(el, "className")
-    classes: List[str] = []
-    if classes_raw:
-        # Classes may be space or list separated
-        classes = [c for c in re.split(r"[\s,]+", classes_raw) if c]
-    parts: List[str] = []
-    if ident:
-        parts.append(f"#{ident}")
-    parts.extend(f".{c}" for c in classes)
-    return _collapse_ws(" ".join(parts))
-
-
-def _href_host_path(el: Dict) -> str:
-    href = _get_attr(el, "href")
-    if not href:
-        return ""
+def _href_hostpath(href: str) -> str:
+    # Keep only host + path (drop query/fragment) to avoid overfitting & noise.
     try:
-        parsed = urlparse(href)
-        host = parsed.netloc
-        path = parsed.path or "/"
-        hp = f"{host}{path}"
-        return _collapse_ws(hp)
+        u = urlparse(href or "")
+        host = u.netloc or ""
+        path = u.path or ""
+        out = f"{host}{path}"
+        return _clean(out)[:256]
     except Exception:
         return ""
 
+def _join(parts: Iterable[str], max_length: int) -> str:
+    out = " ".join([p for p in parts if p])
+    return out[:max_length]
 
 def element_to_text(el: Dict, max_length: int = 1024) -> str:
     """
-    Build a robust, canonical text for element embedding:
-    - Deterministic order of signals:
-      [role] [aria-label] [title] [alt] [placeholder] [name] [value] [tag] [id/class] [text] [href-host/path]
-    - Collapse whitespace; strip control characters.
-    - Truncate to max_length chars.
-    - If nothing usable, return "" (caller will handle zero-vector).
+    Canonical text for element embeddings (deterministic, attribute-aware).
+
+    Order of signals (most informative first):
+    [role] [aria-label] [title] [alt] [placeholder] [name] [value]
+    [TAG] [#id .classes] [visible text] [href(host/path)]
     """
-    parts: List[str] = []
+    attrs = (el.get("attrs") or {})
+    tag   = _clean((el.get("tag") or "").upper())
+    role  = _clean(attrs.get("role") or el.get("role") or "")
+    label = _clean(attrs.get("aria-label") or "")
+    title = _clean(attrs.get("title") or "")
+    alt   = _clean(attrs.get("alt") or "")
+    ph    = _clean(attrs.get("placeholder") or "")
+    name  = _clean(attrs.get("name") or "")
+    val   = _clean(attrs.get("value") or "")
+    text  = _clean(el.get("text") or "")
 
-    # 1. Semantic roles/labels
-    role = _get_attr(el, "role")
-    if role:
-        parts.append(_clean(role))
-    for key in ("aria-label", "title", "alt", "placeholder", "name", "value"):
-        v = _get_attr(el, key)
-        if v:
-            parts.append(_clean(v))
+    # Compact id + class
+    idp   = f"#{_clean(attrs['id'])}" if attrs.get("id") else ""
+    classes = _clean(attrs.get("class") or "")
+    clsp  = ("." + ".".join([c for c in classes.split() if c])) if classes else ""
 
-    # 2. Tag uppercased
-    tag = _get_attr(el, "tag") or _get_attr(el, "tagName")
-    if tag:
-        parts.append(_clean(str(tag).upper()))
+    hrefp = _href_hostpath(attrs.get("href") or "")
 
-    # 3. id and classes
-    id_classes = _id_and_classes(el)
-    if id_classes:
-        parts.append(id_classes)
-
-    # 4. Visible text content
-    text = _get_attr(el, "text") or _get_attr(el, "innerText") or _get_attr(el, "content")
-    if text:
-        parts.append(_clean(text))
-
-    # 5. Href host/path when present
-    hp = _href_host_path(el)
-    if hp:
-        parts.append(hp)
-
-    combined = _collapse_ws(" ".join(p for p in parts if p))
-    if not combined:
-        return ""
-    if len(combined) > max_length:
-        return combined[:max_length]
-    return combined
-
-
-__all__ = ["element_to_text", "_clean", "_collapse_ws"]
-
+    parts = [
+        role, label, title, alt, ph, name, val,
+        tag, idp + clsp, text, hrefp
+    ]
+    return _join(parts, max_length)
