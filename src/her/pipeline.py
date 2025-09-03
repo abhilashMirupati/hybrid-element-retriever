@@ -99,6 +99,20 @@ class HybridPipeline:
                 raise RuntimeError(
                     "Element embedder could not be resolved; run scripts/install_models.sh to install MarkupLM."
                 )
+
+        # If both embedders are fallbacks (zeros + stub), raise a clear error
+        if (
+            hasattr(self.text_embedder, 'info') and callable(getattr(self.text_embedder, 'info'))
+            and isinstance(getattr(self.text_embedder, 'info')(), dict)
+            and getattr(self.text_embedder, 'info')().get('mode') == 'zeros'
+            and isinstance(self.element_embedder, ElementEmbedder)
+        ):
+            logger.error(
+                "No real embedding models available. Install models via scripts/install_models.sh."
+            )
+            raise RuntimeError(
+                "Real embedding models missing. Install MarkupLM (Transformers) and E5-small (ONNX) under src/her/models/."
+            )
         self.scorer = FusionScorer()
         # Reuse global cache if available to cooperate with test fixtures
         try:

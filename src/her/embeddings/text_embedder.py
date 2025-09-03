@@ -125,11 +125,22 @@ class TextEmbedder:
         tokenizer = self.tokenizer
         session = self.session
 
+        # Treat empty/whitespace-only strings as zero-vectors deterministically
+        stripped = [str(t).strip() for t in texts]
+        is_empty = [s == "" for s in stripped]
         outputs: List[np.ndarray] = []
         n = len(texts)
         bs = max(1, int(batch_size))
-        for i in range(0, n, bs):
-            chunk = texts[i : i + bs]
+        # Build indices for non-empty texts to actually encode
+        non_empty_indices = [i for i, e in enumerate(is_empty) if not e]
+        # Pre-allocate full output with zeros
+        full = np.zeros((n, self.dim), dtype=np.float32)
+        if not non_empty_indices:
+            return full
+        # Encode non-empty chunks only
+        for start in range(0, len(non_empty_indices), bs):
+            idxs = non_empty_indices[start : start + bs]
+            chunk = [stripped[i] for i in idxs]
             enc = tokenizer(
                 chunk,
                 padding=True,
@@ -141,8 +152,11 @@ class TextEmbedder:
             out = session.run([self.output_name], ort_inputs)[0]
             if out.dtype != np.float32:
                 out = out.astype(np.float32, copy=False)
-            outputs.append(out)
-        return np.concatenate(outputs, axis=0).astype(np.float32, copy=False)
+            outputs.append((idxs, out))
+        # Scatter-gather into full array
+        for idxs, out in outputs:
+            full[idxs, :] = out
+        return full.astype(np.float32, copy=False)
 
     def batch_encode(self, texts: List[str]) -> np.ndarray:
         """Compatibility alias for previous API."""
