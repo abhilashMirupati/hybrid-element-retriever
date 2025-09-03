@@ -266,12 +266,11 @@ def _resolve_with_fallback(task: str) -> ModelPaths:
         if not mp.tokenizer.exists():
             missing.append(f"tokenizer missing: {mp.tokenizer}")
         if missing:
-            # Still return paths; embedders may decide to hash-fallback on stubs,
-            # but provide a clear error to the caller if they require strict presence.
             raise ResolverError(
-                "Model entry found but files missing: "
+                "Model entry found but required files missing: "
                 + "; ".join(missing)
-                + f" (root={mp.root_dir}, alias={mp.alias})"
+                + f" (root={mp.root_dir}, alias={mp.alias}). "
+                "Run scripts/install_models.sh to install MiniLM/E5-small (ONNX)."
             )
         return mp
 

@@ -41,29 +41,64 @@ logger = logging.getLogger(__name__)
 
 class HybridPipeline:
     def __init__(self, cache_dir: str = ".cache", device: str = "cpu"):
-        # Text embedder (MiniLM/E5-small via ONNX with internal fallback)
+        # Text embedder (MiniLM/E5-small via ONNX). If it fails to load, provide
+        # an explicit zero-vector fallback that logs warnings when used.
         try:
             self.text_embedder = TextEmbedder(device=device)
-            logger.info("Loaded text embedder: framework=onnx path=%s", getattr(self.text_embedder, 'paths', None))
-        except Exception:
-            # Deterministic fallback path is handled internally by TextEmbedder
-            self.text_embedder = TextEmbedder(device=device)
+            logger.info(
+                "Loaded text embedder: framework=onnx onnx=%s dim=%s",
+                getattr(self.text_embedder, "paths", None) and getattr(self.text_embedder.paths, "onnx", None),
+                getattr(self.text_embedder, "dim", None),
+            )
+        except Exception as e:  # pragma: no cover - environment-dependent
+            logger.warning(
+                "Text ONNX model not available; using zero-vector fallback for queries. %s",
+                e,
+            )
+            import numpy as _np  # local import to keep top-level light
 
-        # Element embedder: prefer MarkupLM (Transformers) when available
+            class _ZeroTextEmbedder:
+                def __init__(self, dim: int = 384) -> None:
+                    self.dim = dim
+                def batch_encode_texts(self, texts, batch_size: int = 32):
+                    return _np.zeros((len(texts), self.dim), dtype=_np.float32)
+                def batch_encode(self, texts):
+                    return self.batch_encode_texts(texts)
+                def encode_one(self, text: str):
+                    return self.batch_encode_texts([text])[0]
+                def info(self):
+                    return {"mode": "zeros"}
+
+            self.text_embedder = _ZeroTextEmbedder()
+
+        # Element embedder: prefer MarkupLM (Transformers). If only ONNX is present
+        # but no ONNX runtime embedder is available, fall back explicitly with warning.
         try:
             paths = _resolve.resolve_element_embedding()
+        except Exception as e:
+            logger.warning(
+                "Element model missing; falling back to deterministic stub. %s",
+                e,
+            )
+            self.element_embedder = ElementEmbedder(dim=768)
+        else:
             if paths.framework == "transformers" and paths.model_dir and MarkupLMEmbedder is not None:
                 self.element_embedder = MarkupLMEmbedder(paths.model_dir, device=device)
-                logger.info("Loaded element embedder: framework=transformers dir=%s dim=%s", paths.model_dir, getattr(self.element_embedder, 'dim', None))
+                logger.info(
+                    "Loaded element embedder: framework=transformers dir=%s dim=%s",
+                    paths.model_dir,
+                    getattr(self.element_embedder, "dim", None),
+                )
             elif paths.framework == "onnx":
-                # Keep legacy stub for ONNX element model until an ONNX runtime embedder is implemented
+                logger.warning(
+                    "Element ONNX model detected at %s but ONNX element embedder is not implemented yet; using deterministic stub.",
+                    getattr(paths, "onnx", None),
+                )
                 self.element_embedder = ElementEmbedder(dim=768)
-                logger.info("Using legacy ElementEmbedder stub for ONNX element model at %s", getattr(paths, 'onnx', None))
             else:
-                raise RuntimeError("Element embedder could not be resolved; check model installation.")
-        except Exception:
-            # Final safety: deterministic stub
-            self.element_embedder = ElementEmbedder(dim=768)
+                raise RuntimeError(
+                    "Element embedder could not be resolved; run scripts/install_models.sh to install MarkupLM."
+                )
         self.scorer = FusionScorer()
         # Reuse global cache if available to cooperate with test fixtures
         try:

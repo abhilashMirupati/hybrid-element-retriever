@@ -22,7 +22,7 @@ def _make_root(tmp: Path) -> Path:
         }
     ]
     (root / "MODEL_INFO.json").write_text(json.dumps(mi), encoding="utf-8")
-    # Provide stub files for text model to satisfy exists checks
+    # Provide stub files for text model to satisfy exists checks (may be non-functional)
     (root / "e5-small-onnx" / "model.onnx").write_bytes(b"\x00")
     (root / "e5-small-onnx" / "tokenizer.json").write_text("{}", encoding="utf-8")
     return root
