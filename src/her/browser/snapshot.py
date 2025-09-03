@@ -1,7 +1,14 @@
-"""Playwright-based page snapshotter.
+"""Playwright-based page snapshotter (dynamic & configurable).
 
-Produces a normalized list of visible page elements with text, tag, role,
-selected attributes, absolute XPath, and bounding box.
+Returns a normalized list of visible page elements:
+{ text, tag, role, attrs, xpath, bbox }.
+
+Key points:
+- Collects ALL non-empty attributes by default (configurable allow/block lists).
+- Robust visibility (display/visibility/opacity/area + viewport intersection).
+- Stable absolute XPath using sibling indices.
+- Timeouts, retries, and guaranteed cleanup.
+- Works in and out of existing event loops (sync wrapper).
 """
 
 from __future__ import annotations
@@ -9,90 +16,96 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from dataclasses import dataclass, asdict
 from threading import Thread
 from typing import Any, Dict, List, Optional
 
-from playwright.async_api import async_playwright, Error as PlaywrightError, TimeoutError as PlaywrightTimeoutError
-
+from playwright.async_api import (
+    async_playwright,
+    Error as PlaywrightError,
+    TimeoutError as PlaywrightTimeoutError,
+)
 
 logger = logging.getLogger("her.browser")
 
 
+@dataclass
+class SnapshotOptions:
+    # Browser controls
+    headless: bool = True
+    default_timeout_ms: int = 15_000
+
+    # Extraction config
+    max_text_length: int = 2048      # max chars of innerText to keep
+    include_offscreen: bool = False  # include elements fully outside viewport
+    min_area: int = 1                # minimum visible area (w*h) to keep
+
+    # Attribute inclusion policy:
+    # If attr_include is non-empty -> include ONLY those names (plus data-* if include_data_attrs=True).
+    # Else include ALL non-empty attributes EXCEPT those in attr_exclude or with prefixes in attr_exclude_prefixes.
+    attr_include: Optional[List[str]] = None
+    include_data_attrs: bool = True
+    attr_exclude: List[str] = ("style",)
+    attr_exclude_prefixes: List[str] = ("on",)  # drop on* event handlers
+    useful_attrs: List[str] = ("href", "aria-label", "title", "alt", "placeholder", "value", "name")
+
+    # Tag/role heuristics (still configurable)
+    interesting_tags: List[str] = ("A", "BUTTON", "INPUT", "SELECT", "TEXTAREA", "LABEL", "H1", "H2", "H3", "H4", "H5", "H6")
+
+
 class PageSnapshotter:
-    def __init__(self, headless: bool = True, default_timeout_ms: int = 15000) -> None:
-        self.headless = bool(headless)
-        self.default_timeout_ms = int(default_timeout_ms)
+    def __init__(self, headless: bool = True, default_timeout_ms: int = 15_000, **kwargs: Any) -> None:
+        # kwargs can override any SnapshotOptions field
+        self.opts = SnapshotOptions(headless=headless, default_timeout_ms=default_timeout_ms, **kwargs)
 
     async def snapshot(self, url: str, timeout_ms: Optional[int] = None) -> List[Dict[str, Any]]:
-        """Navigate and return normalized elements.
+        """Navigate to URL and return normalized visible elements."""
+        t0 = time.time()
+        timeout_ms = int(timeout_ms or self.opts.default_timeout_ms)
 
-        Args:
-            url: The URL to navigate to.
-            timeout_ms: Optional per-call timeout in milliseconds.
-        Returns:
-            List of element dictionaries with keys: text, tag, role, attrs, xpath, bbox
-        Raises:
-            TimeoutError: If the operation exceeds the timeout.
-            RuntimeError: For navigation or capture failures.
-        """
-
-        total_timeout_ms = int(timeout_ms if timeout_ms is not None else self.default_timeout_ms)
-
-        async def _do_snapshot() -> List[Dict[str, Any]]:
-            start_time = time.time()
-            logger.info("[snapshot] start url=%s headless=%s timeout_ms=%s", url, self.headless, total_timeout_ms)
-
-            async with async_playwright() as p:
-                browser = await p.chromium.launch(headless=self.headless)
-                context = await browser.new_context()
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=self.opts.headless)
+            context = await browser.new_context()
+            try:
                 page = await context.new_page()
-                # Belt-and-suspenders timeouts
-                page.set_default_timeout(total_timeout_ms)
+                page.set_default_timeout(timeout_ms)
 
-                last_error: Optional[BaseException] = None
-                # Simple retry on navigation
+                # Simple retry on nav flake
                 for attempt in range(2):
                     try:
                         await page.goto(url, wait_until="load")
                         break
-                    except PlaywrightTimeoutError as e:
-                        last_error = e
-                        if attempt == 1:
-                            raise
-                        await asyncio.sleep(0.25)
-                    except PlaywrightError as e:
-                        last_error = e
+                    except (PlaywrightTimeoutError, PlaywrightError):
                         if attempt == 1:
                             raise
                         await asyncio.sleep(0.25)
 
-                # DOM extraction script
-                js = """
-(() => {
-  const selectedAttrs = ['id','class','href','aria-label','title','alt'];
-  const collapse = (s) => (s || '').replace(/\s+/g, ' ').trim();
-  const maxText = 1024;
+                # Pass options to the page; Playwright JSON-serializes the dict automatically.
+                options = asdict(self.opts)
+                result = await page.evaluate(
+                    """(opts) => {
+  const collapse = (s) => (s || '').replace(/\\s+/g, ' ').trim();
 
-  function isElementVisible(el) {
+  function isElementVisible(el, includeOffscreen, minArea) {
     const style = window.getComputedStyle(el);
     if (style.display === 'none' || style.visibility === 'hidden') return false;
     const opacity = parseFloat(style.opacity);
     if (!isNaN(opacity) && opacity === 0) return false;
-    if (el.hasAttribute('hidden')) return false;
+
     const rect = el.getBoundingClientRect();
     const w = Math.max(0, Math.round(rect.width));
     const h = Math.max(0, Math.round(rect.height));
-    if (w <= 0 || h <= 0) return false;
+    if ((w * h) < Math.max(0, minArea || 0)) return false;
+
+    if (!includeOffscreen) {
+      const vw = Math.max(document.documentElement.clientWidth, window.innerWidth || 0);
+      const vh = Math.max(document.documentElement.clientHeight, window.innerHeight || 0);
+      const left = rect.left, right = rect.right, top = rect.top, bottom = rect.bottom;
+      const horizontallyVisible = right > 0 && left < vw;
+      const verticallyVisible   = bottom > 0 && top < vh;
+      if (!(horizontallyVisible && verticallyVisible)) return false;
+    }
     return true;
-  }
-
-  function hasUsefulAttr(el) {
-    return !!(el.getAttribute('href') || el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('alt'));
-  }
-
-  function isInterestingTag(el) {
-    const t = el.tagName;
-    return /^(A|BUTTON|INPUT|SELECT|TEXTAREA|LABEL|H1|H2|H3|H4|H5|H6)$/.test(t);
   }
 
   function siblingIndex(el) {
@@ -102,123 +115,181 @@ class PageSnapshotter:
   }
 
   function absoluteXPath(el) {
-    if (!el) return '';
-    if (el.nodeType !== Node.ELEMENT_NODE) el = el.parentElement;
-    const segments = [];
-    while (el && el.nodeType === Node.ELEMENT_NODE) {
-      const name = el.nodeName.toUpperCase();
-      const idx = siblingIndex(el);
-      segments.unshift(name + '[' + idx + ']');
-      if (name === 'HTML') break;
+    if (!el || el.nodeType !== 1) return '';
+    const parts = [];
+    while (el && el.nodeType === 1 && el !== document) {
+      const ix = siblingIndex(el);
+      parts.unshift(el.tagName.toUpperCase() + '[' + ix + ']');
       el = el.parentElement;
     }
-    return '/' + segments.join('/');
+    return '/' + parts.join('/');
   }
 
-  const all = Array.from(document.querySelectorAll('*'));
-  const stats = { seen: all.length, kept: 0, hidden: 0, skipped: 0 };
-  const items = [];
+  const els = Array.from(document.querySelectorAll('*'));
+  const out = [];
+  const stats = { seen: els.length, kept: 0, hidden: 0, skipped: 0 };
 
-  for (const el of all) {
-    if (!isElementVisible(el)) { stats.hidden++; continue; }
-    const tag = el.tagName.toUpperCase();
-    const roleAttr = el.getAttribute('role');
-    const textRaw = collapse(el.innerText || '');
-    const attrs = {};
-    for (const k of selectedAttrs) {
-      const v = el.getAttribute(k);
-      if (v !== null && v !== undefined && v !== '') attrs[k] = v;
+  const cfg = {
+    maxText: opts.max_text_length || 2048,
+    includeOffscreen: !!opts.include_offscreen,
+    minArea: parseInt(opts.min_area || 1, 10),
+    attrInclude: Array.isArray(opts.attr_include) ? opts.attr_include.map(String) : null,
+    includeData: !!opts.include_data_attrs,
+    attrExclude: new Set((opts.attr_exclude || []).map(String)),
+    attrExcludePrefixes: (opts.attr_exclude_prefixes || []).map(String),
+    usefulAttrs: new Set((opts.useful_attrs || []).map(String)),
+    interestingTags: new Set((opts.interesting_tags || []).map(s => String(s).toUpperCase()))
+  };
+
+  function shouldExcludeAttr(name) {
+    if (cfg.attrExclude.has(name)) return true;
+    for (const pref of cfg.attrExcludePrefixes) {
+      if (name.startsWith(pref)) return true; // drop on*, etc.
     }
-    const hasText = textRaw.length > 0;
-    const keep = hasText || hasUsefulAttr(el) || isInterestingTag(el) || !!roleAttr;
-    if (!keep) { stats.skipped++; continue; }
-    const rect = el.getBoundingClientRect();
-    const item = {
-      text: textRaw.slice(0, maxText),
-      tag: tag,
-      role: roleAttr || null,
-      attrs: attrs,
-      xpath: absoluteXPath(el),
-      bbox: { x: Math.max(0, Math.round(rect.x)), y: Math.max(0, Math.round(rect.y)), w: Math.max(0, Math.round(rect.width)), h: Math.max(0, Math.round(rect.height)) }
-    };
-    items.push(item);
+    return false;
   }
 
-  stats.kept = items.length;
-  return { items, stats };
-})()
-                """
+  function collectAttributes(el) {
+    const result = {};
+    const attrs = el.attributes;
+    if (cfg.attrInclude && cfg.attrInclude.length > 0) {
+      // allowlist
+      for (const name of cfg.attrInclude) {
+        const v = el.getAttribute(name);
+        if (v != null && String(v).trim() !== '') {
+          if (!cfg.includeData && name.startsWith('data-')) continue;
+          result[name] = collapse(String(v));
+        }
+      }
+    } else {
+      // include all non-empty, minus excludes/prefixes
+      for (let i = 0; i < attrs.length; i++) {
+        const name = attrs[i].name;
+        if (!cfg.includeData && name.startsWith('data-')) continue;
+        if (shouldExcludeAttr(name)) continue;
+        const v = attrs[i].value;
+        if (v != null && String(v).trim() !== '') {
+          result[name] = collapse(String(v));
+        }
+      }
+    }
+    return result;
+  }
 
-                result = await page.evaluate(js)
+  function hasUsefulAttribute(attrs) {
+    for (const k of Object.keys(attrs)) {
+      if (cfg.usefulAttrs.has(k)) return true;
+    }
+    return false;
+  }
+
+  for (const el of els) {
+    if (!isElementVisible(el, cfg.includeOffscreen, cfg.minArea)) { stats.hidden++; continue; }
+
+    const tag = el.tagName.toUpperCase();
+    const role = el.getAttribute('role');
+    const attrs = collectAttributes(el);
+    const textRaw = collapse(el.innerText || '');
+    const text = textRaw.length > cfg.maxText ? textRaw.slice(0, cfg.maxText) : textRaw;
+
+    const keep = (text.length > 0) || hasUsefulAttribute(attrs) || cfg.interestingTags.has(tag) || !!role;
+    if (!keep) { stats.skipped++; continue; }
+
+    const rect = el.getBoundingClientRect();
+    out.push({
+      text,
+      tag,
+      role: role || null,
+      attrs,
+      xpath: absoluteXPath(el),
+      bbox: {
+        x: Math.max(0, Math.round(rect.x)),
+        y: Math.max(0, Math.round(rect.y)),
+        w: Math.max(0, Math.round(rect.width)),
+        h: Math.max(0, Math.round(rect.height))
+      }
+    });
+  }
+
+  stats.kept = out.length;
+  return { items: out, stats };
+}""",
+                    options,
+                )
+
                 items = result.get("items", []) if isinstance(result, dict) else result
                 stats = result.get("stats", {}) if isinstance(result, dict) else {}
-
-                duration = time.time() - start_time
                 logger.debug(
-                    "[snapshot] filter stats url=%s seen=%s kept=%s hidden=%s skipped=%s",
-                    url,
-                    stats.get("seen"),
-                    stats.get("kept"),
-                    stats.get("hidden"),
-                    stats.get("skipped"),
+                    "[snapshot] stats url=%s seen=%s kept=%s hidden=%s skipped=%s",
+                    url, stats.get("seen"), stats.get("kept"), stats.get("hidden"), stats.get("skipped"),
                 )
-                logger.info("[snapshot] finish url=%s count=%s duration_ms=%s", url, len(items), int(duration * 1000))
-
-                # Cleanup
-                await context.close()
-                await browser.close()
                 return items
 
-        try:
-            return await asyncio.wait_for(_do_snapshot(), timeout=total_timeout_ms / 1000.0)
-        except asyncio.TimeoutError as e:
-            raise TimeoutError(f"Snapshot timed out for URL {url!r} after {total_timeout_ms} ms") from e
-        except PlaywrightTimeoutError as e:
-            # Surface as timeout to the caller for consistency
-            raise TimeoutError(f"Navigation timed out for URL {url!r} after {total_timeout_ms} ms") from e
-        except PlaywrightError as e:
-            raise RuntimeError(f"Navigation failed for URL {url!r}: {e}") from e
+            except PlaywrightTimeoutError as e:
+                raise TimeoutError(f"Snapshot timeout after {timeout_ms} ms for {url}") from e
+            except PlaywrightError as e:
+                raise RuntimeError(f"Snapshot error for {url}: {e}") from e
+            finally:
+                # always clean up
+                try:
+                    await context.close()
+                except Exception:
+                    pass
+                try:
+                    await browser.close()
+                except Exception:
+                    pass
+
+        logger.info("[snapshot] captured url=%s in %d ms", url, int((time.time() - t0) * 1000))
 
 
-def snapshot_sync(url: str, timeout_ms: Optional[int] = None, headless: bool = True) -> List[Dict[str, Any]]:
-    """Runs PageSnapshotter.snapshot() in its own event loop, returns list[dict]."""
-
-    snapshotter = PageSnapshotter(headless=headless, default_timeout_ms=int(timeout_ms or 15000))
+def snapshot_sync(
+    url: str,
+    timeout_ms: Optional[int] = None,
+    headless: Optional[bool] = None,
+    **kwargs: Any,
+) -> List[Dict[str, Any]]:
+    """Sync wrapper around PageSnapshotter.snapshot(); accepts SnapshotOptions via kwargs."""
+    snap = PageSnapshotter(
+        headless=self_or_default(headless, True),
+        **kwargs
+    )
 
     async def _run() -> List[Dict[str, Any]]:
-        # Per-call override ensures we do not double-apply timeout
-        return await snapshotter.snapshot(url, timeout_ms=timeout_ms)
+        return await snap.snapshot(url, timeout_ms=timeout_ms)
 
+    # If we're inside a running loop, run in a separate thread with its own loop
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
-        loop = None  # no running loop
+        loop = None
 
     if loop and loop.is_running():
-        # Run in a dedicated thread with its own event loop
         container: Dict[str, Any] = {"result": None, "error": None}
 
-        def _thread_target() -> None:
+        def _target() -> None:
+            new_loop = asyncio.new_event_loop()
             try:
-                new_loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(new_loop)
                 container["result"] = new_loop.run_until_complete(_run())
-            except BaseException as e:  # noqa: BLE001
+            except Exception as e:
                 container["error"] = e
             finally:
                 try:
-                    new_loop.run_until_complete(asyncio.sleep(0))
+                    new_loop.stop()
                 except Exception:
                     pass
                 new_loop.close()
 
-        t = Thread(target=_thread_target, daemon=True)
+        t = Thread(target=_target, daemon=True)
         t.start()
         t.join()
         if container["error"] is not None:
-            raise container["error"]  # type: ignore[misc]
+            raise container["error"]
         return container["result"]  # type: ignore[return-value]
-    else:
-        # Simple path when no loop is running in this thread
-        return asyncio.run(_run())
 
+    return asyncio.run(_run())
+
+
+def self_or_default(value: Optional[bool], default: bool) -> bool:
+    return default if value is None else value
