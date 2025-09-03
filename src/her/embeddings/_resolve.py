@@ -8,22 +8,24 @@ Responsibilities
     2) packaged: <repo>/src/her/models
     3) user home: ~/.her/models
 - Validate MODEL_INFO.json (must be a list[object] with required keys)
-- Resolve ONNX model + tokenizer paths for:
-    - text-embedding (MiniLM/E5-small)
-    - element-embedding (MarkupLM-base)
+- Resolve model locations for:
+    - text-embedding (MiniLM/E5-small) via ONNX
+    - element-embedding (MarkupLM-base) via ONNX first, else Transformers
 - Provide explicit, actionable errors when resolution fails.
 
 Notes
 -----
-- Installers create versioned folders:
+- Installers may create versioned folders:
     src/her/models/e5-small-onnx/model.onnx
     src/her/models/e5-small-onnx/tokenizer.json
     src/her/models/markuplm-base-onnx/model.onnx
     src/her/models/markuplm-base-onnx/tokenizer.json
+  and/or a Transformers directory with flat files:
+    src/her/models/markuplm-base/{config.json, tokenizer.json|vocab.txt, pytorch_model.bin}
 
 - Embedders may choose to treat zero-length model files or offline tokenizers
   as a signal to use a deterministic hash fallback; the resolver only guarantees
-  file discovery and schema validation, it does NOT parse ONNX content.
+  file discovery and schema validation, it does NOT parse model contents.
 
 This module contains no placeholders and is mypy/flake8/black clean.
 """
@@ -32,7 +34,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Optional, Dict, Any, Tuple
+from typing import Iterable, List, Optional, Dict, Any, Tuple, Literal
 import json
 import os
 
@@ -76,16 +78,28 @@ class ResolverError(RuntimeError):
 
 @dataclass(frozen=True)
 class ModelPaths:
-    """Resolved paths for an embedding model."""
+    """Resolved paths for an embedding model.
+
+    framework:
+        - "onnx": uses ``onnx`` and ``tokenizer`` files
+        - "transformers": uses ``model_dir`` directory
+    """
     task: str
     id: str
     alias: str
     root_dir: Path
-    onnx: Path
-    tokenizer: Path
+    framework: Literal["onnx", "transformers"]
+    # ONNX fields (present when framework == "onnx")
+    onnx: Optional[Path] = None
+    tokenizer: Optional[Path] = None
+    # Transformers fields (present when framework == "transformers")
+    model_dir: Optional[Path] = None
 
     def exists(self) -> bool:
-        return self.onnx.exists() and self.tokenizer.exists()
+        if self.framework == "onnx":
+            return bool(self.onnx and self.onnx.exists()) and bool(self.tokenizer and self.tokenizer.exists())
+        # transformers
+        return bool(self.model_dir and self.model_dir.is_dir())
 
 
 def _env(var: str) -> Optional[str]:
@@ -224,6 +238,7 @@ def _resolve_from_root_for_task(root: Path, task: str) -> Optional[ModelPaths]:
         id=entry["id"],
         alias=entry["alias"],
         root_dir=root,
+        framework="onnx",
         onnx=onnx_abs,
         tokenizer=tok_abs,
     )
@@ -292,13 +307,65 @@ def resolve_element_embedding() -> ModelPaths:
     """
     Resolve the MarkupLM-base element embedding model.
 
-    Returns:
-        ModelPaths with onnx/tokenizer absolute paths (files must exist).
+    Resolution order per root (first match wins):
+      1) Legacy ONNX directory: <root>/markuplm-base-onnx/{model.onnx, tokenizer.json}
+      2) Transformers directory: <root>/markuplm-base/ with files
+         {config.json, (tokenizer.json|vocab.txt), pytorch_model.bin}
 
     Raises:
-        ResolverError on failure to locate or validate.
+        ResolverError with actionable guidance if neither is found in any root.
     """
-    return _resolve_with_fallback(ELEMENT_EMBED_TASK)
+    roots = _candidate_roots()
+
+    # 1) Try legacy ONNX layout per root
+    for root in roots:
+        onnx_dir = (root / "markuplm-base-onnx").resolve()
+        onnx_path = onnx_dir / "model.onnx"
+        tok_path = onnx_dir / "tokenizer.json"
+        if onnx_path.exists() and tok_path.exists():
+            return ModelPaths(
+                task=ELEMENT_EMBED_TASK,
+                id="microsoft/markuplm-base",
+                alias="markuplm-base-onnx/model.onnx",
+                root_dir=root,
+                framework="onnx",
+                onnx=onnx_path,
+                tokenizer=tok_path,
+            )
+
+    # 2) Fallback to Transformers layout per root
+    for root in roots:
+        t_dir = (root / "markuplm-base").resolve()
+        if not t_dir.is_dir():
+            continue
+        has_config = (t_dir / "config.json").exists()
+        has_tok = (t_dir / "tokenizer.json").exists() or (t_dir / "vocab.txt").exists()
+        has_weights = (t_dir / "pytorch_model.bin").exists()
+        if has_config and has_tok and has_weights:
+            return ModelPaths(
+                task=ELEMENT_EMBED_TASK,
+                id="microsoft/markuplm-base",
+                alias="markuplm-base",
+                root_dir=root,
+                framework="transformers",
+                model_dir=t_dir,
+            )
+
+    # 3) Nothing matched: construct explicit error
+    roots_str = "\n  - ".join(str(r) for r in roots)
+    expected = (
+        "Expected one of the following to exist per models root:\n"
+        "  - ONNX: <root>/markuplm-base-onnx/model.onnx and tokenizer.json\n"
+        "  - Transformers: <root>/markuplm-base/{config.json, tokenizer.json|vocab.txt, pytorch_model.bin}"
+    )
+    raise ResolverError(
+        "Could not resolve MarkupLM (element-embedding) model.\n"
+        f"Searched roots (in order):\n  - {roots_str}\n"
+        f"{expected}\n"
+        "Hint: run ./scripts/install_models.sh (or .ps1 on Windows) to install models.\n"
+        "If you previously installed ONNX, ensure markuplm-base-onnx/ still exists; "
+        "otherwise install the Transformers variant into markuplm-base/."
+    )
 
 
 def resolve_by_task(task: str) -> ModelPaths:
@@ -311,7 +378,9 @@ def resolve_by_task(task: str) -> ModelPaths:
         raise ResolverError(
             f"Unknown task '{task}'. Expected '{TEXT_EMBED_TASK}' or '{ELEMENT_EMBED_TASK}'."
         )
-    return _resolve_with_fallback(task)
+    if task == TEXT_EMBED_TASK:
+        return resolve_text_embedding()
+    return resolve_element_embedding()
 
 
 # Introspection utilities (useful in diagnostics/tests) ------------------------
