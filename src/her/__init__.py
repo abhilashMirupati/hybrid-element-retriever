@@ -1,15 +1,33 @@
-"""
-Runtime orchestration module.
+@@
+     if name == "gateway_server":
+         import importlib
+         mod = importlib.import_module('.gateway_server', __name__)
+         return mod
++    # Provide direct access to the high-level runtime orchestrator.
++    if name == "HerAgent":
++        try:
++            from .runtime.agent import HerAgent as _HA
++            return _HA
++        except Exception:
++            # If runtime dependencies (e.g. Playwright) are missing, return None
++            return None
 
-This package exposes the high-level `HerAgent` class, which coordinates
-element snapshotting, incremental embedding, ranking, self-healing and
-verification.  It is designed to bridge the gap between the low-level
-building blocks in the existing HER framework (snapshotting, intent
-parsing, hybrid ranking and promotion cache) and a single, easy to
-call interface for executing natural-language test steps.  See
-`her.runtime.agent.HerAgent` for details.
-"""
-
-from .agent import HerAgent  # noqa: F401
-
-__all__ = ["HerAgent"]
+@@
+     __all__ = [
+         "HybridClient",
+         "HybridElementRetriever", 
+         "HybridElementRetrieverClient",
+         "HybridPipeline",
+         "HERPipeline",
+         "resolve_model_paths",
+         "PipelineConfig",
+         "ResilienceManager",
+         "WaitStrategy",
+         "InputValidator",
+         "DOMValidator",
+         "FormValidator",
+         "AccessibilityValidator",
+         "gateway_server",
++        "HerAgent",
+         "__version__"
+     ]
