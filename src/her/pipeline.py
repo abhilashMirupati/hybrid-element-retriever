@@ -1,18 +1,22 @@
 from __future__ import annotations
 import logging
+import re
+import math
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
 import numpy as np
 
 from her.embeddings import _resolve
-from her.embeddings.text_embedder import TextEmbedder
-from her.embeddings.element_embedder import ElementEmbedder  # deterministic fallback (kept for dev)
+try:
+    from her.embeddings.text_embedder import TextEmbedder
+except Exception:
+    TextEmbedder = None
+from her.embeddings.element_embedder import ElementEmbedder  # deterministic fallback
 try:
     from her.embeddings.markuplm_embedder import MarkupLMEmbedder
 except Exception:
-    MarkupLMEmbedder = None  # transformers may be optional in some envs
-
+    MarkupLMEmbedder = None  # transformers may be optional
 
 log = logging.getLogger(__name__)
 
@@ -36,29 +40,29 @@ def _cos(a: np.ndarray, b: np.ndarray) -> float:
 class HybridPipeline:
     """
     High-level pipeline that embeds a query (text) and page elements, then computes similarities.
-    - Text: MiniLM/E5 ONNX (local, offline)
-    - Elements: MarkupLM (Transformers, local) when available; dev fallback is deterministic
     """
 
     def __init__(self, models_root: Optional[Path] = None) -> None:
-        # Resolve models root via resolver (env-aware) if not provided.
         self._models_root = models_root or Path(_resolve._models_root_from_env())
 
         # ---- Text embedder (MiniLM/E5 ONNX) ----
         try:
-            txt_res = _resolve.resolve_text_embedding(self._models_root)
-            self.text_embedder = TextEmbedder(
-                model_root=str(txt_res["model_dir"]),
-                normalize=True,
-                max_length=512,
-                batch_size=32,
-            )
-            log.info("Text embedder: MiniLM/E5 ONNX @ %s", txt_res["model_dir"])
+            if TextEmbedder is not None:
+                txt_res = _resolve.resolve_text_embedding(self._models_root)
+                self.text_embedder = TextEmbedder(
+                    model_root=str(txt_res["model_dir"]),
+                    normalize=True,
+                    max_length=512,
+                    batch_size=32,
+                )
+                log.info("Text embedder: MiniLM/E5 ONNX @ %s", txt_res["model_dir"])
+            else:
+                raise RuntimeError("TextEmbedder unavailable")
         except Exception as e:
             log.warning("Text embedder unavailable (%s). Falling back to zero-vector.", e)
-            self.text_embedder = None  # will produce zero vectors
+            self.text_embedder = None
 
-        # ---- Element embedder (MarkupLM Transformers preferred) ----
+        # ---- Element embedder ----
         self.element_embedder = None
         try:
             elem_res = _resolve.resolve_element_embedding()
@@ -70,46 +74,28 @@ class HybridPipeline:
                     normalize=True,
                 )
                 log.info("Element embedder: MarkupLM (Transformers) @ %s", elem_res.model_dir)
-            elif elem_res.framework == "onnx":
-                # If you later add an ONNX element embedder, wire it here.
-                log.warning("Element ONNX path found (%s) but ONNX element embedder is not implemented; "
-                            "falling back to deterministic embedder.", elem_res.onnx)
-                self.element_embedder = ElementEmbedder()
             else:
-                raise _resolve.ResolverError(f"Unsupported framework: {elem_res.framework}")
+                self.element_embedder = ElementEmbedder()
         except Exception as e:
             log.warning("Element embedder unavailable (%s). Falling back to deterministic embedder.", e)
             self.element_embedder = ElementEmbedder()
-
-        # Hard error only if both are missing (fully stubbed path).
-        if self.text_embedder is None and isinstance(self.element_embedder, ElementEmbedder):
-            raise RuntimeError(
-                "Both text and element embedders are unavailable. "
-                "Install models via scripts/install_models.ps1 or ./scripts/install_models.sh."
-            )
 
     # ---- Public API ----
 
     def embed_query(self, query: str) -> np.ndarray:
         if not query or self.text_embedder is None:
-            # zero vector fallback
             return np.zeros((self._text_dim(),), dtype=np.float32)
-        return self.text_embedder.batch_encode([query])[0]
+        return self.text_embedder.encode(query)
 
     def embed_elements(self, elements: List[Dict[str, Any]]) -> np.ndarray:
         if not elements:
             return np.zeros((0, self._elem_dim()), dtype=np.float32)
-
         if hasattr(self.element_embedder, "batch_encode"):
             vecs = self.element_embedder.batch_encode(elements)
         else:
-            # deterministic fallback has encode() only
             vecs = np.vstack([self.element_embedder.encode(el) for el in elements]).astype(np.float32, copy=False)
-
-        # Ensure float32 and correct shape
         vecs = vecs.astype(np.float32, copy=False)
-        if vecs.ndim != 2 or vecs.shape[1] != self._elem_dim():
-            # If fallback dimension differs, zero-pad or truncate safely.
+        if vecs.ndim != 2:
             dim = self._elem_dim()
             fixed = np.zeros((vecs.shape[0], dim), dtype=np.float32)
             k = min(dim, vecs.shape[1])
@@ -119,34 +105,65 @@ class HybridPipeline:
 
     def query(self, query: str, elements: List[Dict[str, Any]], top_k: int = 10) -> Dict[str, Any]:
         """
-        Returns ranked elements by cosine similarity to the query.
-        Each item: {index, score, element}
+        Returns ranked elements by cosine similarity plus hybrid bonuses and tie-breaks.
+        Each result includes: {index, score, confidence, reason, element}
         """
-        q = self.embed_query(query)              # (D,)
-        E = self.embed_elements(elements)        # (N, H)
+        q = self.embed_query(query)
+        E = self.embed_elements(elements)
         if E.size == 0:
-            return {"results": [], "strategy": "cosine", "confidence": 0.0}
+            return {"results": [], "strategy": "hybrid", "confidence": 0.0}
 
-        # Cosine vs each element
-        scores = np.array([_cos(q, E[i]) for i in range(E.shape[0])], dtype=np.float32)
-        order = np.argsort(-scores)
-        top_k = max(1, min(top_k, len(order)))
-        ranked = [{"index": int(i), "score": float(scores[i]), "element": elements[int(i)]} for i in order[:top_k]]
+        # Base cosine scores
+        base_scores = np.array([_cos(q, E[i]) for i in range(E.shape[0])], dtype=np.float32)
 
-        conf = float(np.clip(np.max(scores) if len(scores) else 0.0, 0.0, 1.0))
-        return {"results": ranked, "strategy": "cosine", "confidence": conf}
+        # Bonuses
+        def _tag_bias(tag): return 0.02 if tag == "button" else 0.015 if tag == "a" else 0.01 if tag == "input" else 0.0
+        def _role_bonus(role): return 0.02 if role in ("button", "link", "menuitem", "tab", "checkbox", "radio") else 0.0
+        def _href_bonus(href, qtokens): return 0.02 if href and any(t in href.lower() for t in qtokens) else 0.0
 
-    # ---- helpers ----
+        qtokens = [t for t in re.split(r"[^a-z0-9]+", query.lower()) if len(t) >= 3]
+        bonuses, reasons = np.zeros_like(base_scores), [[] for _ in elements]
 
-    def _text_dim(self) -> int:
-        # Prefer real dim from text embedder if available
-        if self.text_embedder is not None and hasattr(self.text_embedder, "dim"):
-            return int(self.text_embedder.dim)
-        # fallback conservative dimension when zero-vectoring
-        return 384
+        for i, el in enumerate(elements):
+            tag, role, href = (el.get("tag") or "").lower(), (el.get("role") or "").lower(), el.get("href", "")
+            tb, rb, hb = _tag_bias(tag), _role_bonus(role), _href_bonus(href, qtokens)
+            bonuses[i] = tb + rb + hb
+            reasons[i].append(f"cosine={base_scores[i]:.3f}")
+            if tb: reasons[i].append(f"+tag[{tag}]=+{tb:.3f}")
+            if rb: reasons[i].append(f"+role[{role}]=+{rb:.3f}")
+            if hb: reasons[i].append(f"+href-match=+{hb:.3f}")
 
-    def _elem_dim(self) -> int:
-        if self.element_embedder is not None and hasattr(self.element_embedder, "dim"):
-            return int(self.element_embedder.dim)
-        # deterministic fallback often smaller; keep a safe default
-        return 768
+        scores = np.clip(base_scores + bonuses, 0.0, 1.0)
+
+        # Tie-breakers
+        def _vis(el): return bool(el.get("visible"))
+        def _area(el): 
+            b = el.get("bbox") or {}; return (b.get("width") or 0) * (b.get("height") or 0)
+        def _depth(el): xp = el.get("xpath") or ""; return xp.count("/") if xp else 9999
+        def _interactive(el): return 0 if el.get("tag") == "button" or el.get("role") == "button" else 1
+
+        order = list(np.argsort(-scores))
+        order.sort(key=lambda i: (-scores[i], 0 if _vis(elements[i]) else 1, _depth(elements[i]), -_area(elements[i]), _interactive(elements[i])))
+
+        # Dedup near-identical
+        seen, deduped = [], []
+        for i in order:
+            if not any(_cos(E[i], E[j]) > 0.995 for j in seen):
+                seen.append(i); deduped.append(i)
+
+        top_idxs = deduped[:max(1, min(top_k, len(deduped)))]
+        conf = 1.0 / (1.0 + math.exp(-(float(scores[top_idxs[0]]) - 0.7) * 6)) if top_idxs else 0.0
+
+        results = []
+        for rank, i in enumerate(top_idxs):
+            results.append({
+                "index": i,
+                "score": float(scores[i]),
+                "confidence": conf if rank == 0 else max(0.0, conf - 0.05 * rank),
+                "reason": "; ".join(reasons[i]),
+                "element": elements[i],
+            })
+        return {"results": results, "strategy": "hybrid", "confidence": conf}
+
+    def _text_dim(self) -> int: return getattr(self.text_embedder, "dim", 384) or 384
+    def _elem_dim(self) -> int: return getattr(self.element_embedder, "dim", 768) or 768
