@@ -1,168 +1,205 @@
 from __future__ import annotations
 import sqlite3
-from dataclasses import dataclass
-from pathlib import Path
-from typing import List, Optional, Dict, Tuple
 import time
-import json
+import math
+from dataclasses import dataclass, asdict
+from pathlib import Path
+from typing import Dict, Iterable, List, Optional, Tuple
+
+DEFAULT_TTL_SEC = 3 * 24 * 3600  # 3 days
+MIN_TTL_SEC = 60.0               # floor for TTL safety
+DECAY_HALF_LIFE_SEC = 24 * 3600  # 1 day half-life for score decay
 
 
 @dataclass
 class PromotionRecord:
-    locator: str
-    context: str
+    locator: str              # "css=..." or "xpath=..." or raw selector
+    context: str              # context key "host/path|dom8|xtra8"
     success_count: int = 0
     failure_count: int = 0
-    score: float = 0.0
+    score: float = 0.0        # promotion score
+    ts: float = 0.0           # last update epoch seconds
+    ttl_sec: float = float(DEFAULT_TTL_SEC)
+
+    def is_fresh(self, now: Optional[float] = None) -> bool:
+        n = now or time.time()
+        ttl = max(float(self.ttl_sec or DEFAULT_TTL_SEC), MIN_TTL_SEC)
+        return (n - float(self.ts or 0.0)) <= ttl
+
+    def decayed_score(self, now: Optional[float] = None) -> float:
+        """
+        Exponential decay with half-life DECAY_HALF_LIFE_SEC applied since last ts.
+        Keeps ordering stable while letting old locators naturally fade.
+        """
+        n = now or time.time()
+        age = max(0.0, n - float(self.ts or 0.0))
+        if age <= 0.0:
+            return float(self.score or 0.0)
+        # score * 2^(-age/half_life)
+        return float(self.score or 0.0) * math.pow(2.0, -age / float(DECAY_HALF_LIFE_SEC))
 
 
 class PromotionStore:
-    def __init__(self, store_path: Optional[Path|str] = None, use_sqlite: bool = True) -> None:
-        self.use_sqlite = use_sqlite
-        self.cache: Dict[Tuple[str,str], PromotionRecord] = {}
-        if store_path is None:
-            store_path = Path('.cache') / ('promotions.db' if use_sqlite else 'promotions.json')
-        self.path = Path(store_path).expanduser().resolve()
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        if use_sqlite:
+    """
+    Persistent promotion store:
+      - In-memory dict for fast reads/writes
+      - Optional SQLite persistence
+      - TTL + exponential decay
+      - Deterministic top-k for a given context
+    """
+
+    def __init__(self, path: Optional[Path] = None, use_sqlite: bool = True, default_ttl_sec: float = DEFAULT_TTL_SEC):
+        self.path = Path(path) if path else Path(".her_promotions.sqlite")
+        self.use_sqlite = bool(use_sqlite)
+        self.default_ttl_sec = float(default_ttl_sec)
+        self._cache: Dict[Tuple[str, str], PromotionRecord] = {}
+        if self.use_sqlite:
             self._ensure_sqlite()
-        else:
-            if self.path.exists():
-                try:
-                    data = json.loads(self.path.read_text(encoding='utf-8'))
-                    for k, v in data.items():
-                        loc, ctx = k.split('|',1)
-                        self.cache[(loc,ctx)] = PromotionRecord(locator=loc, context=ctx, **v)
-                except Exception:
-                    self.cache = {}
+            self._load_from_sqlite()
+
+    # ----- SQLite plumbing -----
 
     def _ensure_sqlite(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
         with sqlite3.connect(self.path) as c:
-            c.execute('CREATE TABLE IF NOT EXISTS promotions(locator TEXT, context TEXT, success INTEGER, failure INTEGER, score REAL, ts REAL, PRIMARY KEY(locator,context))')
+            c.execute(
+                """
+                CREATE TABLE IF NOT EXISTS promotions (
+                    locator TEXT NOT NULL,
+                    context TEXT NOT NULL,
+                    success_count INTEGER NOT NULL DEFAULT 0,
+                    failure_count INTEGER NOT NULL DEFAULT 0,
+                    score REAL NOT NULL DEFAULT 0.0,
+                    ts REAL NOT NULL DEFAULT 0.0,
+                    ttl_sec REAL NOT NULL DEFAULT ?
+                );
+                """,
+                (self.default_ttl_sec,),
+            )
+            c.execute("CREATE UNIQUE INDEX IF NOT EXISTS ix_promotions ON promotions (locator, context);")
             c.commit()
 
-    def record_success(self, locator: str, context: str, boost: float = 0.1) -> PromotionRecord:
-        return self.promote(locator, context, boost)
-
-    def record_failure(self, locator: str, context: str, penalty: float = 0.1) -> PromotionRecord:
-        return self.demote(locator, context, penalty)
-
-    def promote(self, locator: str, context: str, boost: float = 0.1) -> PromotionRecord:
-        key = (locator, context)
-        rec = self.cache.get(key) or PromotionRecord(locator=locator, context=context)
-        rec.success_count += 1
-        rec.score = float(rec.score + boost)
-        self.cache[key] = rec
-        self._persist(rec)
-        return rec
-
-    def demote(self, locator: str, context: str, penalty: float = 0.1) -> PromotionRecord:
-        key = (locator, context)
-        rec = self.cache.get(key) or PromotionRecord(locator=locator, context=context)
-        rec.failure_count += 1
-        rec.score = max(0.0, float(rec.score - penalty))
-        self.cache[key] = rec
-        self._persist(rec)
-        return rec
-
-    def get_score(self, locator: str, context: str) -> float:
-        rec = self.cache.get((locator, context))
-        if rec:
-            return float(rec.score)
-        # Load from disk if sqlite
-        if self.use_sqlite and self.path.exists():
-            with sqlite3.connect(self.path) as c:
-                row = c.execute('SELECT score, ts FROM promotions WHERE locator=? AND context=?', (locator, context)).fetchone()
-                if not row:
-                    return 0.0
-                score, ts = row
-                return float(self._apply_aging(score, ts))
-        return 0.0
-
-    def get_promotion_score(self, locator: str, context: str) -> float:
-        return self.get_score(locator, context)
-
-    def get_best_locators(self, context: str, top_k: int = 3) -> List[Tuple[str, float]]:
-        items = [(loc, rec.score) for (loc, ctx), rec in self.cache.items() if ctx == context]
-        items.sort(key=lambda t: t[1], reverse=True)
-        return items[:top_k]
+    def _load_from_sqlite(self) -> None:
+        with sqlite3.connect(self.path) as c:
+            rows = c.execute(
+                "SELECT locator, context, success_count, failure_count, score, ts, ttl_sec FROM promotions"
+            ).fetchall()
+        for (locator, context, succ, fail, score, ts, ttl) in rows:
+            self._cache[(locator, context)] = PromotionRecord(
+                locator=locator,
+                context=context,
+                success_count=int(succ or 0),
+                failure_count=int(fail or 0),
+                score=float(score or 0.0),
+                ts=float(ts or 0.0),
+                ttl_sec=float(ttl or self.default_ttl_sec),
+            )
 
     def _persist(self, rec: PromotionRecord) -> None:
-        if self.use_sqlite:
+        if not self.use_sqlite:
+            return
+        with sqlite3.connect(self.path) as c:
+            c.execute(
+                """
+                INSERT INTO promotions (locator, context, success_count, failure_count, score, ts, ttl_sec)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(locator, context) DO UPDATE SET
+                    success_count=excluded.success_count,
+                    failure_count=excluded.failure_count,
+                    score=excluded.score,
+                    ts=excluded.ts,
+                    ttl_sec=excluded.ttl_sec
+                """,
+                (rec.locator, rec.context, rec.success_count, rec.failure_count, rec.score, rec.ts, rec.ttl_sec),
+            )
+            c.commit()
+
+    # ----- API -----
+
+    def record_success(self, locator: str, context: str, boost: float = 0.10) -> PromotionRecord:
+        key = (locator, context)
+        rec = self._cache.get(key) or PromotionRecord(locator=locator, context=context, ttl_sec=self.default_ttl_sec)
+        rec.success_count += 1
+        rec.score = float(rec.score + float(boost))
+        rec.ts = time.time()
+        self._cache[key] = rec
+        self._persist(rec)
+        return rec
+
+    def record_failure(self, locator: str, context: str, penalty: float = 0.05) -> PromotionRecord:
+        key = (locator, context)
+        rec = self._cache.get(key) or PromotionRecord(locator=locator, context=context, ttl_sec=self.default_ttl_sec)
+        rec.failure_count += 1
+        rec.score = max(0.0, float(rec.score - float(penalty)))
+        rec.ts = time.time()
+        self._cache[key] = rec
+        self._persist(rec)
+        return rec
+
+    def purge_expired(self, now: Optional[float] = None) -> int:
+        n = now or time.time()
+        to_delete = []
+        for (locator, context), rec in self._cache.items():
+            ttl = max(float(rec.ttl_sec or self.default_ttl_sec), MIN_TTL_SEC)
+            if (n - float(rec.ts or 0.0)) > ttl:
+                to_delete.append((locator, context))
+        for k in to_delete:
+            self._cache.pop(k, None)
+        if self.use_sqlite and to_delete:
             with sqlite3.connect(self.path) as c:
-                c.execute('INSERT OR REPLACE INTO promotions(locator,context,success,failure,score,ts) VALUES(?,?,?,?,?,?)', (rec.locator, rec.context, rec.success_count, rec.failure_count, rec.score, time.time()))
+                c.executemany("DELETE FROM promotions WHERE locator=? AND context=?", to_delete)
                 c.commit()
-        else:
-            # Write entire cache
-            data = {f"{loc}|{ctx}": {
-                'success_count': r.success_count,
-                'failure_count': r.failure_count,
-                'score': r.score,
-            } for (loc, ctx), r in self.cache.items()}
-            self.path.write_text(json.dumps(data), encoding='utf-8')
+        return len(to_delete)
 
     def clear(self, context: Optional[str] = None) -> int:
         if context is None:
-            count = len(self.cache)
-            self.cache.clear()
+            count = len(self._cache)
+            self._cache.clear()
             if self.use_sqlite:
                 with sqlite3.connect(self.path) as c:
-                    c.execute('DELETE FROM promotions'); c.commit()
-            else:
-                if self.path.exists():
-                    self.path.unlink()
+                    c.execute("DELETE FROM promotions")
+                    c.commit()
             return count
-        # Remove only records for context
-        keys = [k for k in self.cache if k[1] == context]
+        # context-specific clear
+        keys = [k for k in self._cache if k[1] == context]
         for k in keys:
-            self.cache.pop(k, None)
-        if self.use_sqlite and self.path.exists():
+            self._cache.pop(k, None)
+        if self.use_sqlite:
             with sqlite3.connect(self.path) as c:
-                c.execute('DELETE FROM promotions WHERE context=?', (context,)); c.commit()
-        else:
-            self._persist(PromotionRecord(locator='', context=context))  # trigger rewrite
+                c.execute("DELETE FROM promotions WHERE context=?", (context,))
+                c.commit()
         return len(keys)
 
-    def get_stats(self) -> Dict[str, float|int|List[Tuple[str,float]]]:
-        total_records = len(self.cache)
-        total_successes = sum(r.success_count for r in self.cache.values())
-        total_failures = sum(r.failure_count for r in self.cache.values())
-        avg = (sum(r.score for r in self.cache.values()) / total_records) if total_records else 0.0
-        top = sorted([(r.locator, r.score) for r in self.cache.values()], key=lambda t: t[1], reverse=True)[:5]
-        success_rate = (total_successes / (total_successes + total_failures)) if (total_successes + total_failures) else 0.0
-        return {
-            'total_records': total_records,
-            'total_successes': total_successes,
-            'total_failures': total_failures,
-            'avg_score': avg,
-            'success_rate': success_rate,
-            'top_performers': top,
-        }
-
-    def _apply_aging(self, score: float, ts: Optional[float]) -> float:
-        """Apply simple exponential decay to promotion score based on age.
-
-        Half-life ~ 7 days: decay = 0.5 ** (age_days / 7)
+    def top_for_context(
+        self,
+        context: str,
+        limit: int = 3,
+        min_score: float = 0.0,
+        now: Optional[float] = None,
+    ) -> List[PromotionRecord]:
         """
-        try:
-            if not ts:
-                return float(score)
-            age_days = max(0.0, (time.time() - float(ts)) / 86400.0)
-            decay = 0.5 ** (age_days / 7.0)
-            return float(max(0.0, score * decay))
-        except Exception:
-            return float(score)
+        Return top records for a given context after TTL filtering and decay,
+        ordered by decayed_score (desc), then success_count (desc), then -failure_count (asc), then most-recent ts (desc).
+        """
+        n = now or time.time()
+        self.purge_expired(now=n)
+        rows = [rec for (loc, ctx), rec in self._cache.items() if ctx == context and rec.is_fresh(now=n)]
+        rows.sort(
+            key=lambda r: (
+                -float(r.decayed_score(n)),
+                -int(r.success_count or 0),
+                int(r.failure_count or 0),
+                -float(r.ts or 0.0),
+            )
+        )
+        out: List[PromotionRecord] = []
+        for r in rows:
+            if r.decayed_score(n) >= float(min_score):
+                out.append(r)
+            if len(out) >= int(limit):
+                break
+        return out
 
-
-# Backward-compatible simple helpers
-def promote_locator(locator: str, context: str, *args, **kwargs) -> None:
-    PromotionStore(use_sqlite=True).promote(locator, context, boost=float(kwargs.get('score', 0.1)))
-
-def get_promotion_score(locator: str, context: str) -> float:
-    return PromotionStore(use_sqlite=True).get_score(locator, context)
-
-
-# Compatibility alias for tests expecting a class named Promotion
-class Promotion(PromotionStore):
-    pass
-
+    # Debug/inspection helper
+    def dump(self) -> List[Dict[str, float]]:
+        return [asdict(v) for v in self._cache.values()]
