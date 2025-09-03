@@ -1,38 +1,49 @@
 from __future__ import annotations
+from dataclasses import dataclass
 from pathlib import Path
+import os
 
-def resolve_element_embedding(models_root: Path):
-    """
-    Preference:
-      1) ONNX at models_root / 'markuplm-base-onnx' / 'model.onnx'   (if you add it later)
-      2) Transformers at models_root / 'markuplm-base' (config.json + pytorch_model.bin/safetensors)
-      Else -> raise with installer hint.
-    """
-    onnx_path = models_root / "markuplm-base-onnx" / "model.onnx"
-    if onnx_path.is_file():
-        return {"framework": "onnx", "model_path": onnx_path}
+class ResolverError(RuntimeError):
+    pass
 
-    tf_dir = models_root / "markuplm-base"
+@dataclass
+class ResolvedElementPaths:
+    framework: str                         # "onnx" | "transformers"
+    model_dir: Path | None = None          # transformers dir
+    onnx: Path | None = None               # onnx model path
+    tokenizer: Path | None = None          # tokenizer path (if present)
+
+def _models_root_from_env() -> Path:
+    base = os.getenv("HER_MODELS_DIR")
+    if base:
+        return Path(base)
+    # default to repo models dir
+    return (Path(__file__).resolve().parents[1] / "models")
+
+def resolve_element_embedding() -> ResolvedElementPaths:
+    root = _models_root_from_env()
+
+    # 1) Prefer ONNX if present (as per your test)
+    onnx_dir = root / "markuplm-base-onnx"
+    onnx_model = onnx_dir / "model.onnx"
+    onnx_tok = onnx_dir / "tokenizer.json"
+    if onnx_model.is_file():
+        return ResolvedElementPaths(
+            framework="onnx",
+            onnx=onnx_model,
+            tokenizer=onnx_tok if onnx_tok.exists() else None,
+        )
+
+    # 2) Fallback to transformers dir with config+weights
+    tf_dir = root / "markuplm-base"
     if (tf_dir / "config.json").is_file() and (
         (tf_dir / "pytorch_model.bin").is_file() or (tf_dir / "model.safetensors").is_file()
     ):
-        return {"framework": "transformers", "model_dir": tf_dir}
+        return ResolvedElementPaths(framework="transformers", model_dir=tf_dir)
 
-    raise RuntimeError(
-        "Element embedding model not found.\n"
-        f"Tried ONNX at: {onnx_path}\n"
-        f"Tried Transformers dir: {tf_dir}\n"
-        "Install models first: scripts/install_models.ps1 (Windows) or ./scripts/install_models.sh (Linux/Mac)."
-    )
-
-def resolve_text_embedding(models_root: Path):
-    """
-    Resolve MiniLM/E5 ONNX dir. Must include tokenizer + ONNX.
-    """
-    e5_dir = models_root / "e5-small-onnx"
-    if e5_dir.is_dir():
-        return {"model_dir": e5_dir}
-    raise RuntimeError(
-        f"Text embedding ONNX not found at {e5_dir}. "
-        "Install models: scripts/install_models.ps1 or ./scripts/install_models.sh."
+    # 3) Neither present
+    raise ResolverError(
+        "Element model not found. Expected either ONNX at "
+        f"{onnx_model} or transformers directory at {tf_dir}. "
+        "Install models via scripts/install_models.ps1 or ./scripts/install_models.sh."
     )
