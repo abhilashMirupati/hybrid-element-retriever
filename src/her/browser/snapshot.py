@@ -1,14 +1,22 @@
-"""Playwright-based page snapshotter (dynamic & configurable).
+"""
+Playwright-based page snapshotter (production-hardened).
 
-Returns a normalized list of visible page elements:
-{ text, tag, role, attrs, xpath, bbox }.
+Features:
+- Real Chromium (headless by default)
+- Visibility filtering (display/visibility/opacity/area + viewport intersection)
+- Stable absolute XPath (with sibling indices)
+- Iframe traversal (configurable depth)
+- Shadow DOM traversal (pierce shadow roots)
+- Auto-scroll to trigger lazy/infinite content (time/step bounded)
+- Wait-until='networkidle' (configurable)
+- Optional banner/overlay dismissal (CSS selectors)
+- Locale/UA/viewport configuration
+- Duplicate suppression (text/tag/role/href/xpath)
+- Optional full-page screenshot capture
+- Timeouts, retries, guaranteed cleanup
+- Sync wrapper that works in/out of running event loops
 
-Key points:
-- Collects ALL non-empty attributes by default (configurable allow/block lists).
-- Robust visibility (display/visibility/opacity/area + viewport intersection).
-- Stable absolute XPath using sibling indices.
-- Timeouts, retries, and guaranteed cleanup.
-- Works in and out of existing event loops (sync wrapper).
+Returns a list[dict] with keys: text, tag, role, attrs, xpath, bbox, frame_url
 """
 
 from __future__ import annotations
@@ -16,9 +24,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from threading import Thread
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple, Set
 
 from playwright.async_api import (
     async_playwright,
@@ -31,66 +39,96 @@ logger = logging.getLogger("her.browser")
 
 @dataclass
 class SnapshotOptions:
-    # Browser controls
+    # Browser/session
     headless: bool = True
     default_timeout_ms: int = 15_000
+    wait_until: str = "networkidle"     # "load" | "domcontentloaded" | "networkidle"
+    viewport_width: int = 1366
+    viewport_height: int = 768
+    locale: Optional[str] = None
+    user_agent: Optional[str] = None
 
-    # Extraction config
-    max_text_length: int = 2048      # max chars of innerText to keep
-    include_offscreen: bool = False  # include elements fully outside viewport
-    min_area: int = 1                # minimum visible area (w*h) to keep
+    # Extraction
+    max_text_length: int = 2048
+    include_offscreen: bool = False
+    min_area: int = 1
 
-    # Attribute inclusion policy:
-    # If attr_include is non-empty -> include ONLY those names (plus data-* if include_data_attrs=True).
-    # Else include ALL non-empty attributes EXCEPT those in attr_exclude or with prefixes in attr_exclude_prefixes.
+    # DOM reach
+    include_iframes: bool = True
+    max_iframe_depth: int = 2
+    include_shadow_dom: bool = True
+
+    # Lazy-content scroll
+    auto_scroll: bool = True
+    scroll_steps: int = 8
+    scroll_pause_ms: int = 400
+
+    # Banner / overlay dismissal (clicked before snapshot; safe best-effort)
+    dismiss_selectors: List[str] = field(default_factory=lambda: [
+        'button[aria-label="Close"]',
+        'button[aria-label="Dismiss"]',
+        'button:has-text("Accept")',
+        'button:has-text("Agree")',
+        '#onetrust-accept-btn-handler',
+        '.cc-allow',
+    ])
+
+    # Attributes policy
     attr_include: Optional[List[str]] = None
     include_data_attrs: bool = True
-    attr_exclude: List[str] = ("style",)
-    attr_exclude_prefixes: List[str] = ("on",)  # drop on* event handlers
-    useful_attrs: List[str] = ("href", "aria-label", "title", "alt", "placeholder", "value", "name")
+    attr_exclude: List[str] = field(default_factory=lambda: ["style"])
+    attr_exclude_prefixes: List[str] = field(default_factory=lambda: ["on"])  # onClick, etc.
+    useful_attrs: List[str] = field(default_factory=lambda: ["href", "aria-label", "title", "alt", "placeholder", "value", "name"])
+    interesting_tags: List[str] = field(default_factory=lambda: ["A", "BUTTON", "INPUT", "SELECT", "TEXTAREA", "LABEL", "H1", "H2", "H3", "H4", "H5", "H6"])
 
-    # Tag/role heuristics (still configurable)
-    interesting_tags: List[str] = ("A", "BUTTON", "INPUT", "SELECT", "TEXTAREA", "LABEL", "H1", "H2", "H3", "H4", "H5", "H6")
+    # Output
+    screenshot_path: Optional[str] = None   # if provided, save full-page PNG to this path
 
 
 class PageSnapshotter:
     def __init__(self, headless: bool = True, default_timeout_ms: int = 15_000, **kwargs: Any) -> None:
-        # kwargs can override any SnapshotOptions field
         self.opts = SnapshotOptions(headless=headless, default_timeout_ms=default_timeout_ms, **kwargs)
 
-    async def snapshot(self, url: str, timeout_ms: Optional[int] = None) -> List[Dict[str, Any]]:
-        """Navigate to URL and return normalized visible elements."""
-        t0 = time.time()
-        timeout_ms = int(timeout_ms or self.opts.default_timeout_ms)
+    async def _dismiss_banners(self, page) -> None:
+        if not self.opts.dismiss_selectors:
+            return
+        try:
+            for sel in self.opts.dismiss_selectors:
+                try:
+                    el = await page.query_selector(sel)
+                    if el:
+                        await el.click(timeout=500)
+                except Exception:
+                    continue
+        except Exception:
+            pass
 
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=self.opts.headless)
-            context = await browser.new_context()
-            try:
-                page = await context.new_page()
-                page.set_default_timeout(timeout_ms)
+    async def _auto_scroll(self, page) -> None:
+        if not self.opts.auto_scroll or self.opts.scroll_steps <= 0:
+            return
+        try:
+            for _ in range(self.opts.scroll_steps):
+                await page.evaluate("""() => {
+                  return new Promise((resolve) => {
+                    const y = Math.min(document.body.scrollHeight, window.scrollY + window.innerHeight);
+                    window.scrollTo({ top: y, behavior: 'instant' });
+                    setTimeout(resolve, 10);
+                  });
+                }""")
+                await page.wait_for_timeout(self.opts.scroll_pause_ms)
+        except Exception:
+            pass
 
-                # Simple retry on nav flake
-                for attempt in range(2):
-                    try:
-                        await page.goto(url, wait_until="load")
-                        break
-                    except (PlaywrightTimeoutError, PlaywrightError):
-                        if attempt == 1:
-                            raise
-                        await asyncio.sleep(0.25)
-
-                # Pass options to the page; Playwright JSON-serializes the dict automatically.
-                options = asdict(self.opts)
-                result = await page.evaluate(
-                    """(opts) => {
+    async def _collect_from_frame(self, frame, options_dict: Dict[str, Any], depth: int, max_depth: int) -> List[Dict[str, Any]]:
+        # Evaluate the DOM in this frame (includes shadow DOM traversal when enabled).
+        js = """(opts) => {
   const collapse = (s) => (s || '').replace(/\\s+/g, ' ').trim();
 
   function isElementVisible(el, includeOffscreen, minArea) {
     const style = window.getComputedStyle(el);
     if (style.display === 'none' || style.visibility === 'hidden') return false;
-    const opacity = parseFloat(style.opacity);
-    if (!isNaN(opacity) && opacity === 0) return false;
+    const op = parseFloat(style.opacity);
+    if (!isNaN(op) && op === 0) return false;
 
     const rect = el.getBoundingClientRect();
     const w = Math.max(0, Math.round(rect.width));
@@ -125,35 +163,18 @@ class PageSnapshotter:
     return '/' + parts.join('/');
   }
 
-  const els = Array.from(document.querySelectorAll('*'));
-  const out = [];
-  const stats = { seen: els.length, kept: 0, hidden: 0, skipped: 0 };
-
-  const cfg = {
-    maxText: opts.max_text_length || 2048,
-    includeOffscreen: !!opts.include_offscreen,
-    minArea: parseInt(opts.min_area || 1, 10),
-    attrInclude: Array.isArray(opts.attr_include) ? opts.attr_include.map(String) : null,
-    includeData: !!opts.include_data_attrs,
-    attrExclude: new Set((opts.attr_exclude || []).map(String)),
-    attrExcludePrefixes: (opts.attr_exclude_prefixes || []).map(String),
-    usefulAttrs: new Set((opts.useful_attrs || []).map(String)),
-    interestingTags: new Set((opts.interesting_tags || []).map(s => String(s).toUpperCase()))
-  };
-
-  function shouldExcludeAttr(name) {
+  function shouldExcludeAttr(name, cfg) {
     if (cfg.attrExclude.has(name)) return true;
     for (const pref of cfg.attrExcludePrefixes) {
-      if (name.startsWith(pref)) return true; // drop on*, etc.
+      if (name.startsWith(pref)) return true;
     }
     return false;
   }
 
-  function collectAttributes(el) {
+  function collectAttributes(el, cfg) {
     const result = {};
     const attrs = el.attributes;
     if (cfg.attrInclude && cfg.attrInclude.length > 0) {
-      // allowlist
       for (const name of cfg.attrInclude) {
         const v = el.getAttribute(name);
         if (v != null && String(v).trim() !== '') {
@@ -162,11 +183,10 @@ class PageSnapshotter:
         }
       }
     } else {
-      // include all non-empty, minus excludes/prefixes
       for (let i = 0; i < attrs.length; i++) {
         const name = attrs[i].name;
         if (!cfg.includeData && name.startsWith('data-')) continue;
-        if (shouldExcludeAttr(name)) continue;
+        if (shouldExcludeAttr(name, cfg)) continue;
         const v = attrs[i].value;
         if (v != null && String(v).trim() !== '') {
           result[name] = collapse(String(v));
@@ -176,24 +196,44 @@ class PageSnapshotter:
     return result;
   }
 
-  function hasUsefulAttribute(attrs) {
+  function hasUsefulAttribute(attrs, cfg) {
     for (const k of Object.keys(attrs)) {
       if (cfg.usefulAttrs.has(k)) return true;
     }
     return false;
   }
 
-  for (const el of els) {
-    if (!isElementVisible(el, cfg.includeOffscreen, cfg.minArea)) { stats.hidden++; continue; }
+  // Traverse DOM, optionally piercing shadow roots.
+  const cfg = {
+    maxText: opts.max_text_length || 2048,
+    includeOffscreen: !!opts.include_offscreen,
+    minArea: parseInt(opts.min_area || 1, 10),
+    attrInclude: Array.isArray(opts.attr_include) ? opts.attr_include.map(String) : null,
+    includeData: !!opts.include_data_attrs,
+    attrExclude: new Set((opts.attr_exclude || []).map(String)),
+    attrExcludePrefixes: (opts.attr_exclude_prefixes || []).map(String),
+    usefulAttrs: new Set((opts.useful_attrs || []).map(String)),
+    interestingTags: new Set((opts.interesting_tags || []).map(s => String(s).toUpperCase())),
+    includeShadow: !!opts.include_shadow_dom,
+  };
+
+  const out = [];
+  const visited = new Set();
+
+  function pushElement(el) {
+    if (!isElementVisible(el, cfg.includeOffscreen, cfg.minArea)) return;
+    const key = el;  // identity in this realm
+    if (visited.has(key)) return;
+    visited.add(key);
 
     const tag = el.tagName.toUpperCase();
     const role = el.getAttribute('role');
-    const attrs = collectAttributes(el);
-    const textRaw = collapse(el.innerText || '');
+    const attrs = collectAttributes(el, cfg);
+    const textRaw = (el.innerText || '').replace(/\\s+/g, ' ').trim();
     const text = textRaw.length > cfg.maxText ? textRaw.slice(0, cfg.maxText) : textRaw;
 
-    const keep = (text.length > 0) || hasUsefulAttribute(attrs) || cfg.interestingTags.has(tag) || !!role;
-    if (!keep) { stats.skipped++; continue; }
+    const keep = (text.length > 0) || hasUsefulAttribute(attrs, cfg) || cfg.interestingTags.has(tag) || !!role;
+    if (!keep) return;
 
     const rect = el.getBoundingClientRect();
     out.push({
@@ -211,18 +251,110 @@ class PageSnapshotter:
     });
   }
 
-  stats.kept = out.length;
-  return { items: out, stats };
-}""",
-                    options,
-                )
+  function walk(node) {
+    if (!(node instanceof Element)) return;
+    pushElement(node);
 
-                items = result.get("items", []) if isinstance(result, dict) else result
-                stats = result.get("stats", {}) if isinstance(result, dict) else {}
-                logger.debug(
-                    "[snapshot] stats url=%s seen=%s kept=%s hidden=%s skipped=%s",
-                    url, stats.get("seen"), stats.get("kept"), stats.get("hidden"), stats.get("skipped"),
-                )
+    // Regular children
+    for (const child of node.children) {
+      walk(child);
+    }
+
+    // Shadow root
+    if (cfg.includeShadow && node.shadowRoot) {
+      for (const sChild of node.shadowRoot.querySelectorAll('*')) {
+        pushElement(sChild);
+      }
+    }
+  }
+
+  walk(document.documentElement);
+  return out;
+}"""
+        items = await frame.evaluate(js, options_dict)
+        # Tag each item with the frame URL (useful for iframes)
+        try:
+            f_url = frame.url
+        except Exception:
+            f_url = ""
+        for it in items:
+            it["frame_url"] = f_url
+        results = list(items)
+
+        # Recurse into child frames (iframes), bounded by depth
+        if self.opts.include_iframes and depth < max_depth:
+            for child in frame.child_frames:
+                try:
+                    results += await self._collect_from_frame(child, options_dict, depth + 1, max_depth)
+                except Exception:
+                    continue
+        return results
+
+    def _dedupe(self, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        seen: Set[Tuple] = set()
+        out: List[Dict[str, Any]] = []
+        for it in items:
+            key = (
+                it.get("text", "")[:256],
+                it.get("tag"),
+                it.get("role"),
+                (it.get("attrs") or {}).get("href", ""),
+                it.get("xpath"),
+                it.get("frame_url", ""),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(it)
+        return out
+
+    async def snapshot(self, url: str, timeout_ms: Optional[int] = None) -> List[Dict[str, Any]]:
+        t0 = time.time()
+        timeout_ms = int(timeout_ms or self.opts.default_timeout_ms)
+
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=self.opts.headless)
+            context = await p.chromium.launch_persistent_context(
+                user_data_dir="",  # ephemeral
+                headless=self.opts.headless,
+                locale=self.opts.locale or "en-US",
+                user_agent=self.opts.user_agent or None,
+                viewport={"width": self.opts.viewport_width, "height": self.opts.viewport_height},
+            )
+            page = await context.new_page()
+            try:
+                page.set_default_timeout(timeout_ms)
+
+                # Navigation with retry
+                for attempt in range(2):
+                    try:
+                        await page.goto(url, wait_until=self.opts.wait_until)
+                        break
+                    except (PlaywrightTimeoutError, PlaywrightError):
+                        if attempt == 1:
+                            raise
+                        await asyncio.sleep(0.25)
+
+                # Optional banner dismissal & lazy loading scroll
+                await self._dismiss_banners(page)
+                await self._auto_scroll(page)
+
+                # Optional screenshot
+                if self.opts.screenshot_path:
+                    try:
+                        await page.screenshot(path=self.opts.screenshot_path, full_page=True)
+                    except Exception:
+                        pass
+
+                # Collect from main frame and child frames
+                options = asdict(self.opts)
+                items = await self._collect_from_frame(page.main_frame, options, depth=0, max_depth=self.opts.max_iframe_depth)
+
+                # De-duplicate
+                items = self._dedupe(items)
+
+                logger.info("[snapshot] url=%s frames=%d items=%d dur_ms=%d",
+                            url, len(page.frames), len(items), int((time.time() - t0) * 1000))
                 return items
 
             except PlaywrightTimeoutError as e:
@@ -230,7 +362,10 @@ class PageSnapshotter:
             except PlaywrightError as e:
                 raise RuntimeError(f"Snapshot error for {url}: {e}") from e
             finally:
-                # always clean up
+                try:
+                    await page.close()
+                except Exception:
+                    pass
                 try:
                     await context.close()
                 except Exception:
@@ -240,8 +375,6 @@ class PageSnapshotter:
                 except Exception:
                     pass
 
-        logger.info("[snapshot] captured url=%s in %d ms", url, int((time.time() - t0) * 1000))
-
 
 def snapshot_sync(
     url: str,
@@ -249,16 +382,15 @@ def snapshot_sync(
     headless: Optional[bool] = None,
     **kwargs: Any,
 ) -> List[Dict[str, Any]]:
-    """Sync wrapper around PageSnapshotter.snapshot(); accepts SnapshotOptions via kwargs."""
-    snap = PageSnapshotter(
-        headless=self_or_default(headless, True),
-        **kwargs
-    )
+    """Sync wrapper for PageSnapshotter.snapshot(); accepts SnapshotOptions fields as kwargs."""
+    opts = dict(kwargs)
+    if headless is not None:
+        opts["headless"] = headless
+    snap = PageSnapshotter(**opts)
 
-    async def _run() -> List[Dict[str, Any]]:
+    async def _run():
         return await snap.snapshot(url, timeout_ms=timeout_ms)
 
-    # If we're inside a running loop, run in a separate thread with its own loop
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
@@ -282,14 +414,9 @@ def snapshot_sync(
                 new_loop.close()
 
         t = Thread(target=_target, daemon=True)
-        t.start()
-        t.join()
+        t.start(); t.join()
         if container["error"] is not None:
             raise container["error"]
         return container["result"]  # type: ignore[return-value]
 
     return asyncio.run(_run())
-
-
-def self_or_default(value: Optional[bool], default: bool) -> bool:
-    return default if value is None else value

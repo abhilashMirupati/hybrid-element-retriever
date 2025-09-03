@@ -44,3 +44,17 @@ def test_markuplm_transformers_batch_encode():
     assert vecs.dtype == np.float32
     assert vecs.shape == (2, emb.dim)
 
+
+def test_markuplm_empty_element_zero_vector():
+    d = _installed_markuplm_dir()
+    if d is None:
+        pytest.skip("MarkupLM Transformers model not installed; run scripts/install_models.sh")
+    from her.embeddings.markuplm_embedder import MarkupLMEmbedder
+
+    emb = MarkupLMEmbedder(d)
+    v = emb.encode({})
+    assert isinstance(v, np.ndarray)
+    assert v.dtype == np.float32
+    assert v.shape == (emb.dim,)
+    assert float(v.sum()) == 0.0
+

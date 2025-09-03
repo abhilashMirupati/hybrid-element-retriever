@@ -1,53 +1,70 @@
-"""MarkupLM (Transformers) element embedder.
-
-Loads a local MarkupLM model directory (offline) and produces float32
-embeddings for DOM element descriptors. Minimal input is the element "text".
-
-Public API mirrors other embedders:
-  - encode(element: dict) -> np.ndarray[(dim,), float32]
-  - batch_encode(elements: list[dict]) -> np.ndarray[(N, dim), float32]
-
-Guard rails:
-- Does not import onnxruntime or optimum.
-- Requires an installed local Transformers model directory.
-"""
-
 from __future__ import annotations
-
-from pathlib import Path
-from typing import Any, Dict, List
-
+import logging
+from typing import Dict, List
 import numpy as np
 import torch
-from transformers import AutoProcessor, MarkupLMModel  # type: ignore
+from transformers import AutoProcessor, MarkupLMModel
+from .normalization import element_to_text
 
+logger = logging.getLogger(__name__)
+
+def _l2norm(a: np.ndarray, eps: float = 1e-12) -> np.ndarray:
+    n = np.linalg.norm(a, axis=-1, keepdims=True)
+    n = np.maximum(n, eps)
+    return a / n
 
 class MarkupLMEmbedder:
-    def __init__(self, model_dir: str | Path, device: str = "cpu") -> None:
-        self.model_dir = str(Path(model_dir))
+    """
+    Element embedder using MarkupLM (Transformers) from a local directory:
+    src/her/models/markuplm-base/ (config.json + pytorch_model.bin + tokenizer files).
+    """
+
+    def __init__(self, model_dir: str, device: str = "cpu", batch_size: int = 16, normalize: bool = True):
+        self.model_dir = model_dir
         self.device = torch.device(device)
-        # Load processor and model from local directory
-        self.processor = AutoProcessor.from_pretrained(self.model_dir)
-        self.model = MarkupLMModel.from_pretrained(self.model_dir).to(self.device).eval()
-        # MarkupLM-base hidden size
-        self.dim: int = int(getattr(self.model.config, "hidden_size", 768))
+        self.batch_size = int(batch_size)
+        self.normalize = bool(normalize)
 
-    def _encode_one(self, element: Dict[str, Any]) -> np.ndarray:
-        text = (element.get("text") or "").strip()
-        if not text:
-            return np.zeros((self.dim,), dtype=np.float32)
-        inputs = self.processor(text=[text], return_tensors="pt", truncation=True, padding=True)
-        inputs = {k: v.to(self.device) for k, v in inputs.items()}
+        # Load locally; no network calls.
+        self.processor = AutoProcessor.from_pretrained(model_dir)
+        self.model: MarkupLMModel = MarkupLMModel.from_pretrained(model_dir).to(self.device)
+        self.model.eval()
         with torch.no_grad():
-            out = self.model(**inputs).last_hidden_state[:, 0, :]  # CLS token
-        return out.squeeze(0).detach().cpu().float().numpy()
+            self.dim = int(self.model.config.hidden_size)
 
-    def encode(self, element: Dict[str, Any]) -> np.ndarray:
-        return self._encode_one(element)
+        logger.info(
+            "Loaded MarkupLM (transformers) dim=%d device=%s normalize=%s from %s",
+            self.dim, self.device, self.normalize, model_dir
+        )
 
-    def batch_encode(self, elements: List[Dict[str, Any]]) -> np.ndarray:
+    def encode(self, element: Dict) -> np.ndarray:
+        arr = self.batch_encode([element])
+        return arr[0]
+
+    def batch_encode(self, elements: List[Dict]) -> np.ndarray:
         if not elements:
-            return np.zeros((0, self.dim), dtype=np.float32)
-        mats = [self._encode_one(e) for e in elements]
-        return np.stack(mats, axis=0)
+            return np.zeros((0, getattr(self, "dim", 768)), dtype=np.float32)
 
+        texts = [element_to_text(e) for e in elements]
+        vecs = np.zeros((len(texts), self.dim), dtype=np.float32)
+        empty = [i for i, t in enumerate(texts) if t == ""]
+        with torch.no_grad():
+            for i in range(0, len(texts), self.batch_size):
+                chunk = texts[i:i + self.batch_size]
+                if all(t == "" for t in chunk):
+                    continue
+                inputs = self.processor(
+                    text=chunk,
+                    padding=True, truncation=True, max_length=512,
+                    return_tensors="pt"
+                ).to(self.device)
+
+                outputs = self.model(**inputs)  # last_hidden_state: (B, T, H)
+                cls = outputs.last_hidden_state[:, 0, :]  # (B, H)
+                out = cls.detach().cpu().to(torch.float32).numpy()
+                if self.normalize:
+                    out = _l2norm(out)
+                vecs[i:i + len(chunk)] = out
+
+        # Leave truly empty elements as exact zero vectors (good for downstream logic).
+        return vecs

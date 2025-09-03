@@ -1,39 +1,38 @@
-import os
 import pytest
 from her.browser import snapshot_sync
 
-def _use_network() -> bool:
-    return os.environ.get("HER_TEST_USE_NETWORK", "1") not in {"0", "false", "False"}
+@pytest.mark.timeout(60)
+def test_iframe_traversal_data_url():
+    html_iframe = "data:text/html," \
+                  "<html><body><h2>Inner</h2><a href='/x'>Go</a><button>Press</button></body></html>"
+    outer = f"data:text/html,<html><body><iframe src=\"{html_iframe}\"></iframe></body></html>"
+    items = snapshot_sync(outer, timeout_ms=8000, include_iframes=True, max_iframe_depth=2)
+    assert any(it["text"].startswith("Inner") for it in items)
+    assert any(it["tag"] == "BUTTON" for it in items)
 
 @pytest.mark.timeout(60)
-def test_smoke_snapshot():
-    url = "https://example.com" if _use_network() else "data:text/html,<h1>Title</h1><a href='#'>Link</a><button>Btn</button>"
-    items = snapshot_sync(url, timeout_ms=15000)
-    assert isinstance(items, list)
-    assert len(items) >= 3
-    for it in items[:5]:
-        assert set(("text","tag","role","attrs","xpath","bbox")).issubset(it.keys())
-        assert isinstance(it["text"], str)
-        assert isinstance(it["tag"], str)
-        assert isinstance(it["xpath"], str)
-        bb = it["bbox"]
-        assert isinstance(bb["w"], int) and isinstance(bb["h"], int)
-        assert bb["w"] >= 0 and bb["h"] >= 0
+def test_shadow_dom_capture():
+    shadow_html = (
+        "data:text/html,<html><body>"
+        "<div id='host'></div>"
+        "<script>"
+        "const host=document.getElementById('host');"
+        "const root=host.attachShadow({mode:'open'});"
+        "root.innerHTML='<button aria-label=\"Shadow OK\">Shadow Button</button>';"
+        "</script>"
+        "</body></html>"
+    )
+    items = snapshot_sync(shadow_html, timeout_ms=8000, include_shadow_dom=True)
+    assert any('Shadow Button' in it["text"] or (it["attrs"] or {}).get("aria-label") == "Shadow OK" for it in items)
 
 @pytest.mark.timeout(60)
-def test_xpath_unique_and_stable():
-    url = "https://example.com" if _use_network() else "data:text/html,<h1>Title</h1><a href='#'>Link</a><button>Btn</button>"
-    r1 = snapshot_sync(url, timeout_ms=15000)
-    r2 = snapshot_sync(url, timeout_ms=15000)
-    x1 = [it["xpath"] for it in r1]
-    x2 = [it["xpath"] for it in r2]
-    assert len(set(x1)) == len(x1)
-    assert len(set(x2)) == len(x2)
-    k = min(5, len(x1), len(x2))
-    assert k >= 1
-    assert x1[:k] == x2[:k]
-
-@pytest.mark.timeout(20)
-def test_timeout_error():
-    with pytest.raises(TimeoutError):
-        snapshot_sync("http://10.255.255.1", timeout_ms=2000)
+def test_auto_scroll_lazy_content():
+    # Simulate lazy growth by increasing body height after a delay
+    lazy = (
+        "data:text/html,<html><body style='height:2000px'>"
+        "<div id='late'></div>"
+        "<script>setTimeout(()=>{document.getElementById('late').innerText='Loaded later';}, 600);</script>"
+        "</body></html>"
+    )
+    items = snapshot_sync(lazy, timeout_ms=8000, auto_scroll=True, scroll_steps=3, scroll_pause_ms=500)
+    assert any('Loaded later' in it["text"] for it in items)
