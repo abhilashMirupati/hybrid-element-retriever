@@ -7,6 +7,7 @@ and ranking fusion into a single flow.
 
 from typing import Dict, Any, List
 import time
+from typing import Optional
 
 import logging
 from her.embeddings.text_embedder import TextEmbedder
@@ -200,3 +201,23 @@ class HybridPipeline:
         m = hashlib.sha256()
         m.update(json.dumps(el, sort_keys=True).encode("utf-8"))
         return m.hexdigest()
+
+    # --- Light-touch helper for future integration of browser snapshotter ---
+    @staticmethod
+    def snapshot_url(url: str, timeout_ms: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Helper that captures a snapshot via real browser.
+
+        This defers to her.browser.snapshot_sync to avoid importing Playwright
+        machinery at module import time.
+        """
+        start = time.time()
+        try:
+            from her.browser import snapshot_sync  # lazy import
+        except Exception as e:  # pragma: no cover - import errors surfaced in logs
+            logging.getLogger("her.browser").error("Failed to import snapshot_sync: %s", e)
+            raise
+        elements = snapshot_sync(url, timeout_ms=timeout_ms)
+        logging.getLogger("her.browser").info(
+            "snapshot_url captured %s elements in %s ms", len(elements), int((time.time() - start) * 1000)
+        )
+        return elements
