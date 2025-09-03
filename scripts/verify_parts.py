@@ -1,30 +1,28 @@
 """
-Offline verifier for HER Parts 1–5.
+Offline verifier for HER Parts 1–6.
+No ONNX/Transformers/Playwright required.
 
-Runs a compact, dependency-free suite (no ONNX/Transformers/Playwright required):
-- Normalization priorities and href host/path
-- Embeddings: shapes, dtype, zero-vector fallback
-- Retrieval: bonuses (role/href/tag), tie-breakers, dedup, confidence & reasons
-- Self-healing: cache-hit path, demotion path, TTL purge
-
-Exit code 0 when all checks pass; prints a JSON summary.
+Checks:
+- Normalization: priorities & href host/path
+- Embeddings: float32, zero-vector fallback, element shape fix-up
+- Retrieval: bonuses, tie-breakers, dedup, calibrated confidence + reasons
+- Self-heal: cache-hit / demotion / TTL
+- CLI wiring sanity (module import)
 """
 import sys, os, json, time
 import numpy as np
 
-# Path to src
-SYS_SRC = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src"))
-if SYS_SRC not in sys.path:
-    sys.path.insert(0, SYS_SRC)
+SRC = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src"))
+if SRC not in sys.path:
+    sys.path.insert(0, SRC)
 
-# Clear cached modules to reflect local edits
 for k in list(sys.modules.keys()):
     if k == "her" or k.startswith("her."):
         del sys.modules[k]
 
-summary = {"normalization": False, "embeddings": False, "retrieval": False, "selfheal": False}
+summary = {"normalization": False, "embeddings": False, "retrieval": False, "selfheal": False, "cli": False}
 
-# ---- Normalization checks ----
+# Normalization
 try:
     from her.embeddings.normalization import canonical_text
     el = {
@@ -37,7 +35,7 @@ try:
         "name": "save",
         "value": "",
         "text": "  Save   ",
-        "href": "https://example.com/files/save?draft=1",
+        "href": "https://example.com/files/save?x=1#y",
         "id": "submit",
         "class": "btn  btn-primary"
     }
@@ -48,11 +46,11 @@ try:
 except Exception as e:
     print("NORMALIZATION_FAIL:", repr(e))
 
-# ---- Embeddings checks ----
+# Embeddings
 try:
     from her.pipeline import HybridPipeline
     p = HybridPipeline(models_root=None)
-    p.text_embedder = None  # force zero-vector path
+    p.text_embedder = None
     q = p.embed_query("anything")
     assert isinstance(q, np.ndarray) and q.dtype == np.float32 and q.shape[0] > 0 and float(np.linalg.norm(q)) == 0.0
 
@@ -65,15 +63,15 @@ try:
 except Exception as e:
     print("EMBEDDINGS_FAIL:", repr(e))
 
-# ---- Retrieval checks ----
+# Retrieval
 try:
     p = HybridPipeline(models_root=None)
     p.embed_query = lambda q: np.array([1.0, 0.0, 0.0], dtype=np.float32)
     p.embed_elements = lambda els: np.array([
-        [1.0, 0.0, 0.0],   # E0
-        [1.0, 0.0, 0.0],   # E1 (dup)
-        [0.6, 0.8, 0.0],   # E2
-        [0.9, 0.1, 0.0],   # E3
+        [1.0, 0.0, 0.0],   # dup group
+        [1.0, 0.0, 0.0],
+        [0.6, 0.8, 0.0],
+        [0.9, 0.1, 0.0],
     ], dtype=np.float32)
 
     elements = [
@@ -83,8 +81,7 @@ try:
         {"tag": "input", "role": "", "href": "", "visible": False, "bbox": {"width": 1, "height": 1}, "xpath": "/deep/child/input[1]"},
     ]
     out = p.query("click submit", elements, top_k=4)
-    assert out["strategy"] == "hybrid"
-    assert 0.0 <= out["confidence"] <= 1.0
+    assert out["strategy"] == "hybrid" and 0.0 <= out["confidence"] <= 1.0
     reasons = [r["reason"] for r in out["results"]]
     assert any("+href-match" in r for r in reasons)
     tags = [r["element"]["tag"] for r in out["results"]]
@@ -93,7 +90,7 @@ try:
 except Exception as e:
     print("RETRIEVAL_FAIL:", repr(e))
 
-# ---- Self-heal checks ----
+# Self-heal
 try:
     from types import SimpleNamespace
     from her.recovery.promotion import PromotionStore
@@ -111,7 +108,6 @@ try:
     res = healer.try_cached(page=None, query="click ok", context_url=ctx_url)
     assert res.ok and res.strategy == "css" and res.selector == "#ok" and res.reason == "cache-hit" and res.confidence_boost > 0.0
 
-    # TTL purge behavior (short TTL)
     store2 = PromotionStore(use_sqlite=False, default_ttl_sec=1.0)
     store2.record_success(locator="css=#ok", context="example.com/ttl")
     time.sleep(1.2)
@@ -120,6 +116,13 @@ try:
     summary["selfheal"] = True
 except Exception as e:
     print("SELFHEAL_FAIL:", repr(e))
+
+# CLI import
+try:
+    import her.cli.main as cli_main  # noqa: F401
+    summary["cli"] = True
+except Exception as e:
+    print("CLI_FAIL:", repr(e))
 
 print(json.dumps({"ok": all(summary.values()), "summary": summary}, indent=2))
 sys.exit(0 if all(summary.values()) else 1)
