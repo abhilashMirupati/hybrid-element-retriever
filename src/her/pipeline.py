@@ -8,21 +8,27 @@ from typing import List, Dict, Any, Optional
 import numpy as np
 
 from her.embeddings import _resolve
+# Soft-import heavy bits so import works even without onnx/transformers installed
 try:
     from her.embeddings.text_embedder import TextEmbedder
 except Exception:
-    TextEmbedder = None
+    TextEmbedder = None  # type: ignore
+
 from her.embeddings.element_embedder import ElementEmbedder  # deterministic fallback
+
 try:
     from her.embeddings.markuplm_embedder import MarkupLMEmbedder
 except Exception:
-    MarkupLMEmbedder = None  # transformers may be optional
+    MarkupLMEmbedder = None  # type: ignore
 
 log = logging.getLogger(__name__)
 
 
 def _cos(a: np.ndarray, b: np.ndarray) -> float:
-    """Stable cosine similarity: L2-normalize and dot over shared dimension (no resize/repeat)."""
+    """
+    Stable cosine similarity: L2-normalize and dot over shared dimension (no resize/repeat).
+    Returns 0.0 if either vector has zero norm.
+    """
     a = a.astype(np.float32, copy=False)
     b = b.astype(np.float32, copy=False)
     na = float(np.linalg.norm(a))
@@ -40,9 +46,11 @@ def _cos(a: np.ndarray, b: np.ndarray) -> float:
 class HybridPipeline:
     """
     High-level pipeline that embeds a query (text) and page elements, then computes similarities.
+    Offline-friendly: gracefully degrades when heavy deps are missing.
     """
 
     def __init__(self, models_root: Optional[Path] = None) -> None:
+        # Resolve models root via resolver (env-aware) if not provided.
         self._models_root = models_root or Path(_resolve._models_root_from_env())
 
         # ---- Text embedder (MiniLM/E5 ONNX) ----
@@ -66,7 +74,7 @@ class HybridPipeline:
         self.element_embedder = None
         try:
             elem_res = _resolve.resolve_element_embedding()
-            if elem_res.framework == "transformers" and MarkupLMEmbedder is not None:
+            if getattr(elem_res, "framework", None) == "transformers" and MarkupLMEmbedder is not None:
                 self.element_embedder = MarkupLMEmbedder(
                     model_dir=str(elem_res.model_dir),
                     device="cpu",
@@ -84,50 +92,97 @@ class HybridPipeline:
 
     def embed_query(self, query: str) -> np.ndarray:
         if not query or self.text_embedder is None:
+            # zero vector fallback keeps cosine math safe & deterministic
             return np.zeros((self._text_dim(),), dtype=np.float32)
-        return self.text_embedder.encode(query)
+        vec = self.text_embedder.encode(query)
+        return vec.astype(np.float32, copy=False)
 
     def embed_elements(self, elements: List[Dict[str, Any]]) -> np.ndarray:
         if not elements:
             return np.zeros((0, self._elem_dim()), dtype=np.float32)
+
         if hasattr(self.element_embedder, "batch_encode"):
             vecs = self.element_embedder.batch_encode(elements)
         else:
-            vecs = np.vstack([self.element_embedder.encode(el) for el in elements]).astype(np.float32, copy=False)
+            # deterministic fallback has encode() only
+            vecs = np.vstack([self.element_embedder.encode(el) for el in elements])
+
         vecs = vecs.astype(np.float32, copy=False)
         if vecs.ndim != 2:
+            # Defensive fixup to expected (N, D)
             dim = self._elem_dim()
             fixed = np.zeros((vecs.shape[0], dim), dtype=np.float32)
-            k = min(dim, vecs.shape[1])
-            fixed[:, :k] = vecs[:, :k]
+            k = min(dim, vecs.shape[1]) if vecs.ndim > 1 else 0
+            if k:
+                fixed[:, :k] = vecs[:, :k]
             vecs = fixed
         return vecs
 
     def query(self, query: str, elements: List[Dict[str, Any]], top_k: int = 10) -> Dict[str, Any]:
         """
-        Returns ranked elements by cosine similarity plus hybrid bonuses and tie-breaks.
-        Each result includes: {index, score, confidence, reason, element}
+        Rank elements by cosine similarity + hybrid bonuses, apply deterministic tie-breakers,
+        deduplicate near-identical embeddings, and calibrate confidence.
+
+        Returns:
+          {
+            "results": [
+              {"index", "score", "confidence", "reason", "element"}
+            ],
+            "strategy": "hybrid",
+            "confidence": <float 0..1>
+          }
         """
-        q = self.embed_query(query)
-        E = self.embed_elements(elements)
+        q = self.embed_query(query)              # (D,)
+        E = self.embed_elements(elements)        # (N, H)
         if E.size == 0:
             return {"results": [], "strategy": "hybrid", "confidence": 0.0}
 
-        # Base cosine scores
+        # ---- Base cosine scores ----
         base_scores = np.array([_cos(q, E[i]) for i in range(E.shape[0])], dtype=np.float32)
 
-        # Bonuses
-        def _tag_bias(tag): return 0.02 if tag == "button" else 0.015 if tag == "a" else 0.01 if tag == "input" else 0.0
-        def _role_bonus(role): return 0.02 if role in ("button", "link", "menuitem", "tab", "checkbox", "radio") else 0.0
-        def _href_bonus(href, qtokens): return 0.02 if href and any(t in href.lower() for t in qtokens) else 0.0
+        # ---- Hybrid bonuses ----
+        # tag importance: BUTTON > A > INPUT
+        def _tag_bias(tag: str) -> float:
+            tag = (tag or "").lower()
+            if tag == "button": return 0.02
+            if tag == "a":      return 0.015
+            if tag == "input":  return 0.01
+            return 0.0
 
-        qtokens = [t for t in re.split(r"[^a-z0-9]+", query.lower()) if len(t) >= 3]
-        bonuses, reasons = np.zeros_like(base_scores), [[] for _ in elements]
+        def _role_bonus(role: str) -> float:
+            role = (role or "").lower()
+            if role in ("button", "link", "menuitem", "tab", "checkbox", "radio"):
+                return 0.02
+            return 0.0
+
+        def _href_bonus(href: str, qtokens: List[str]) -> float:
+            if not href:
+                return 0.0
+            href_l = href.lower()
+            # match any ≥3-char alnum token
+            for t in qtokens:
+                if t and t in href_l:
+                    return 0.02
+            return 0.0
+
+        qtokens = [t for t in re.split(r"[^a-z0-9]+", (query or "").lower()) if t and len(t) >= 3]
+
+        bonuses = np.zeros_like(base_scores, dtype=np.float32)
+        reasons: List[List[str]] = [[] for _ in range(len(elements))]
 
         for i, el in enumerate(elements):
-            tag, role, href = (el.get("tag") or "").lower(), (el.get("role") or "").lower(), el.get("href", "")
-            tb, rb, hb = _tag_bias(tag), _role_bonus(role), _href_bonus(href, qtokens)
+            # try common locations for fields
+            tag = (el.get("tag") or (el.get("attrs", {}) or {}).get("tag") or "").lower()
+            role = (el.get("role") or (el.get("attrs", {}) or {}).get("role") or "").lower()
+            href = el.get("href") or (el.get("attrs", {}) or {}).get("href") or ""
+
+            tb = _tag_bias(tag)
+            rb = _role_bonus(role)
+            hb = _href_bonus(href, qtokens)
+
             bonuses[i] = tb + rb + hb
+
+            # Explainability trail
             reasons[i].append(f"cosine={base_scores[i]:.3f}")
             if tb: reasons[i].append(f"+tag[{tag}]=+{tb:.3f}")
             if rb: reasons[i].append(f"+role[{role}]=+{rb:.3f}")
@@ -135,35 +190,110 @@ class HybridPipeline:
 
         scores = np.clip(base_scores + bonuses, 0.0, 1.0)
 
-        # Tie-breakers
-        def _vis(el): return bool(el.get("visible"))
-        def _area(el): 
-            b = el.get("bbox") or {}; return (b.get("width") or 0) * (b.get("height") or 0)
-        def _depth(el): xp = el.get("xpath") or ""; return xp.count("/") if xp else 9999
-        def _interactive(el): return 0 if el.get("tag") == "button" or el.get("role") == "button" else 1
+        # ---- Tie-breakers (stable) ----
+        def _vis(el: Dict[str, Any]) -> bool:
+            v = el.get("visible")
+            if isinstance(v, bool):
+                return v
+            return str(v).lower() == "true"
 
-        order = list(np.argsort(-scores))
-        order.sort(key=lambda i: (-scores[i], 0 if _vis(elements[i]) else 1, _depth(elements[i]), -_area(elements[i]), _interactive(elements[i])))
+        def _area(el: Dict[str, Any]) -> float:
+            bbox = el.get("bbox") or {}
+            try:
+                return float((bbox.get("width") or 0.0) * (bbox.get("height") or 0.0))
+            except Exception:
+                return 0.0
 
-        # Dedup near-identical
-        seen, deduped = [], []
+        def _depth_from_xpath(el: Dict[str, Any]) -> int:
+            # consider several common absolute-xpath keys
+            xp = el.get("xpath") or el.get("abs_xpath") or el.get("absolute_xpath") or ""
+            if not isinstance(xp, str) or not xp:
+                return 9999
+            return max(1, xp.count("/"))
+
+        def _interactive_rank(el: Dict[str, Any]) -> int:
+            # prefer interactive controls
+            tag = (el.get("tag") or "").lower()
+            role = (el.get("role") or "").lower()
+            tabindex = str(el.get("tabindex") or "").strip()
+            if tag == "button" or role == "button":
+                return 0
+            if tag in ("a", "input") or role in ("link", "checkbox", "radio", "menuitem", "tab"):
+                return 1
+            if tabindex and tabindex.isdigit() and int(tabindex) >= 0:
+                return 1
+            return 2
+
+        order = list(np.argsort(-scores))  # primary: higher score first
+
+        # full sort key (stable): score desc → visible → shallower → larger area → more interactive
+        def _key(i: int):
+            el = elements[int(i)]
+            return (
+                -float(scores[int(i)]),
+                0 if _vis(el) else 1,
+                _depth_from_xpath(el),
+                -_area(el),
+                _interactive_rank(el),
+            )
+
+        order.sort(key=_key)
+
+        # ---- Deduplicate near-identical embeddings (cosine > 0.995) ----
+        # Keep the one with the *better* key (i.e., would sort earlier)
+        seen: List[int] = []
+        deduped: List[int] = []
         for i in order:
-            if not any(_cos(E[i], E[j]) > 0.995 for j in seen):
-                seen.append(i); deduped.append(i)
+            keep = True
+            for j in list(seen):
+                if _cos(E[int(i)], E[int(j)]) > 0.995:
+                    # If current i ranks *better* than j by key, replace j with i
+                    if _key(i) < _key(j):
+                        seen.remove(j)
+                        seen.append(i)
+                        # also update deduped list position
+                        if j in deduped:
+                            deduped.remove(j)
+                            deduped.append(i)
+                    keep = False
+                    break
+            if keep:
+                seen.append(i)
+                deduped.append(i)
 
-        top_idxs = deduped[:max(1, min(top_k, len(deduped)))]
-        conf = 1.0 / (1.0 + math.exp(-(float(scores[top_idxs[0]]) - 0.7) * 6)) if top_idxs else 0.0
+        # ---- Final slice ----
+        top_k = max(1, min(top_k, len(deduped)))
+        top_idxs = deduped[:top_k]
 
-        results = []
-        for rank, i in enumerate(top_idxs):
+        # ---- Confidence calibration (logistic around 0.7 pivot, steeper slope) ----
+        def _sigmoid(x: float) -> float:
+            return 1.0 / (1.0 + math.exp(-x))
+
+        max_score = float(scores[top_idxs[0]]) if top_idxs else 0.0
+        confidence = float(np.clip(_sigmoid((max_score - 0.7) * 6.0), 0.0, 1.0))
+
+        # ---- Assemble results ----
+        results: List[Dict[str, Any]] = []
+        for rank_pos, i in enumerate(top_idxs):
+            i = int(i)
+            reason = "; ".join(reasons[i]) if reasons[i] else f"cosine={base_scores[i]:.3f}"
             results.append({
                 "index": i,
                 "score": float(scores[i]),
-                "confidence": conf if rank == 0 else max(0.0, conf - 0.05 * rank),
-                "reason": "; ".join(reasons[i]),
+                "confidence": confidence if rank_pos == 0 else max(0.0, confidence - 0.05 * rank_pos),
+                "reason": reason,
                 "element": elements[i],
             })
-        return {"results": results, "strategy": "hybrid", "confidence": conf}
 
-    def _text_dim(self) -> int: return getattr(self.text_embedder, "dim", 384) or 384
-    def _elem_dim(self) -> int: return getattr(self.element_embedder, "dim", 768) or 768
+        return {"results": results, "strategy": "hybrid", "confidence": confidence}
+
+    # ---- helpers ----
+
+    def _text_dim(self) -> int:
+        # Prefer real dim from text embedder if available
+        dim = getattr(self.text_embedder, "dim", None)
+        return int(dim) if isinstance(dim, (int, float)) and dim else 384
+
+    def _elem_dim(self) -> int:
+        dim = getattr(self.element_embedder, "dim", None)
+        return int(dim) if isinstance(dim, (int, float)) and dim else 768
