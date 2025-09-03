@@ -1,0 +1,27 @@
+import numpy as np
+from her.pipeline import HybridPipeline
+
+def test_embed_query_zero_vector_when_no_model():
+    p = HybridPipeline(models_root=None)
+    # Force no model by overriding to None (pipeline already guards, but ensure determinism)
+    p.text_embedder = None
+    v = p.embed_query("anything")
+    assert isinstance(v, np.ndarray)
+    assert v.dtype == np.float32
+    assert v.shape[0] > 0
+    assert np.allclose(np.linalg.norm(v), 0.0)
+
+def test_embed_elements_shape_and_dtype():
+    p = HybridPipeline(models_root=None)
+    # Monkeypatch deterministic vectors of mismatched dims to exercise fixup
+    def fake_batch(els):
+        # produce 2D array with fewer dims than elem_dim to force fixup path
+        return np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
+    p.element_embedder = type("E", (), {"batch_encode": staticmethod(fake_batch), "dim": 8})()
+
+    E = p.embed_elements([{"tag": "a"}, {"tag": "button"}])
+    assert E.shape == (2, 8)
+    assert E.dtype == np.float32
+    # vectors should be copied into the left side of the matrix
+    assert np.allclose(E[0, :2], np.array([1.0, 0.0], dtype=np.float32))
+    assert np.allclose(E[1, :2], np.array([0.0, 1.0], dtype=np.float32))
