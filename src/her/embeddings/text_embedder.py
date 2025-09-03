@@ -1,180 +1,122 @@
-"""
-HER Text Embedding (MiniLM/E5-small ONNX).
-
-Responsibilities
-----------------
-- Load the E5-small ONNX model from resolved paths (offline).
-- Provide a clean API:
-    - batch_encode_texts(list[str], batch_size=32) -> np.ndarray (float32, [N, D])
-    - batch_encode(list[str]) -> np.ndarray (float32, [N, D]) [alias]
-    - encode_one(str) -> np.ndarray (float32, [D])
-- Reuse a single onnxruntime.InferenceSession across calls/instances.
-- No silent hash-based fallbacks; explicit, actionable errors if missing.
-
-Notes
------
-- Depends on: _resolve.resolve_text_embedding()
-- Model files: model.onnx + tokenizer.json
-- External deps: onnxruntime, transformers (tokenizer only)
-"""
-
 from __future__ import annotations
-
-from pathlib import Path
-from typing import List, Optional, Dict, Any
 import logging
+from pathlib import Path
+from threading import Lock
+from typing import List, Optional
+
 import numpy as np
+import onnxruntime as ort
+from transformers import AutoTokenizer
 
-from . import _resolve
+logger = logging.getLogger(__name__)
 
+def _l2norm(a: np.ndarray, eps: float = 1e-12) -> np.ndarray:
+    n = np.linalg.norm(a, axis=-1, keepdims=True)
+    n = np.maximum(n, eps)
+    return a / n
 
 class TextEmbedder:
-    """MiniLM / E5-small ONNX embedder (sentence-transformers)."""
+    """
+    Text embedder for queries/passages using local ONNX MiniLM/E5 model.
+    Expects directory: src/her/models/e5-small-onnx/ with:
+      - model.onnx (preferred) or fallback quantized variants
+      - tokenizer.json/vocab files loadable by AutoTokenizer
+    """
 
-    # Shared caches across instances keyed by absolute directory paths
-    _SESSION_CACHE: Dict[str, Any] = {}
-    _TOKENIZER_CACHE: Dict[str, Any] = {}
+    _shared_session: Optional[ort.InferenceSession] = None
+    _session_lock = Lock()
 
-    def __init__(self, session: Optional[object] = None, device: str = "cpu"):
-        self._logger = logging.getLogger(__name__)
-        mp = _resolve.resolve_text_embedding()
-        self.paths = mp
+    def __init__(self,
+                 model_root: str = "src/her/models/e5-small-onnx",
+                 normalize: bool = True,
+                 max_length: int = 512,
+                 batch_size: int = 32):
+        self.model_dir = Path(model_root)
+        self.normalize = bool(normalize)
+        self.max_length = int(max_length)
+        self.batch_size = int(batch_size)
 
-        if not mp.exists():  # pragma: no cover - guarded by resolver
-            raise RuntimeError(
-                "Text embedding model files not found. Expected ONNX model and tokenizer. "
-                "Run scripts/install_models.sh to install MiniLM/E5-small (ONNX)."
+        # Pick best available ONNX
+        candidates = [
+            "model.onnx",
+            "model_fp16.onnx",
+            "model_q4.onnx",
+            "model_bnb4.onnx",
+            "model_int8.onnx",
+            "model_uint8.onnx",
+            "model_quantized.onnx",
+            "model_int8_quantized.onnx",
+            "model_quantized_fixed.onnx",
+        ]
+        chosen = None
+        for c in candidates:
+            p = self.model_dir / c
+            if p.is_file():
+                chosen = p
+                break
+        if chosen is None:
+            raise FileNotFoundError(
+                f"Could not find ONNX model in {self.model_dir}. "
+                f"Expected one of: {', '.join(candidates)}"
             )
+        self.model_path = chosen
 
-        # Lazy imports to avoid heavy deps at module import time
-        try:
-            from transformers import AutoTokenizer  # type: ignore
-            import onnxruntime as ort  # type: ignore
-        except Exception as e:  # pragma: no cover - environment/setup errors
-            raise RuntimeError(
-                f"Failed to import dependencies for ONNX text embedding: {e}. "
-                "Ensure onnxruntime and transformers are installed."
-            )
+        # Tokenizer from local dir
+        self.tokenizer = AutoTokenizer.from_pretrained(self.model_dir, use_fast=True)
 
-        # Tokenizer reuse per directory
-        tok_dir = str(mp.tokenizer.parent)
-        if tok_dir in TextEmbedder._TOKENIZER_CACHE:
-            self.tokenizer = TextEmbedder._TOKENIZER_CACHE[tok_dir]
-        else:
-            tok = AutoTokenizer.from_pretrained(tok_dir, local_files_only=True)
-            TextEmbedder._TOKENIZER_CACHE[tok_dir] = tok
-            self.tokenizer = tok
+        # Create (or reuse) ONNX session and infer dim
+        self._session = self._get_session()
+        self.dim = self._infer_dim()
 
-        # Session reuse per model path
-        onnx_path = str(mp.onnx)
-        if session is not None:
-            self.session = session
-        elif onnx_path in TextEmbedder._SESSION_CACHE:
-            self.session = TextEmbedder._SESSION_CACHE[onnx_path]
-        else:
-            sess = ort.InferenceSession(onnx_path, providers=["CPUExecutionProvider"])  # type: ignore[name-defined]
-            TextEmbedder._SESSION_CACHE[onnx_path] = sess
-            self.session = sess
-
-        self.input_name = self.session.get_inputs()[0].name
-        self.output_name = self.session.get_outputs()[0].name
-
-        # Determine output dimension (fallback to 384 if unavailable)
-        self.dim: int = 384
-        try:
-            # Run a minimal forward to infer dimension
-            test_vec = self.batch_encode_texts(["ok"], batch_size=1)
-            if test_vec.ndim == 2 and test_vec.shape[1] > 0:
-                self.dim = int(test_vec.shape[1])
-        except Exception:
-            # Keep default dim if inference-at-init fails
-            self.dim = 384
-        self._logger.info(
-            "Loaded text embedder (ONNX): onnx=%s tokenizer=%s dim=%s",
-            onnx_path,
-            tok_dir,
-            self.dim,
+        logger.info(
+            "Loaded MiniLM/E5 ONNX dim=%d normalize=%s model=%s",
+            self.dim, self.normalize, self.model_path
         )
 
-    # ------------------------------------------------------------------
+    def _get_session(self) -> ort.InferenceSession:
+        # Reuse a single shared session per process.
+        if TextEmbedder._shared_session is None:
+            with TextEmbedder._session_lock:
+                if TextEmbedder._shared_session is None:
+                    so = ort.SessionOptions()
+                    # Let ORT choose threads; you can tune if needed.
+                    TextEmbedder._shared_session = ort.InferenceSession(
+                        str(self.model_path),
+                        sess_options=so,
+                        providers=["CPUExecutionProvider"],
+                    )
+        return TextEmbedder._shared_session
 
-    @staticmethod
-    def _hash_fallback(text: str, dim: int = 384) -> np.ndarray:
-        """
-        Deterministic hash-based embedding fallback.
-        Produces a pseudo-random but stable float32 vector of length `dim`.
-        """
-        h = hashlib.sha256(text.encode("utf-8")).digest()
-        # Repeat digest to fill dimension
-        needed = dim * 4  # bytes
-        buf = (h * ((needed // len(h)) + 1))[:needed]
-        arr = np.frombuffer(buf, dtype=np.uint32)[:dim]
-        return (arr % 1000).astype(np.float32)
-
-    # ------------------------------------------------------------------
-
-    def batch_encode_texts(self, texts: List[str], batch_size: int = 32) -> np.ndarray:
-        """Return (N, D) float32; tokenizer padding/truncation=max_length=512."""
-        if not isinstance(texts, list):  # pragma: no cover - defensive
-            raise TypeError("texts must be a list[str]")
-
-        if len(texts) == 0:
-            return np.zeros((0, self.dim), dtype=np.float32)
-
-        # Local references
-        tokenizer = self.tokenizer
-        session = self.session
-
-        # Treat empty/whitespace-only strings as zero-vectors deterministically
-        stripped = [str(t).strip() for t in texts]
-        is_empty = [s == "" for s in stripped]
-        outputs: List[np.ndarray] = []
-        n = len(texts)
-        bs = max(1, int(batch_size))
-        # Build indices for non-empty texts to actually encode
-        non_empty_indices = [i for i, e in enumerate(is_empty) if not e]
-        # Pre-allocate full output with zeros
-        full = np.zeros((n, self.dim), dtype=np.float32)
-        if not non_empty_indices:
-            return full
-        # Encode non-empty chunks only
-        for start in range(0, len(non_empty_indices), bs):
-            idxs = non_empty_indices[start : start + bs]
-            chunk = [stripped[i] for i in idxs]
-            enc = tokenizer(
-                chunk,
-                padding=True,
-                truncation=True,
-                max_length=512,
-                return_tensors="np",
-            )
-            ort_inputs = {self.input_name: enc["input_ids"]}
-            out = session.run([self.output_name], ort_inputs)[0]
-            if out.dtype != np.float32:
-                out = out.astype(np.float32, copy=False)
-            outputs.append((idxs, out))
-        # Scatter-gather into full array
-        for idxs, out in outputs:
-            full[idxs, :] = out
-        return full.astype(np.float32, copy=False)
-
-    def batch_encode(self, texts: List[str]) -> np.ndarray:
-        """Compatibility alias for previous API."""
-        return self.batch_encode_texts(texts, batch_size=32)
+    def _infer_dim(self) -> int:
+        # Minimal dummy forward to get output dimension
+        toks = self.tokenizer(
+            ["dummy"], padding=True, truncation=True, max_length=8, return_tensors="np"
+        )
+        inputs = {k: v.astype(np.int64) for k, v in toks.items()}
+        out = self._session.run(None, inputs)[0]
+        if out.ndim == 3:
+            out = out[:, 0, :]
+        return int(out.shape[-1])
 
     def encode_one(self, text: str) -> np.ndarray:
-        return self.batch_encode_texts([text], batch_size=1)[0]
+        return self.batch_encode_texts([text])[0]
 
-    # ------------------------------------------------------------------
+    def batch_encode_texts(self, texts: List[str]) -> np.ndarray:
+        if not texts:
+            return np.zeros((0, self.dim), dtype=np.float32)
 
-    def info(self) -> dict:
-        """Return metadata about the embedder for diagnostics."""
-        return {
-            "task": self.paths.task,
-            "id": self.paths.id,
-            "alias": self.paths.alias,
-            "root": str(self.paths.root_dir),
-            "onnx": str(self.paths.onnx),
-            "tokenizer": str(self.paths.tokenizer),
-            "mode": "onnx",
-        }
+        out = np.zeros((len(texts), self.dim), dtype=np.float32)
+        for i in range(0, len(texts), self.batch_size):
+            batch = texts[i:i + self.batch_size]
+            toks = self.tokenizer(
+                batch, padding=True, truncation=True, max_length=self.max_length, return_tensors="np"
+            )
+            inputs = {k: v.astype(np.int64) for k, v in toks.items()}
+            ort_out = self._session.run(None, inputs)[0]  # (B, D) or (B, T, D)
+            if ort_out.ndim == 3:
+                ort_out = ort_out[:, 0, :]
+            vecs = ort_out.astype(np.float32, copy=False)
+            if self.normalize:
+                vecs = _l2norm(vecs)
+            out[i:i + len(batch)] = vecs
+        return out
