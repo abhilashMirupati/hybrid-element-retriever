@@ -1,110 +1,70 @@
-"""MarkupLM (Transformers) element embedder.
-
-Loads a local MarkupLM model directory (offline) and produces float32
-embeddings for DOM element descriptors using a canonical text built by
-``normalization.element_to_text``.
-
-Public API:
-  - encode(element: dict) -> np.ndarray[(dim,), float32]
-  - batch_encode(elements: list[dict]) -> np.ndarray[(N, dim), float32]
-
-Notes:
-- Heavy deps are imported inside __init__ to keep module import light.
-- Uses CLS token (last_hidden_state[:, 0, :]).
-- Empty elements map to deterministic all-zeros vectors.
-"""
-
 from __future__ import annotations
-
-from pathlib import Path
-from typing import Any, Dict, List
 import logging
-
+from typing import Dict, List
 import numpy as np
-
+import torch
+from transformers import AutoProcessor, MarkupLMModel
 from .normalization import element_to_text
 
+logger = logging.getLogger(__name__)
+
+def _l2norm(a: np.ndarray, eps: float = 1e-12) -> np.ndarray:
+    n = np.linalg.norm(a, axis=-1, keepdims=True)
+    n = np.maximum(n, eps)
+    return a / n
 
 class MarkupLMEmbedder:
-    def __init__(self, model_dir: str | Path, device: str = "cpu", batch_size: int = 16) -> None:
-        self.model_dir = str(Path(model_dir))
-        self.batch_size = int(batch_size)
-        self._logger = logging.getLogger(__name__)
-        # Localize heavy imports
-        from transformers import AutoProcessor, MarkupLMModel  # type: ignore
-        import torch  # type: ignore
+    """
+    Element embedder using MarkupLM (Transformers) from a local directory:
+    src/her/models/markuplm-base/ (config.json + pytorch_model.bin + tokenizer files).
+    """
 
-        self._torch = torch
+    def __init__(self, model_dir: str, device: str = "cpu", batch_size: int = 16, normalize: bool = True):
+        self.model_dir = model_dir
         self.device = torch.device(device)
-        # Load processor and model from local directory (offline)
-        self.processor = AutoProcessor.from_pretrained(self.model_dir, local_files_only=True)
-        self.model = (
-            MarkupLMModel.from_pretrained(self.model_dir, local_files_only=True)
-            .to(self.device)
-            .eval()
+        self.batch_size = int(batch_size)
+        self.normalize = bool(normalize)
+
+        # Load locally; no network calls.
+        self.processor = AutoProcessor.from_pretrained(model_dir)
+        self.model: MarkupLMModel = MarkupLMModel.from_pretrained(model_dir).to(self.device)
+        self.model.eval()
+        with torch.no_grad():
+            self.dim = int(self.model.config.hidden_size)
+
+        logger.info(
+            "Loaded MarkupLM (transformers) dim=%d device=%s normalize=%s from %s",
+            self.dim, self.device, self.normalize, model_dir
         )
-        # MarkupLM-base hidden size
-        self.dim: int = int(getattr(self.model.config, "hidden_size", 768))
-        self._logger.info(
-            "Loaded MarkupLM (Transformers) model: dir=%s dim=%s device=%s",
-            self.model_dir,
-            self.dim,
-            self.device,
-        )
 
-    def _encode_one(self, element: Dict[str, Any]) -> np.ndarray:
-        txt = element_to_text(element)
-        if not txt:
-            return np.zeros((self.dim,), dtype=np.float32)
-        return self.batch_encode([element])[0]
+    def encode(self, element: Dict) -> np.ndarray:
+        arr = self.batch_encode([element])
+        return arr[0]
 
-    def encode(self, element: Dict[str, Any]) -> np.ndarray:
-        return self._encode_one(element)
-
-    def batch_encode(self, elements: List[Dict[str, Any]]) -> np.ndarray:
+    def batch_encode(self, elements: List[Dict]) -> np.ndarray:
         if not elements:
-            return np.zeros((0, self.dim), dtype=np.float32)
+            return np.zeros((0, getattr(self, "dim", 768)), dtype=np.float32)
 
-        # Build canonical texts and separate empties
-        texts: List[str] = [element_to_text(e) for e in elements]
-        empty_mask = [t == "" for t in texts]
+        texts = [element_to_text(e) for e in elements]
+        vecs = np.zeros((len(texts), self.dim), dtype=np.float32)
+        empty = [i for i, t in enumerate(texts) if t == ""]
+        with torch.no_grad():
+            for i in range(0, len(texts), self.batch_size):
+                chunk = texts[i:i + self.batch_size]
+                if all(t == "" for t in chunk):
+                    continue
+                inputs = self.processor(
+                    text=chunk,
+                    padding=True, truncation=True, max_length=512,
+                    return_tensors="pt"
+                ).to(self.device)
 
-        # Pre-allocate output
-        out = np.zeros((len(elements), self.dim), dtype=np.float32)
+                outputs = self.model(**inputs)  # last_hidden_state: (B, T, H)
+                cls = outputs.last_hidden_state[:, 0, :]  # (B, H)
+                out = cls.detach().cpu().to(torch.float32).numpy()
+                if self.normalize:
+                    out = _l2norm(out)
+                vecs[i:i + len(chunk)] = out
 
-        # Indices of non-empty items to process
-        non_empty_indices = [i for i, is_empty in enumerate(empty_mask) if not is_empty]
-        if not non_empty_indices:
-            return out
-
-        # Process in micro-batches to avoid OOM
-        from math import ceil
-
-        total = len(non_empty_indices)
-        bs = max(1, self.batch_size)
-        num_batches = ceil(total / bs)
-
-        # Local references
-        torch = self._torch
-
-        for b in range(num_batches):
-            start = b * bs
-            end = min(total, start + bs)
-            batch_idx = non_empty_indices[start:end]
-            batch_texts = [texts[i] for i in batch_idx]
-            enc = self.processor(
-                text=batch_texts,
-                padding=True,
-                truncation=True,
-                max_length=512,
-                return_tensors="pt",
-            )
-            enc = {k: v.to(self.device) for k, v in enc.items()}
-            with torch.no_grad():
-                last_hidden = self.model(**enc).last_hidden_state  # [B, T, H]
-                cls = last_hidden[:, 0, :]  # [B, H]
-            cls_np = cls.detach().cpu().float().numpy()
-            out[batch_idx, :] = cls_np
-
-        return out.astype(np.float32, copy=False)
-
+        # Leave truly empty elements as exact zero vectors (good for downstream logic).
+        return vecs
