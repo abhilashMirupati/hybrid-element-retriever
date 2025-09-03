@@ -10,33 +10,44 @@ from transformers import AutoTokenizer
 
 logger = logging.getLogger(__name__)
 
+
 def _l2norm(a: np.ndarray, eps: float = 1e-12) -> np.ndarray:
     n = np.linalg.norm(a, axis=-1, keepdims=True)
     n = np.maximum(n, eps)
     return a / n
 
+
 class TextEmbedder:
     """
     Text embedder for queries/passages using local ONNX MiniLM/E5 model.
+
     Expects directory: src/her/models/e5-small-onnx/ with:
-      - model.onnx (preferred) or fallback quantized variants
-      - tokenizer.json/vocab files loadable by AutoTokenizer
+      - model.onnx (preferred) or other variants
+      - tokenizer files loadable by AutoTokenizer (tokenizer.json/vocab.txt etc.)
+
+    Accuracy & robustness:
+      - Single shared ORT session (perf + stability)
+      - Batch encoding (float32)
+      - Optional L2 normalization (good for cosine sim)
+      - Robust model file selection among common variants
     """
 
     _shared_session: Optional[ort.InferenceSession] = None
     _session_lock = Lock()
 
-    def __init__(self,
-                 model_root: str = "src/her/models/e5-small-onnx",
-                 normalize: bool = True,
-                 max_length: int = 512,
-                 batch_size: int = 32):
+    def __init__(
+        self,
+        model_root: str = "src/her/models/e5-small-onnx",
+        normalize: bool = True,
+        max_length: int = 512,
+        batch_size: int = 32,
+    ):
         self.model_dir = Path(model_root)
         self.normalize = bool(normalize)
         self.max_length = int(max_length)
         self.batch_size = int(batch_size)
 
-        # Pick best available ONNX
+        # Pick the best-available ONNX file.
         candidates = [
             "model.onnx",
             "model_fp16.onnx",
@@ -61,10 +72,10 @@ class TextEmbedder:
             )
         self.model_path = chosen
 
-        # Tokenizer from local dir
+        # Local tokenizer (no network).
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_dir, use_fast=True)
 
-        # Create (or reuse) ONNX session and infer dim
+        # Create (or reuse) ONNX session and infer dimension.
         self._session = self._get_session()
         self.dim = self._infer_dim()
 
@@ -74,12 +85,10 @@ class TextEmbedder:
         )
 
     def _get_session(self) -> ort.InferenceSession:
-        # Reuse a single shared session per process.
         if TextEmbedder._shared_session is None:
             with TextEmbedder._session_lock:
                 if TextEmbedder._shared_session is None:
                     so = ort.SessionOptions()
-                    # Let ORT choose threads; you can tune if needed.
                     TextEmbedder._shared_session = ort.InferenceSession(
                         str(self.model_path),
                         sess_options=so,
@@ -88,7 +97,6 @@ class TextEmbedder:
         return TextEmbedder._shared_session
 
     def _infer_dim(self) -> int:
-        # Minimal dummy forward to get output dimension
         toks = self.tokenizer(
             ["dummy"], padding=True, truncation=True, max_length=8, return_tensors="np"
         )
@@ -111,6 +119,7 @@ class TextEmbedder:
             toks = self.tokenizer(
                 batch, padding=True, truncation=True, max_length=self.max_length, return_tensors="np"
             )
+            # ORT requires int64
             inputs = {k: v.astype(np.int64) for k, v in toks.items()}
             ort_out = self._session.run(None, inputs)[0]  # (B, D) or (B, T, D)
             if ort_out.ndim == 3:
@@ -120,3 +129,8 @@ class TextEmbedder:
                 vecs = _l2norm(vecs)
             out[i:i + len(batch)] = vecs
         return out
+
+    # ----- Compatibility shim for older pipeline code -----
+    def batch_encode(self, texts: List[str]) -> np.ndarray:
+        """Back-compat: some callers expect .batch_encode()."""
+        return self.batch_encode_texts(texts)
