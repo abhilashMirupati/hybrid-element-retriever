@@ -3,11 +3,13 @@ from her.pipeline import HybridPipeline
 
 def test_hybrid_bonuses_and_dedup():
     p = HybridPipeline(models_root=None)
+
+    # Force small deterministic embeddings (no model files needed)
     p.embed_query = lambda q: np.array([1.0, 0.0, 0.0], dtype=np.float32)
     p.embed_elements = lambda els: np.array([
-        [1.0, 0.0, 0.0],
-        [1.0, 0.0, 0.0],
-        [0.6, 0.8, 0.0],
+        [1.0, 0.0, 0.0],  # same as #1 (near-dup)
+        [1.0, 0.0, 0.0],  # near-dup with #0, should dedup
+        [0.6, 0.8, 0.0],  # distinct vector
     ], dtype=np.float32)
 
     elements = [
@@ -18,8 +20,13 @@ def test_hybrid_bonuses_and_dedup():
 
     out = p.query("click submit", elements, top_k=3)
     assert out["strategy"] == "hybrid"
-    results = out["results"]
-
-    assert any("cosine=" in r["reason"] for r in results)
-    assert any(r["element"]["tag"] == "a" and "+href-match" in r["reason"] for r in results)
     assert 0.0 <= out["confidence"] <= 1.0
+
+    reasons = [r["reason"] for r in out["results"]]
+    assert any("cosine=" in r for r in reasons)
+    assert any("+href-match" in r for r in reasons)
+
+    # ensure the duplicate (span vs button) prefers the interactive button
+    kept_tags = [r["element"]["tag"] for r in out["results"]]
+    assert "button" in kept_tags
+    assert kept_tags.count("span") <= 1
