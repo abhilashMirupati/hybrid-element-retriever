@@ -146,3 +146,17 @@ site/
 # CI artifacts
 ci-artifacts/
 .github/workflows/*.bak
+
+# Ignore downloaded models
+/src/her/models/e5-small-onnx/
+/src/her/models/markuplm-base/
+/src/her/models/markuplm-base-onnx/
+
+# If there are any other model caches
+/src/her/models/**/*.onnx
+/src/her/models/**/*.bin
+/src/her/models/**/*.json
+/src/her/models/**/*.txt
+
+# Hugging Face cache folders (sometimes nested)
+**/.cache/huggingface/

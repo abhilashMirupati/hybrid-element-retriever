@@ -1,135 +1,121 @@
-<#
-.SYNOPSIS
-  HER model installer for Windows (PowerShell).
+# Hybrid Element Retriever - Model Installer
+# - MiniLM (ONNX)  -> src\her\models\e5-small-onnx\model.onnx (+tokenizer files)
+# - MarkupLM (PT)  -> src\her\models\markuplm-base\  (flat, not nested cache)
+# Fails loudly (no stub files). PowerShell-safe (no heredocs).
 
-.DESCRIPTION
-  Downloads or prepares versioned ONNX model folders for:
-   - sentence-transformers/ms-marco-MiniLM-L-6-v3 (→ e5-small-onnx/)
-   - microsoft/markuplm-base (→ markuplm-base-onnx/)
-
-  Writes src/her/models/MODEL_INFO.json with ISO-8601 timestamps.
-  If offline/unavailable, creates deterministic stubs so the embedders can hash-fallback.
-#>
-
-param (
-  [string]$RepoRoot = (Resolve-Path "$PSScriptRoot\.."),
-  [string]$ModelsDir = $null
+param(
+  [string]$BaseDir = "$PSScriptRoot\..\src\her\models"
 )
 
-if (-not $ModelsDir) {
-  $ModelsDir = Join-Path $RepoRoot "src\her\models"
-}
-$env:HER_MODELS_DIR = $ModelsDir
+$ErrorActionPreference = "Stop"
+Write-Host "[HER] Installing models into $BaseDir"
 
-$E5Dir = Join-Path $ModelsDir "e5-small-onnx"
-$MLMDir = Join-Path $ModelsDir "markuplm-base-onnx"
-
-$E5Model = Join-Path $E5Dir "model.onnx"
-$E5Tokenizer = Join-Path $E5Dir "tokenizer.json"
-$MLMModel = Join-Path $MLMDir "model.onnx"
-$MLMTokenizer = Join-Path $MLMDir "tokenizer.json"
-
-$ModelInfo = Join-Path $ModelsDir "MODEL_INFO.json"
-
-# Optional override URLs (env override if needed)
-$E5Url = $env:E5_URL
-$E5TokUrl = $env:E5_TOK_URL
-$MLMUrl = $env:MLM_URL
-$MLMTokUrl = $env:MLM_TOK_URL
-
-function TimestampISO {
-  return (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
-}
-
-function Ensure-Dir($path) {
-  if (-not (Test-Path $path)) {
-    New-Item -ItemType Directory -Path $path | Out-Null
+# ---------- helpers ----------
+function Ensure-Python {
+  if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
+    throw "[HER] Python not found. Install Python 3.10+ and ensure 'python' is on PATH."
   }
 }
-
-function Download-File($url, $dest) {
-  try {
-    Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing -ErrorAction Stop
-    return $true
-  } catch {
-    Write-Host "[HER] Download failed for $url, error: $_"
-    return $false
-  }
+function Ensure-PipPkg($name) {
+  $ok = python -m pip show $name 2>$null
+  if (-not $ok) { throw "[HER] Missing Python package: $name. Run: pip install huggingface_hub transformers onnxruntime optimum" }
+}
+function Run-Py($code) {
+  $tmp = [System.IO.Path]::GetTempFileName() + ".py"
+  $code | Out-File -FilePath $tmp -Encoding utf8
+  try { python $tmp } finally { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }
+}
+function Require-File($path, $name, $minBytes=1024) {
+  if (-not (Test-Path $path)) { throw "[HER] Missing $name at $path" }
+  $len = (Get-Item $path).Length
+  if ($len -lt $minBytes) { throw "[HER] $name too small ($len bytes): $path" }
+  Write-Host "[HER] OK: $name ($([math]::Round($len/1MB,1)) MB)"
 }
 
-function Make-StubModel($dest) {
-  Set-Content -Path $dest -Value ""
-}
+# ---------- prechecks ----------
+Ensure-Python
+@("huggingface_hub","transformers","onnxruntime","optimum") | ForEach-Object { Ensure-PipPkg $_ }
 
-function Make-StubTokenizer($dest) {
-  @"
-{
-  "offline": true,
-  "reason": "offline-or-missing-tokenizer",
-  "note": "HER embedders will use deterministic hash fallback."
-}
-"@ | Set-Content -Path $dest -Encoding UTF8
-}
+# Make base dir
+New-Item -ItemType Directory -Force -Path $BaseDir | Out-Null
 
-function Ensure-E5 {
-  Ensure-Dir $E5Dir
-  Write-Host "[HER] Preparing E5-small ONNX at $E5Model"
+# =========================
+# 1) MiniLM (ONNX) install
+# =========================
+$MiniDir = Join-Path $BaseDir "e5-small-onnx"
+New-Item -ItemType Directory -Force -Path $MiniDir | Out-Null
+Write-Host "[HER] Downloading MiniLM (Xenova/all-MiniLM-L6-v2) ..."
 
-  if ($E5Url) {
-    if (-not (Download-File $E5Url $E5Model)) { Make-StubModel $E5Model }
-  } else {
-    Make-StubModel $E5Model
-  }
+Run-Py @"
+from huggingface_hub import snapshot_download
+import os, shutil
 
-  if ($E5TokUrl) {
-    if (-not (Download-File $E5TokUrl $E5Tokenizer)) { Make-StubTokenizer $E5Tokenizer }
-  } else {
-    Make-StubTokenizer $E5Tokenizer
-  }
-}
+local_dir = r'''$MiniDir'''
+os.makedirs(local_dir, exist_ok=True)
 
-function Ensure-MarkupLM {
-  Ensure-Dir $MLMDir
-  Write-Host "[HER] Preparing MarkupLM-base ONNX at $MLMModel"
+# Pull the whole snapshot so tokenizer files come too
+snapshot_download(repo_id='Xenova/all-MiniLM-L6-v2', local_dir=local_dir)
 
-  if ($MLMUrl) {
-    if (-not (Download-File $MLMUrl $MLMModel)) { Make-StubModel $MLMModel }
-  } else {
-    Make-StubModel $MLMModel
-  }
+# Move the main ONNX up (if placed under onnx/)
+onnx_dir = os.path.join(local_dir, 'onnx')
+src = os.path.join(onnx_dir, 'model.onnx')
+dst = os.path.join(local_dir, 'model.onnx')
+if os.path.isdir(onnx_dir) and os.path.exists(src):
+    shutil.move(src, dst)
+    # best-effort cleanup of remaining files under onnx/
+    for f in list(os.listdir(onnx_dir)):
+        try: os.remove(os.path.join(onnx_dir, f))
+        except Exception: pass
+    try: os.rmdir(onnx_dir)
+    except Exception: pass
 
-  if ($MLMTokUrl) {
-    if (-not (Download-File $MLMTokUrl $MLMTokenizer)) { Make-StubTokenizer $MLMTokenizer }
-  } else {
-    Make-StubTokenizer $MLMTokenizer
-  }
-}
+if not os.path.exists(dst):
+    # some snapshots already place model.onnx at root; ensure it exists
+    if not os.path.exists(os.path.join(local_dir, 'model.onnx')):
+        raise RuntimeError('MiniLM model.onnx not found after download.')
+"@
 
-function Write-ModelInfo {
-  $ts = TimestampISO
-  Ensure-Dir $ModelsDir
-  @"
-[
-  {
-    "id": "sentence-transformers/ms-marco-MiniLM-L-6-v3",
-    "alias": "e5-small-onnx/model.onnx",
-    "task": "text-embedding",
-    "downloaded_at": "$ts"
-  },
-  {
-    "id": "microsoft/markuplm-base",
-    "alias": "markuplm-base-onnx/model.onnx",
-    "task": "element-embedding",
-    "downloaded_at": "$ts"
-  }
-]
-"@ | Set-Content -Path $ModelInfo -Encoding UTF8
-  Write-Host "[HER] Wrote $ModelInfo"
-}
+# Validate MiniLM
+Require-File (Join-Path $MiniDir "model.onnx") "MiniLM model.onnx" 5MB
+$tokJson = Join-Path $MiniDir "tokenizer.json"
+$vocabTxt = Join-Path $MiniDir "vocab.txt"
+if (Test-Path $tokJson) { Require-File $tokJson "MiniLM tokenizer.json" 4096 }
+elseif (Test-Path $vocabTxt) { Require-File $vocabTxt "MiniLM vocab.txt" 4096 }
+else { throw "[HER] MiniLM tokenizer not found (tokenizer.json or vocab.txt) in $MiniDir" }
 
-# === Main ===
-Ensure-E5
-Ensure-MarkupLM
-Write-ModelInfo
+# ==========================================
+# 2) MarkupLM (Transformers, flat to models)
+# ==========================================
+$MarkupDir = Join-Path $BaseDir "markuplm-base"
+New-Item -ItemType Directory -Force -Path $MarkupDir | Out-Null
+Write-Host "[HER] Downloading MarkupLM-base (flat files) ..."
 
-Write-Host "[HER] Model installation complete in $ModelsDir"
+# Use snapshot_download to place files FLAT under models/markuplm-base
+Run-Py @"
+from huggingface_hub import snapshot_download
+import os
+dst = r'''$MarkupDir'''
+os.makedirs(dst, exist_ok=True)
+snapshot_download(
+    repo_id='microsoft/markuplm-base',
+    local_dir=dst,
+    allow_patterns=[
+        'config.json',
+        'pytorch_model.bin',
+        'tokenizer.json','tokenizer_config.json',
+        'vocab.txt','special_tokens_map.json','added_tokens.json'
+    ],
+)
+"@
+
+# Validate MarkupLM essentials are flat in markuplm-base/
+Require-File (Join-Path $MarkupDir "config.json") "MarkupLM config.json" 256
+# one of tokenizer.json OR vocab.txt must exist
+$mlTokJson = Join-Path $MarkupDir "tokenizer.json"
+$mlVocab   = Join-Path $MarkupDir "vocab.txt"
+if (Test-Path $mlTokJson) { Require-File $mlTokJson "MarkupLM tokenizer.json" 4096 }
+elseif (Test-Path $mlVocab) { Require-File $mlVocab "MarkupLM vocab.txt" 4096 }
+else { throw "[HER] MarkupLM tokenizer not found (tokenizer.json or vocab.txt) in $MarkupDir" }
+Require-File (Join-Path $MarkupDir "pytorch_model.bin") "MarkupLM weights (pytorch_model.bin)" 100MB
+
+Write-Host "[HER] ✅ All models installed successfully."
