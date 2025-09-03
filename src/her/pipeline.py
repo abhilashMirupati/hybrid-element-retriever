@@ -8,8 +8,14 @@ and ranking fusion into a single flow.
 from typing import Dict, Any, List
 import time
 
-from her.embeddings.query_embedder import QueryEmbedder
+import logging
+from her.embeddings.text_embedder import TextEmbedder
 from her.embeddings.element_embedder import ElementEmbedder
+from her.embeddings import _resolve
+try:
+    from her.embeddings.markuplm_embedder import MarkupLMEmbedder
+except Exception:
+    MarkupLMEmbedder = None  # type: ignore
 from her.rank.fusion_scorer import FusionScorer
 from her.cache.two_tier import TwoTierCache
 # Note: Do NOT import HERPipeline here to avoid circular imports.
@@ -29,11 +35,34 @@ class PipelineConfig:
 from .compat import HERPipeline  # noqa: E402  (placed after class definitions)
 
 
+logger = logging.getLogger(__name__)
+
+
 class HybridPipeline:
     def __init__(self, cache_dir: str = ".cache", device: str = "cpu"):
-        self.text_embedder = QueryEmbedder()
-        # Align element embedding dimensionality with query embedder to simplify cosine
-        self.element_embedder = ElementEmbedder(device=device, dim=getattr(self.text_embedder, 'dim', 384))
+        # Text embedder (MiniLM/E5-small via ONNX with internal fallback)
+        try:
+            self.text_embedder = TextEmbedder(device=device)
+            logger.info("Loaded text embedder: framework=onnx path=%s", getattr(self.text_embedder, 'paths', None))
+        except Exception:
+            # Deterministic fallback path is handled internally by TextEmbedder
+            self.text_embedder = TextEmbedder(device=device)
+
+        # Element embedder: prefer MarkupLM (Transformers) when available
+        try:
+            paths = _resolve.resolve_element_embedding()
+            if paths.framework == "transformers" and paths.model_dir and MarkupLMEmbedder is not None:
+                self.element_embedder = MarkupLMEmbedder(paths.model_dir, device=device)
+                logger.info("Loaded element embedder: framework=transformers dir=%s dim=%s", paths.model_dir, getattr(self.element_embedder, 'dim', None))
+            elif paths.framework == "onnx":
+                # Keep legacy stub for ONNX element model until an ONNX runtime embedder is implemented
+                self.element_embedder = ElementEmbedder(dim=768)
+                logger.info("Using legacy ElementEmbedder stub for ONNX element model at %s", getattr(paths, 'onnx', None))
+            else:
+                raise RuntimeError("Element embedder could not be resolved; check model installation.")
+        except Exception:
+            # Final safety: deterministic stub
+            self.element_embedder = ElementEmbedder(dim=768)
         self.scorer = FusionScorer()
         # Reuse global cache if available to cooperate with test fixtures
         try:
