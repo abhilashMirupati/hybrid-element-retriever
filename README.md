@@ -1,430 +1,332 @@
-Hybrid Element Retriever (HER)
-
-Manual Tester Quickstart
-
-1) Create and activate a virtual environment (recommended)
-
-   macOS/Linux:
-   ```bash
-   python3 -m venv .venv && source .venv/bin/activate
-   ```
-
-   Windows (PowerShell):
-   ```powershell
-   py -m venv .venv; .venv\\Scripts\\Activate.ps1
-   ```
-
-   If you see an "externally-managed-environment" error from pip, use a venv as shown above.
-
-2) Install dependencies from source
-
-   ```bash
-   pip install -e ".[dev]"
-   ```
-
-3) Install the Playwright Chromium browser (one-time)
-
-   ```bash
-   python -m playwright install chromium
-   ```
-
-4) Install or stub the models (works offline too)
-
-   ```bash
-   ./scripts/install_models.sh
-   ```
-
-   Windows (PowerShell):
-   ```powershell
-   ./scripts/install_models.ps1
-   ```
-
-5) Quick CLI check
-
-   ```bash
-   her version
-   her query "Find the login button" --url https://example.com
-   ```
-
-6) Optional: verify sources compile
-
-   ```bash
-   python -m compileall src
-   ```
-
-Model locations:
-
-- Packaged models directory: `src/her/models/`
-- Two model aliases used by the resolver:
-  - `e5-small-onnx/model.onnx`
-  - `markuplm-base-onnx/model.onnx`
-
-Offline behavior:
-
-If models are not available, the installer creates deterministic stubs:
-
-- `model.onnx` is a zero-byte file
-- `tokenizer.json` contains human-readable error text
-
-Embedders will fall back to a deterministic hashing projection so the system remains functional offline and during CI runs without network.
 # Hybrid Element Retriever (HER)
 
-[![CI](https://github.com/yourusername/her/actions/workflows/ci.yml/badge.svg)](https://github.com/yourusername/her/actions/workflows/ci.yml)
-[![Coverage](https://codecov.io/gh/yourusername/her/branch/main/graph/badge.svg)](https://codecov.io/gh/yourusername/her)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+Production-grade framework that turns **plain English** into **robust UI actions** via a hybrid pipeline:
+**NL intent → DOM/AX snapshot → delta-aware embeddings → per-frame vector search → tie-breaks → XPath → execute → promotions**.
 
-Production-ready natural language element location for web automation. HER combines semantic understanding with robust XPath generation to reliably find web elements using plain English descriptions.
+- ✅ **CPU-friendly** (Windows 11 friendly)
+- ✅ **Cold / Warm / Delta** flows
+- ✅ **SQLite-backed** embedding cache + promotions
+- ✅ **Per-frame** vector stores (FAISS if available, pure Python fallback)
+- ✅ **Fail-fast** (no silent passes)
 
-## Features
+---
 
-- 🎯 **Natural Language Queries**: Find elements using plain English like "Find the submit button" or "Click on the login link"
-- 🚀 **Production-Ready**: Battle-tested resilience features including automatic retries, error recovery, and snapshot rollback
-- 🔄 **Smart Caching**: Cold start detection and incremental updates for optimal performance
-- 🌐 **SPA Support**: Automatic detection and handling of single-page application navigation
-- 🛡️ **Edge Case Handling**: Robust validation for unicode, special characters, large DOMs, and more
-- 📊 **Performance Optimized**: Sub-2 second locator resolution with intelligent caching
-- ☕ **Java Support**: Thin Java wrapper using Py4J for JVM integration
+## 1) Quickstart
 
-## Installation
+> **Python**: 3.12 recommended  
+> **OS**: Windows/macOS/Linux  
+> **Strict mode**: enabled by default; errors are explicit.
 
-### From PyPI
+### Windows (PowerShell)
+```powershell
+# 1. Create venv
+py -3.12 -m venv .venv
+. .\.venv\Scripts\Activate.ps1
+python -m pip install -U pip
 
-```bash
-pip install hybrid-element-retriever
-```
+# 2. Install deps
+pip install -r requirements.txt
 
-### From Source
+# 3. Install Playwright browsers (Chromium)
+python -m playwright install chromium
 
-```bash
-git clone https://github.com/yourusername/her.git
-cd her
-pip install -e .
-```
+# 4. Download local models (MiniLM ONNX, MarkupLM)
+.\scripts\install_models.ps1
 
-### With Optional Dependencies
+# 5. Initialize caches/DB
+$env:HER_MODELS_DIR = (Resolve-Path "src/her/models").Path
+$env:HER_CACHE_DIR  = (Resolve-Path ".her_cache").Path
+.\scripts\init_dbs.ps1
+macOS/Linux (bash)
+bash
+Copy code
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install -U pip
+pip install -r requirements.txt
+python -m playwright install chromium
+bash scripts/install_models.sh
 
-```bash
-# For Playwright support
-pip install hybrid-element-retriever[playwright]
+export HER_MODELS_DIR="$(pwd)/src/her/models"
+export HER_CACHE_DIR="$(pwd)/.her_cache"
+mkdir -p "$HER_CACHE_DIR"
+bash scripts/init_dbs.sh
+Environment variables
 
-# For development
-pip install hybrid-element-retriever[dev]
+HER_MODELS_DIR → absolute path to models (e.g., src/her/models)
 
-# All extras
-pip install hybrid-element-retriever[all]
-```
+HER_CACHE_DIR → cache directory (e.g., .her_cache)
 
-## Quick Start
+2) Key Concepts
+Cold / Warm / Delta
+Cold: first visit → embed all elements; cache to SQLite.
 
-### Python Usage
+Warm: revisit (same page/frame) → reuse cached vectors; rebuild in-mem stores quickly.
 
-```python
-from her import HybridElementRetriever
+Delta: only embed new/changed elements using element_dom_hash.
 
-# Initialize the retriever
-her = HybridElementRetriever()
+Per-frame Vector Stores
+Each frame_hash gets its own in-memory store (FAISS if available). Stores are rebuilt when the frame changes.
 
-# Find elements using natural language
-results = her.query("Find the submit button")
+Promotions
+After successful actions, the final selector is persisted (scoped by page_sig, frame_hash, label_key). Next time, HER pre-checks promotions before vector search.
 
-# Click on an element
-her.click("Click the login button")
+3) Minimal Usage (Python)
+python
+Copy code
+from her.pipeline import HybridPipeline
+from her.promotion_adapter import compute_label_key
+from her.executor import Executor
 
-# Type text
-her.type_text("Enter 'john@example.com' in the email field", "john@example.com")
+# 1) Snapshot page with your existing browser/snapshot code
+#    -> 'elements' is a list of element descriptors, each with meta.frame_hash etc.
 
-# Navigate to a page and query
-results = her.query("Find all navigation links", url="https://example.com")
-```
+pipe = HybridPipeline()
+label_key = compute_label_key(["send", "message"])  # from parsed intent
 
-### Advanced Features
-
-```python
-from her import HERPipeline, PipelineConfig, ResilienceManager, WaitStrategy
-
-# Configure pipeline
-config = PipelineConfig(
-    use_markuplm=True,  # Use MarkupLM for better accuracy
-    enable_incremental_updates=True,  # Optimize for dynamic content
-    verify_dom_state=True,  # Verify DOM hasn't changed
-    max_retry_attempts=3  # Retry on failure
+out = pipe.query(
+    query="click Send",
+    elements=elements,
+    top_k=10,
+    page_sig="PAGE_SIGNATURE_STABLE",      # required for promotions
+    frame_hash="FRAME_HASH_OF_TARGET",     # from element meta
+    label_key=label_key,                   # from intent label tokens
 )
 
-pipeline = HERPipeline(config)
+best = out["results"][0]
+selector = best["selector"]
 
-# Use resilience features
-resilience = ResilienceManager()
+# 2) Execute (Playwright)
+from playwright.sync_api import sync_playwright
 
-# Wait for page to be ready
-resilience.wait_for_idle(page, WaitStrategy.NETWORK_IDLE)
+with sync_playwright() as p:
+    browser = p.chromium.launch()
+    page = browser.new_page()
+    page.goto("https://example.com")
+    ex = Executor(page)
+    ex.click(
+        selector,
+        page_sig="PAGE_SIGNATURE_STABLE",
+        frame_hash="FRAME_HASH_OF_TARGET",
+        label_key=label_key,
+    )
+    browser.close()
+4) Architecture (ASCII)
+sql
+Copy code
+NL Query ──> Intent Parser ──────────┐
+                                     │  label_tokens
+DOM/AX Snapshot ──> Descriptors ─────┼─> element_dom_hash + frame_hash
+                                     │        │
+                                     ▼        ▼
+               SQLite Embedding Cache (delta get/put)
+                         │
+                         ▼
+        Per-frame Vector Stores (FAISS / Python)
+                         │
+                         ▼
+                 Shortlist + Tie-breaks
+                         │
+                         ▼
+       Promotions Pre-check (page_sig, frame_hash, label_key)
+                         │
+                         ▼
+                  Final XPath Selector
+                         │
+                         ▼
+                Playwright Executor (record success/failure)
+5) Files You’ll Touch
+Pipeline: src/her/pipeline.py
+Cold/Warm/Delta flows; promotions pre-check (optional args).
 
-# Handle infinite scroll
-resilience.handle_infinite_scroll(page, max_scrolls=10)
+SQLite Cache: src/her/vectordb/sqlite_cache.py
+WAL-mode DB with embeddings, kv, promotions tables.
 
-# Detect and dismiss overlays
-resilience.detect_and_handle_overlay(page)
-```
+Promotion Adapter: src/her/promotion_adapter.py
+Compute label_key, lookup/record promotions.
 
-### Input Validation
+Executor: src/her/executor.py
+Strict Playwright executor. Records promotion success/failure.
+
+Snapshotter: src/her/browser/snapshot.py
+Must include meta.frame_hash and page-level dom_hash.
+
+6) Running Acceptance (static) for Step 3
+bash
+Copy code
+python scripts/step3_acceptance.py
+Expected tail output:
+
+makefile
+Copy code
+STEP3_OK: fields present, frame_hash & dom_hash detected, defaults verified ✅
+7) Cleanup Deprecated Files
+We keep deprecations until Step 4+ runs clean, then remove them:
+
+bash
+Copy code
+python scripts/cleanup_deprecated.py --plan
+# review plan, then:
+python scripts/cleanup_deprecated.py --apply
+Targets (typical):
+
+src/her/embeddings/real_embedder.py
+
+src/her/embeddings/minilm_embedder.py
+
+src/her/embeddings/cache.py
+
+src/her/embeddings/enhanced_element_embedder.py
+
+src/her/matching/intelligent_matcher.py
+
+Any *.deprecated renamed in earlier steps
+
+The script fails fast if anything is unexpected.
+
+8) Troubleshooting
+Playwright missing
+swift
+Copy code
+RuntimeError: Playwright is required for executor...
+Install browsers:
+
+bash
+Copy code
+python -m playwright install chromium
+Models missing
+Ensure you ran:
+
+Windows: .\scripts\install_models.ps1
+
+macOS/Linux: bash scripts/install_models.sh
+
+SQLite permission/lock
+Use a writable HER_CACHE_DIR. WAL mode is enabled by default.
+
+FAISS wheel unavailable
+Vector store will fall back to pure Python search. Nothing to install; performance remains acceptable for small/medium pages.
+
+9) Design Guarantees
+No silent fallbacks: missing deps or invalid inputs raise explicit errors.
+
+Deterministic selectors: absolute XPath with stable sibling indices.
+
+Isolation: promotions keyed by (page_sig, frame_hash, label_key).
+
+Compatibility: HybridPipeline public methods preserved.
+
+10) License
+MIT (add your license here).
+
+python
+Copy code
+
+---
+
+# ✅ Add file — `scripts/cleanup_deprecated.py` (FULL CONTENT)
 
 ```python
-from her import InputValidator, DOMValidator, FormValidator
-
-# Validate user input
-valid, sanitized, error = InputValidator.validate_query("Find button with text: \"Click 'here'\"")
-
-# Validate XPath
-valid, xpath, error = InputValidator.validate_xpath("//div[@id='test']")
-
-# Validate form inputs
-valid, value, error = FormValidator.validate_form_input("email", "user@example.com")
-
-# Handle large DOMs
-valid, warning = DOMValidator.validate_dom_size(descriptors, max_nodes=10000)
-```
-
-## Java Usage
-
-### Maven Dependency
-
-```xml
-<dependency>
-    <groupId>com.her</groupId>
-    <artifactId>hybrid-element-retriever</artifactId>
-    <version>1.0.0</version>
-</dependency>
-```
-
-### Java Example
-
-```java
-import com.her.HERClient;
-
-try (HERClient client = new HERClient()) {
-    // Query for elements
-    HERClient.QueryResult result = client.query("Find submit button");
-    
-    if (result.isSuccess()) {
-        System.out.println("Found: " + result.getSelector());
-        System.out.println("Confidence: " + result.getConfidence());
-    }
-    
-    // Perform actions
-    client.click("Click the login button");
-    client.typeText("Enter email", "user@example.com");
-    
-    // Navigate and query
-    client.navigate("https://example.com");
-    List<String> xpaths = client.findXPaths("Find all links");
-}
-```
-
-## Architecture
-
-HER uses a sophisticated pipeline architecture:
-
-1. **Intent Detection**: Natural language processing to understand user intent
-2. **Semantic Matching**: E5-small embeddings for query-element matching
-3. **Element Embedding**: MarkupLM for structural HTML understanding
-4. **XPath Generation**: Multiple fallback strategies for robust selectors
-5. **Verification**: Post-action validation and retry mechanisms
-
-## Performance
-
-- **Cold Start**: ~500ms for initial page indexing
-- **Incremental Updates**: ~50ms for detecting and indexing new elements
-- **Query Resolution**: <2s for finding elements in 10k+ node DOMs
-- **Memory Usage**: <100MB for typical web pages
-- **Cache Hit Rate**: >90% for repeated queries
-
-## Testing
-
-```bash
-# Run all tests
-pytest tests/
-
-# Run with coverage
-pytest tests/ --cov=src/her --cov-report=html
-
-# Run performance tests
-pytest tests/test_performance.py --benchmark-only
-
-# Run integration tests
-pytest tests/test_integration.py
-```
-
-## CI/CD
-
-The project includes comprehensive CI/CD:
-
-- **Linting**: Black, Flake8, MyPy
-- **Testing**: Linux and Windows, Python 3.8-3.11
-- **Coverage**: Minimum 85% required
-- **Performance**: Automated benchmarking
-- **Security**: Bandit and Safety checks
-
-## Configuration
-
-### Environment Variables
-
-```bash
-# Model cache directory
-export HER_MODELS_DIR=~/.her/models
-
-# Cache settings
-export HER_CACHE_DIR=~/.cache/her
-export HER_CACHE_SIZE_MB=1000
-
-# Performance tuning
-export HER_BATCH_SIZE=32
-export HER_NUM_THREADS=4
-```
-
-### Configuration File
-
-```python
-from her import PipelineConfig
-
-config = PipelineConfig(
-    # Model selection
-    use_minilm=False,
-    use_e5_small=True,
-    use_markuplm=True,
-    
-    # Caching
-    enable_cold_start_detection=True,
-    enable_incremental_updates=True,
-    enable_spa_tracking=True,
-    
-    # Performance
-    embedding_batch_size=32,
-    max_candidates=10,
-    similarity_threshold=0.7,
-    
-    # Resilience
-    wait_for_idle=True,
-    handle_frames=True,
-    handle_shadow_dom=True,
-    auto_dismiss_overlays=True
-)
-```
-
-## Development
-
-### Setup Development Environment
-
-```bash
-# Clone the repository
-git clone https://github.com/yourusername/her.git
-cd her
-
-# Install in development mode with all dependencies
-pip install -e ".[dev]"
-
-# Run tests
-pytest tests/
-
-# Check code formatting
-black --check src/
-flake8 src/
-
-# Format code
-black src/
-
-# Type checking
-mypy src/
-```
-
-### Running Tests
-
-```bash
-# Run all tests
-pytest
-
-# Run with coverage
-pytest --cov=src --cov-report=html
-
-# Run specific test file
-pytest tests/test_basic.py
-
-# Run with verbose output
-pytest -v
-
-# Run integration tests only
-pytest tests/ -k integration
-```
-
-### Building Package
-
-```bash
-# Build distribution packages
-python -m build
-
-# Test installation
-pip install dist/*.whl
-
-# Upload to PyPI (requires credentials)
-python -m twine upload dist/*
-```
-
-## Troubleshooting
-
-### Common Issues
-
-**Issue**: Elements not found
-```python
-# Enable debug logging
-import logging
-logging.basicConfig(level=logging.DEBUG)
-
-# Use validation to check input
-from her import InputValidator
-valid, sanitized, error = InputValidator.validate_query(your_query)
-```
-
-**Issue**: Slow performance
-```python
-# Enable caching
-her = HybridElementRetriever(cache_dir="/path/to/cache")
-
-# Use incremental updates
-config = PipelineConfig(enable_incremental_updates=True)
-```
-
-**Issue**: Dynamic content not detected
-```python
-# Enable SPA tracking
-config = PipelineConfig(enable_spa_tracking=True)
-
-# Use wait strategies
-resilience.wait_for_idle(page, WaitStrategy.NETWORK_IDLE)
-```
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
-
-## License
-
-MIT License - see [LICENSE](LICENSE) for details.
-
-## Support
-
-- **Documentation**: [Full API Reference](https://her.readthedocs.io)
-- **Issues**: [GitHub Issues](https://github.com/yourusername/her/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/yourusername/her/discussions)
-
-## Production Readiness Score
-
-Current: **95/100** ✅
-
-- ✅ Core functionality complete
-- ✅ Comprehensive error handling
-- ✅ Edge case validation
-- ✅ Performance optimized
-- ✅ Full test coverage (>85%)
-- ✅ CI/CD pipeline
-- ✅ Documentation complete
-- ✅ Java integration
-- ✅ Production-tested resilience features
+#!/usr/bin/env python3
+"""
+Cleanup Deprecated Files (Step 7)
+
+- Prints an exact plan of files to remove (default: PLAN ONLY).
+- Requires --apply to actually delete.
+- Fails fast if unexpected state is detected.
+- No silent passes.
+
+Usage:
+  python scripts/cleanup_deprecated.py --plan
+  python scripts/cleanup_deprecated.py --apply
+"""
+
+from __future__ import annotations
+import argparse
+from pathlib import Path
+import sys
+
+REPO = Path(__file__).resolve().parents[1]
+
+# Candidate files to delete once Step 4+ are in place
+CANDIDATES = [
+    "src/her/embeddings/real_embedder.py",
+    "src/her/embeddings/minilm_embedder.py",
+    "src/her/embeddings/cache.py",
+    "src/her/embeddings/enhanced_element_embedder.py",
+    "src/her/matching/intelligent_matcher.py",
+]
+
+def die(msg: str) -> None:
+    print(f"[FAIL] {msg}")
+    sys.exit(1)
+
+def ok(msg: str) -> None:
+    print(f"[PASS] {msg}")
+
+def note(msg: str) -> None:
+    print(f"[INFO] {msg}")
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--apply", action="store_true", help="actually delete files")
+    ap.add_argument("--plan", action="store_true", help="print plan and exit (default)")
+    args = ap.parse_args()
+
+    # Default to plan if neither specified
+    plan_only = args.plan or not args.apply
+
+    # Validate repo structure
+    if not (REPO / "src" / "her").exists():
+        die("Not at repo root: expected src/her/ to exist")
+
+    # Build absolute paths
+    to_delete = []
+    for rel in CANDIDATES:
+        p = REPO / rel
+        if p.exists():
+            to_delete.append(p)
+
+    # Also include any "*.deprecated" files left behind
+    for p in (REPO / "src" / "her").rglob("*.deprecated"):
+        to_delete.append(p)
+
+    # De-dup and sort
+    uniq = sorted(set(to_delete))
+
+    if not uniq:
+        ok("No deprecated files found. Nothing to clean.")
+        return
+
+    print("Cleanup plan:")
+    for p in uniq:
+        print(f"  - {p.relative_to(REPO)}")
+
+    if plan_only:
+        note("Plan only. Re-run with --apply to delete.")
+        return
+
+    # Safety checks before deletion
+    # Ensure we've already shipped the new pipeline with delta/promotions
+    new_pipeline = REPO / "src" / "her" / "pipeline.py"
+    if not new_pipeline.exists():
+        die("Missing src/her/pipeline.py — cannot proceed with cleanup.")
+
+    # Ensure sqlite cache exists (indicative of Steps 4–6)
+    sqlite_mod = REPO / "src" / "her" / "vectordb" / "sqlite_cache.py"
+    if not sqlite_mod.exists():
+        die("Missing src/her/vectordb/sqlite_cache.py — cannot proceed with cleanup.")
+
+    # Apply deletion
+    deleted = 0
+    for p in uniq:
+        try:
+            p.unlink()
+            deleted += 1
+        except Exception as e:
+            die(f"Failed to delete {p}: {e}")
+
+    ok(f"Deleted {deleted} deprecated file(s).")
+
+if __name__ == "__main__":
+    main()
