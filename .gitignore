@@ -1,13 +1,19 @@
-# Byte-compiled / optimized / DLL files
+# Byte-compiled / cache files
 __pycache__/
 *.py[cod]
 *$py.class
 
 # C extensions
 *.so
+*.pyd
+*.dll
 
 # Distribution / packaging
 .Python
+env/
+venv/
+ENV/
+.venv/
 build/
 develop-eggs/
 dist/
@@ -19,13 +25,9 @@ lib64/
 parts/
 sdist/
 var/
-wheels/
-pip-wheel-metadata/
-share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-MANIFEST
 
 # PyInstaller
 *.manifest
@@ -49,114 +51,30 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 
-# Virtual environments
-venv/
-ENV/
-env/
-.venv/
-her_env/
-.her_env/
+# Jupyter Notebook
+.ipynb_checkpoints
 
-# IDEs
+# IDEs and editors
 .vscode/
 .idea/
 *.swp
 *.swo
-*~
+
+# Local environments
+*.env
+*.venv
+.envrc
 .DS_Store
-
-# Jupyter Notebook
-.ipynb_checkpoints
-*.ipynb
-
-# pyenv
-.python-version
-
-# mypy
-.mypy_cache/
-.dmypy.json
-dmypy.json
-
-# Pyre type checker
-.pyre/
-
-# HER specific
-.cache/her/
-src/her/models/*.onnx
-src/her/models/*.pt
-src/her/models/*.bin
-*.db
-*.sqlite
-*.sqlite3
-
-# Logs
-*.log
-logs/
-
-# Temporary files
-tmp/
-temp/
-*.tmp
-*.bak
-
-# ZIP files (we don't want these in repo)
-*.zip
-*.tar.gz
-*.rar
-
-# OS files
 Thumbs.db
-.DS_Store
-desktop.ini
 
-# Java/Maven
-target/
-*.jar
-*.war
-*.ear
-*.class
-.classpath
-.project
-.settings/
-.mvn/
+# Project-specific (HER)
+reports/
+scripts/__pycache__/
+src/her/__pycache__/
+tests/__pycache__/
+logs/
+*.log
 
-# Node (if ever needed)
-node_modules/
-package-lock.json
-yarn.lock
-
-# Playwright
-playwright-report/
-test-results/
-
-# Local config
-.env
-.env.local
-config.local.json
-
-# Documentation build
-docs/_build/
-docs/.doctrees/
-site/
-
-# Backup files
-*.backup
-*.old
-
-# CI artifacts
-ci-artifacts/
-.github/workflows/*.bak
-
-# Ignore downloaded models
-/src/her/models/e5-small-onnx/
-/src/her/models/markuplm-base/
-/src/her/models/markuplm-base-onnx/
-
-# If there are any other model caches
-/src/her/models/**/*.onnx
-/src/her/models/**/*.bin
-/src/her/models/**/*.json
-/src/her/models/**/*.txt
-
-# Hugging Face cache folders (sometimes nested)
-**/.cache/huggingface/
+# Optional: if you generate models locally
+models/
+checkpoints/
