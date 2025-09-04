@@ -63,3 +63,41 @@ def page_signature(url: str) -> str:
         return sha1((u.scheme + "://" + u.netloc + u.path).lower())
     except Exception:
         return sha1(url or "")
+
+
+def dom_hash(frames: List[Dict]) -> str:
+    """
+    Deterministic page-level DOM hash derived from per-frame sketches.
+
+    Accepts a list of frame dicts with at least:
+      - frame_url or url
+      - elements/items/descriptors: list of element dicts (used for frame sketch)
+
+    The hash is stable under frame ordering differences.
+    """
+    try:
+        sketches: List[Dict[str, str]] = []
+        for fr in (frames or []):
+            url = (fr.get("frame_url") or fr.get("url") or "")
+            # Resolve elements list under common keys
+            elements = fr.get("elements")
+            if elements is None:
+                elements = fr.get("items")
+            if elements is None:
+                elements = fr.get("descriptors")
+            if not isinstance(elements, list):
+                elements = []
+
+            fh = fr.get("frame_hash") or frame_hash(url, elements)  # type: ignore[arg-type]
+            sketches.append({"u": _host_path(url), "h": fh})
+
+        # Sort by normalized host+path to ensure determinism
+        sketches.sort(key=lambda d: d["u"])  # type: ignore[index]
+        blob = json.dumps(sketches, sort_keys=True, ensure_ascii=False)
+        return sha1(blob)
+    except Exception:
+        # Fallback to best-effort
+        try:
+            return sha1(json.dumps(frames, sort_keys=True, default=str))
+        except Exception:
+            return sha1(str(frames))

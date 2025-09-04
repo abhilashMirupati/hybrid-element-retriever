@@ -5,6 +5,7 @@ import logging
 import hashlib
 import json
 from dataclasses import dataclass, field
+from .. import hashing
 
 logger = logging.getLogger(__name__)
 
@@ -579,3 +580,8 @@ class CDPBridge:
 
     def capture_complete_snapshot(self, page: Page, include_styles: bool = False, include_frames: bool = True, wait_stable: bool = True) -> DOMSnapshot:
         return capture_complete_snapshot(page, include_styles=include_styles, include_frames=include_frames, wait_stable=wait_stable)
+
+
+def compute_dom_hash(frames: List[Dict[str, Any]]) -> str:
+    """Expose simple DOM hash helper for tests and utilities."""
+    return hashing.dom_hash(frames)

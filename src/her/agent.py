@@ -37,8 +37,12 @@ class HERAgent:
         return fh
 
     def _snapshot_all(self, url: str, **opts) -> List[Dict]:
-        items = snapshot_sync(url, **opts)
-        return items
+        result = snapshot_sync(url, **opts)
+        # Support both (items, dom_hash) and legacy items-only return
+        if isinstance(result, tuple) and len(result) == 2:
+            items, _dom_hash = result
+            return items
+        return result  # type: ignore[return-value]
 
     # -------- control plane --------
     def run_step(self, url: str, query: str, topk: int = 10) -> Dict[str, Any]:
