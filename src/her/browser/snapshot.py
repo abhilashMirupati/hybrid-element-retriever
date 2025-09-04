@@ -16,7 +16,8 @@ Features:
 - Timeouts, retries, guaranteed cleanup
 - Sync wrapper that works in/out of running event loops
 
-Returns a list[dict] with keys: text, tag, role, attrs, xpath, bbox, frame_url
+Returns a tuple (elements, dom_hash) where elements is list[dict] with keys:
+text, tag, role, attrs, xpath, bbox, visible, frame_url
 """
 
 from __future__ import annotations
@@ -28,11 +29,20 @@ from dataclasses import dataclass, asdict, field
 from threading import Thread
 from typing import Any, Dict, List, Optional, Tuple, Set
 
-from playwright.async_api import (
-    async_playwright,
-    Error as PlaywrightError,
-    TimeoutError as PlaywrightTimeoutError,
-)
+try:
+    from playwright.async_api import (
+        async_playwright,
+        Error as PlaywrightError,
+        TimeoutError as PlaywrightTimeoutError,
+    )
+    _PLAYWRIGHT_AVAILABLE = True
+except Exception:  # pragma: no cover - allow module import without Playwright
+    _PLAYWRIGHT_AVAILABLE = False
+    class PlaywrightError(Exception):
+        pass
+    class PlaywrightTimeoutError(Exception):
+        pass
+from .. import hashing
 
 logger = logging.getLogger("her.browser")
 
@@ -245,9 +255,13 @@ class PageSnapshotter:
       bbox: {
         x: Math.max(0, Math.round(rect.x)),
         y: Math.max(0, Math.round(rect.y)),
+        // Provide both width/height and w/h for downstream compatibility
+        width: Math.max(0, Math.round(rect.width)),
+        height: Math.max(0, Math.round(rect.height)),
         w: Math.max(0, Math.round(rect.width)),
         h: Math.max(0, Math.round(rect.height))
-      }
+      },
+      visible: true
     });
   }
 
@@ -279,6 +293,13 @@ class PageSnapshotter:
             f_url = ""
         for it in items:
             it["frame_url"] = f_url
+        # Compute a stable frame hash and attach it to each element's meta
+        try:
+            fh = hashing.frame_hash(f_url, items)
+            for it in items:
+                (it.setdefault("meta", {}))["frame_hash"] = fh
+        except Exception:
+            pass
         results = list(items)
 
         # Recurse into child frames (iframes), bounded by depth
@@ -308,10 +329,13 @@ class PageSnapshotter:
             out.append(it)
         return out
 
-    async def snapshot(self, url: str, timeout_ms: Optional[int] = None) -> List[Dict[str, Any]]:
+    async def snapshot(self, url: str, timeout_ms: Optional[int] = None) -> Tuple[List[Dict[str, Any]], str]:
         t0 = time.time()
         timeout_ms = int(timeout_ms or self.opts.default_timeout_ms)
 
+        if not _PLAYWRIGHT_AVAILABLE:
+            # In environments without Playwright, return empty but well-typed values
+            return [], ""
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=self.opts.headless)
             context = await p.chromium.launch_persistent_context(
@@ -353,9 +377,20 @@ class PageSnapshotter:
                 # De-duplicate
                 items = self._dedupe(items)
 
+                # Page-level DOM hash from per-frame sketches
+                try:
+                    frames_map: Dict[str, List[Dict[str, Any]]] = {}
+                    for it in items:
+                        furl = it.get("frame_url") or ""
+                        frames_map.setdefault(furl, []).append(it)
+                    frames = [{"frame_url": k, "elements": v} for k, v in frames_map.items()]
+                    dom_hash = hashing.dom_hash(frames)
+                except Exception:
+                    dom_hash = ""
+
                 logger.info("[snapshot] url=%s frames=%d items=%d dur_ms=%d",
                             url, len(page.frames), len(items), int((time.time() - t0) * 1000))
-                return items
+                return items, dom_hash
 
             except PlaywrightTimeoutError as e:
                 raise TimeoutError(f"Snapshot timeout after {timeout_ms} ms for {url}") from e
@@ -381,7 +416,7 @@ def snapshot_sync(
     timeout_ms: Optional[int] = None,
     headless: Optional[bool] = None,
     **kwargs: Any,
-) -> List[Dict[str, Any]]:
+) -> Tuple[List[Dict[str, Any]], str]:
     """Sync wrapper for PageSnapshotter.snapshot(); accepts SnapshotOptions fields as kwargs."""
     opts = dict(kwargs)
     if headless is not None:
@@ -420,3 +455,33 @@ def snapshot_sync(
         return container["result"]  # type: ignore[return-value]
 
     return asyncio.run(_run())
+
+
+if __name__ == "__main__":
+    # Simple probe: build two fake frames with a couple of elements,
+    # print per-frame hashes and verify dom_hash stability across ordering.
+    import json as _json
+
+    def _el(tag: str, text: str, xpath: str) -> Dict[str, Any]:
+        return {
+            "tag": tag.upper(),
+            "text": text,
+            "attrs": {"id": "", "class": "", "title": "", "placeholder": "", "href": "", "value": "", "name": "", "aria-label": ""},
+            "xpath": xpath,
+            "bbox": {"x": 0, "y": 0, "width": 10, "height": 10, "w": 10, "h": 10},
+            "visible": True,
+        }
+
+    frame_a = {"frame_url": "https://example.com/a", "elements": [_el("button", "OK", "/HTML[1]/BODY[1]/BUTTON[1]")]} 
+    frame_b = {"frame_url": "https://example.com/b", "elements": [_el("a", "Home", "/HTML[1]/BODY[1]/A[1]"), _el("input", "", "/HTML[1]/BODY[1]/INPUT[1]")]}
+
+    for fr in [frame_a, frame_b]:
+        fh = hashing.frame_hash(fr["frame_url"], fr["elements"])  # type: ignore[arg-type]
+        print(f"frame_url={fr['frame_url']} frame_hash={fh}")
+
+    dom1 = hashing.dom_hash([frame_a, frame_b])
+    dom2 = hashing.dom_hash([frame_b, frame_a])
+    print(f"dom_hash1={dom1}")
+    print(f"dom_hash2={dom2}")
+    assert dom1 == dom2, "dom_hash should be stable under frame ordering"
+    print("dom_hash stability check passed")
