@@ -1,9 +1,0 @@
-[
-  {"query": "enter login email", "action": "type", "dataset": "auth"},
-  {"query": "enter password", "action": "type", "dataset": "auth"},
-  {"query": "click sign in button", "action": "click", "dataset": "auth"},
-  {"query": "close overlay", "action": "click", "dataset": "overlays"},
-  {"query": "open country select", "action": "click", "dataset": "forms"},
-  {"query": "submit form", "action": "click", "dataset": "forms"}
-]
-

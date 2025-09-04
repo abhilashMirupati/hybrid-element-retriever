@@ -78,3 +78,21 @@ logs/
 # Optional: if you generate models locally
 models/
 checkpoints/
+
+# Bytecode and caches
+__pycache__/
+*.py[cod]
+
+# Embedding & promotion databases
+.her_cache/
+**/embeddings.db
+**/promotion.db
+
+# Logs and dumps
+*.log
+logs/
+
+# Build artifacts
+dist/
+build/
+

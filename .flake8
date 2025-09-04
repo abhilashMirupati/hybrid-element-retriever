@@ -1,7 +1,0 @@
-[flake8]
-max-line-length = 120
-exclude = .git,__pycache__,docs,build,dist,.eggs,*.egg,venv
-ignore = E203,W503,E501
-# E203: whitespace before ':' (conflicts with black)
-# W503: line break before binary operator (conflicts with black)
-# E501: line too long (handled by black with 88 chars, but we allow up to 120)
