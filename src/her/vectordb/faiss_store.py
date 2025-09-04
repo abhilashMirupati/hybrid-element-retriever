@@ -39,6 +39,10 @@ class InMemoryVectorStore:
             self.index = None
             self.use_faiss = False
     
+    # Backwards-compat: some call sites expect add_vector()
+    def add_vector(self, vector: Union[List[float], 'np.ndarray'], metadata: dict = None) -> int:
+        return self.add(vector, metadata)
+    
     def add(self, vector: Union[List[float], 'np.ndarray'], metadata: dict = None) -> int:
         """Add vector to store.
         

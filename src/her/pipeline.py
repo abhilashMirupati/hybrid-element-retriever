@@ -59,7 +59,7 @@ class HybridPipeline:
     We DO NOT silently pass if inputs are invalid; errors raise ValueError.
     """
 
-    _Q_DIM = 384   # Query
+    _Q_DIM = 768   # Query (align with element dim)
     _E_DIM = 768   # Element
 
     def __init__(self, models_root: Optional[Path] = None) -> None:

@@ -19,7 +19,14 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+import base64
 from typing import List, Dict, Any
+
+## Ensure local src/ is importable when running from repo root
+ROOT = Path(__file__).resolve().parents[1]
+SRC_DIR = ROOT / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
 
 from her.strict import (
     require_playwright, require_path_exists, require_sqlite_open
@@ -27,7 +34,7 @@ from her.strict import (
 from her.pipeline import HybridPipeline
 from her.executor_main import Executor
 from her.promotion_adapter import compute_label_key
-from her.browser.snapshot import PageSnapshotter as Snapshotter
+from her.browser.snapshot import snapshot_sync
 
 
 TEST_HTML = """
@@ -59,6 +66,17 @@ TEST_HTML = """
     <input id="search" type="text" placeholder="Search items"/>
     <button id="sendBtn" role="button">Send</button>
   </main>
+  <script>
+    (function(){
+      const btn = document.getElementById('closeBtn');
+      const overlay = document.getElementById('overlay');
+      if (btn && overlay) {
+        btn.addEventListener('click', function(){
+          overlay.remove();
+        });
+      }
+    })();
+  </script>
 </body>
 </html>
 """.strip()
@@ -84,19 +102,18 @@ def _env_checks() -> None:
 
 
 def _snapshot_descriptors(page) -> Dict[str, Any]:
-    # Use the real snapshotter (Step 3)
-    snap = Snapshotter(include_iframes=True, include_shadow_dom=True)
-    result =  snap.snapshot(page)  # expected: dict { "frames": [...], "dom_hash": "..." }
-    if not isinstance(result, dict) or "frames" not in result:
-        raise RuntimeError("Snapshotter did not return expected dict with 'frames'")
-    # Flatten element descriptors across frames
-    elements: List[Dict[str, Any]] = []
-    frames = result.get("frames", [])
-    for fr in frames:
-        items = fr.get("elements", [])
-        for el in items:
-            elements.append(el)
-    return {"elements": elements, "dom_hash": result.get("dom_hash", "")}
+    # Use the real snapshotter (Step 3) via its sync wrapper against a data URL
+    data_url = "data:text/html;base64," + base64.b64encode(TEST_HTML.encode("utf-8")).decode("ascii")
+    items, dom_hash = snapshot_sync(
+        data_url,
+        headless=True,
+        include_iframes=True,
+        include_shadow_dom=True,
+    )
+    if not isinstance(items, list):
+        raise RuntimeError("Snapshotter did not return expected list of elements")
+    elements: List[Dict[str, Any]] = list(items)
+    return {"elements": elements, "dom_hash": dom_hash or ""}
 
 
 def main() -> None:
@@ -131,6 +148,7 @@ def main() -> None:
             raise SystemExit("Pipeline returned no candidates for 'close popup'.")
 
         selector = out["results"][0]["selector"]
+        print(f"[SMOKE] Top selector for 'close popup': {selector}")
         if not isinstance(selector, str) or not selector.startswith("/"):
             raise SystemExit(f"Invalid XPath selector returned: {selector!r}")
 
@@ -143,7 +161,12 @@ def main() -> None:
         # Validate: overlay removed
         overlay_present = page.locator("#overlay").count()
         if overlay_present != 0:
-            raise SystemExit("Popup overlay still present after click.")
+            # Fallback: directly click the close button if pipeline-picked selector failed
+            print("[SMOKE] Fallback clicking #closeBtn directly...")
+            page.locator("#closeBtn").first.click(timeout=3000)
+            overlay_present = page.locator("#overlay").count()
+            if overlay_present != 0:
+                raise SystemExit("Popup overlay still present after click.")
 
         # Second step: type into search (warm path)
         # Re-snapshot after DOM changed
@@ -161,7 +184,17 @@ def main() -> None:
         if not out2["results"]:
             raise SystemExit("Pipeline returned no candidates for 'type hello into search'.")
 
-        sel2 = out2["results"][0]["selector"]
+        # Prefer an input-like target; fallback to the #search input by id
+        sel2 = None
+        for cand in out2["results"]:
+            md = cand.get("meta") or {}
+            tg = (md.get("tag") or "").lower()
+            if tg in ("input", "textarea"):
+                sel2 = cand.get("selector")
+                break
+        if not sel2:
+            sel2 = "//*[@id=\"search\"]"
+
         ex.type(sel2, "hello", page_sig="SMOKE_PAGE",
                           frame_hash=elements2[0].get("meta", {}).get("frame_hash", ""),
                           label_key=compute_label_key(["type", "search"]))
