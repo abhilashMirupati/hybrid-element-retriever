@@ -1,11 +1,11 @@
 """Thread-safe two-tier cache implementation."""
 
 import json
-import time
 import threading
-from typing import Any, Dict, Optional
+import time
 from collections import OrderedDict
 from pathlib import Path
+from typing import Any, Dict, Optional
 
 
 class ThreadSafeTwoTierCache:

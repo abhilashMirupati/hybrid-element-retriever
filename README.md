@@ -76,7 +76,7 @@ python
 Copy code
 from her.pipeline import HybridPipeline
 from her.promotion_adapter import compute_label_key
-from her.executor import Executor
+from her.executor_main import Executor
 
 # 1) Snapshot page with your existing browser/snapshot code
 #    -> 'elements' is a list of element descriptors, each with meta.frame_hash etc.

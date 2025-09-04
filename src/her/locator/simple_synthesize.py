@@ -1,6 +1,7 @@
 """Simple locator synthesis wrapper for compatibility."""
 
-from typing import Dict, Any, List
+from typing import Any, Dict, List
+
 from .synthesize import LocatorSynthesizer as _LocatorSynthesizer
 
 

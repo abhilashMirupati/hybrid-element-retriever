@@ -7,7 +7,7 @@ locator synthesiser to generate robust selectors.
 """
 
 from dataclasses import dataclass, field
-from typing import List, Optional, Dict, Any
+from typing import Any, Dict, List, Optional
 
 
 def normalize_descriptor(desc: Dict[str, Any]) -> Dict[str, Any]:

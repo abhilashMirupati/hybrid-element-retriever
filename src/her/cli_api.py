@@ -1,15 +1,16 @@
 """Fixed HER Client API with integrated pipeline and resilience."""
 
 from __future__ import annotations
-from typing import Any, Dict, List, Optional, Tuple, Union
-from dataclasses import dataclass
+
 import logging
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 # Browser automation
 try:
-    from playwright.sync_api import sync_playwright, Page, Browser
     import playwright
+    from playwright.sync_api import Browser, Page, sync_playwright
     PLAYWRIGHT_AVAILABLE = True
 except ImportError:
     PLAYWRIGHT_AVAILABLE = False
@@ -19,6 +20,7 @@ except ImportError:
 # Core components
 from .parser.intent import IntentParser
 from .session.manager import SessionManager
+
 try:
     from .session.enhanced_manager import EnhancedSessionManager
     ENHANCED_AVAILABLE = True
@@ -27,13 +29,13 @@ except ImportError:
     ENHANCED_AVAILABLE = False
 
 from .descriptors.merge import merge_dom_ax
-from .locator.synthesize import LocatorSynthesizer
-from .locator.verify import verify_selector as verify_locator  # type: ignore
-from .locator.verify import VerificationResult  # type: ignore
-from .rank.fusion_scorer import FusionScorer
-from .embeddings.query_embedder import QueryEmbedder
 from .embeddings.element_embedder import ElementEmbedder
+from .embeddings.query_embedder import QueryEmbedder
 from .executor import actions as action_funcs
+from .locator.synthesize import LocatorSynthesizer
+from .locator.verify import VerificationResult  # type: ignore
+from .locator.verify import verify_selector as verify_locator  # type: ignore
+from .rank.fusion_scorer import FusionScorer
 
 # New integrated components (optional for environments without full deps)
 try:
@@ -42,7 +44,7 @@ except Exception:  # pragma: no cover - allow smoke tests without full pipeline 
     HERPipeline = None  # type: ignore
     PipelineConfig = None  # type: ignore
 from .resilience import ResilienceManager, WaitStrategy
-from .validators import InputValidator, DOMValidator
+from .validators import DOMValidator, InputValidator
 
 logger = logging.getLogger(__name__)
 

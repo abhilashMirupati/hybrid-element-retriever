@@ -1,5 +1,7 @@
 from __future__ import annotations
+
 from typing import Dict, List, Tuple
+
 
 def synthesize_xpath(desc: Dict) -> List[Tuple[str, str]]:
     """

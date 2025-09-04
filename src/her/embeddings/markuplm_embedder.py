@@ -1,9 +1,12 @@
 from __future__ import annotations
+
 import logging
 from typing import Dict, List
+
 import numpy as np
 import torch
 from transformers import AutoProcessor, MarkupLMModel
+
 from .normalization import element_to_text
 
 logger = logging.getLogger(__name__)

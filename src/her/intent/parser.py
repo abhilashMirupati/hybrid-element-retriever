@@ -1,7 +1,8 @@
 from __future__ import annotations
+
 import re
 from dataclasses import dataclass
-from typing import Optional, Dict, List
+from typing import Dict, List, Optional
 
 _ACTION_ALIASES = {
     "click": {"click","tap","press","hit","open","choose","select"},

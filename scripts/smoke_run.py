@@ -25,9 +25,9 @@ from her.strict import (
     require_playwright, require_path_exists, require_sqlite_open
 )
 from her.pipeline import HybridPipeline
-from her.executor import Executor
+from her.executor_main import Executor
 from her.promotion_adapter import compute_label_key
-from her.browser.snapshot import Snapshotter
+from her.browser.snapshot import PageSnapshotter as Snapshotter
 
 
 TEST_HTML = """
@@ -86,7 +86,7 @@ def _env_checks() -> None:
 def _snapshot_descriptors(page) -> Dict[str, Any]:
     # Use the real snapshotter (Step 3)
     snap = Snapshotter(include_iframes=True, include_shadow_dom=True)
-    result = snap.snapshot(page)  # expected: dict { "frames": [...], "dom_hash": "..." }
+    result =  snap.snapshot(page)  # expected: dict { "frames": [...], "dom_hash": "..." }
     if not isinstance(result, dict) or "frames" not in result:
         raise RuntimeError("Snapshotter did not return expected dict with 'frames'")
     # Flatten element descriptors across frames
@@ -108,7 +108,7 @@ def main() -> None:
     label_key = compute_label_key(["close", "popup"])
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
+        browser = p.chromium.launch(headless=False)
         page = browser.new_page()
         page.set_content(TEST_HTML)
 

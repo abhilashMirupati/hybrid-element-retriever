@@ -1,10 +1,13 @@
 from __future__ import annotations
+
 from dataclasses import dataclass, field
-from typing import Dict, Optional, List
+from typing import Dict, List, Optional
+
 import numpy as np
 
-from .hashing import frame_hash as compute_fhash
 from .db import VectorIndex
+from .hashing import frame_hash as compute_fhash
+
 
 @dataclass
 class FrameStore:

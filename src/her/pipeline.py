@@ -7,12 +7,13 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
+from her.embeddings.element_embedder import \
+    ElementEmbedder  # 768-d deterministic fallback
+from her.embeddings.query_embedder import \
+    QueryEmbedder  # 384-d deterministic/light
 from her.hashing import element_dom_hash
-from her.vectordb.sqlite_cache import SQLiteKV
 from her.vectordb.faiss_store import InMemoryVectorStore
-
-from her.embeddings.query_embedder import QueryEmbedder  # 384-d deterministic/light
-from her.embeddings.element_embedder import ElementEmbedder  # 768-d deterministic fallback
+from her.vectordb.sqlite_cache import SQLiteKV
 
 # Optional heavy embedder (if present locally)
 try:

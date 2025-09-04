@@ -12,20 +12,21 @@ NOTE:
 - Callers should compute page_sig (stable) and provide frame_hash + label_key for promotion recording.
 """
 
-from typing import Optional
 import time
+from typing import Optional
 
 # Fail-fast import guard (no silent fallback)
 try:
-    from playwright.sync_api import Page, TimeoutError as PWTimeoutError
+    from playwright.sync_api import Page
+    from playwright.sync_api import TimeoutError as PWTimeoutError
 except Exception as e:  # pragma: no cover
     raise RuntimeError(
         "Playwright is required for executor. Install with `pip install playwright` "
         "and run `python -m playwright install chromium`."
     ) from e
 
+from her.promotion_adapter import record_failure, record_success
 from her.vectordb import get_default_kv
-from her.promotion_adapter import record_success, record_failure
 
 
 class Executor:

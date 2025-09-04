@@ -1,8 +1,10 @@
 from __future__ import annotations
+
 import hashlib
 import json
 from typing import Dict, List
 from urllib.parse import urlparse
+
 
 # Canonical descriptor helpers
 def _host_path(href: str) -> str:

@@ -25,16 +25,15 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from dataclasses import dataclass, asdict, field
+from dataclasses import asdict, dataclass, field
 from threading import Thread
-from typing import Any, Dict, List, Optional, Tuple, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 try:
-    from playwright.async_api import (
-        async_playwright,
-        Error as PlaywrightError,
-        TimeoutError as PlaywrightTimeoutError,
-    )
+    from playwright.async_api import Error as PlaywrightError
+    from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+    from playwright.async_api import async_playwright
+    from playwright.sync_api import Page
     _PLAYWRIGHT_AVAILABLE = True
 except Exception:  # pragma: no cover - allow module import without Playwright
     _PLAYWRIGHT_AVAILABLE = False
@@ -329,7 +328,7 @@ class PageSnapshotter:
             out.append(it)
         return out
 
-    async def snapshot(self, url: str, timeout_ms: Optional[int] = None) -> Tuple[List[Dict[str, Any]], str]:
+    async def snapshot(self,  url: str, timeout_ms: Optional[int] = None) -> Tuple[List[Dict[str, Any]], str]:
         t0 = time.time()
         timeout_ms = int(timeout_ms or self.opts.default_timeout_ms)
 

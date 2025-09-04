@@ -1,16 +1,17 @@
 """CDP bridge utilities for DOM and Accessibility tree extraction with full shadow DOM and iframe support."""
 
-from typing import Any, Dict, List, Optional, Tuple
-import logging
 import hashlib
 import json
+import logging
 from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Tuple
+
 from .. import hashing
 
 logger = logging.getLogger(__name__)
 
 try:
-    from playwright.sync_api import Page, CDPSession, Frame
+    from playwright.sync_api import CDPSession, Frame, Page
 
     PLAYWRIGHT_AVAILABLE = True
 except ImportError:

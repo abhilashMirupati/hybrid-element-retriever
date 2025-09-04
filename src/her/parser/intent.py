@@ -1,9 +1,9 @@
 """Natural language intent parsing with support for all action types."""
 
-from dataclasses import dataclass
-from typing import Optional, Tuple, List, Dict, Any
-import re
 import logging
+import re
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 

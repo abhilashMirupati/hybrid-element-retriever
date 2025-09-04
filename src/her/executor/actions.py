@@ -1,5 +1,6 @@
 # Thin wrapper around the production Executor
-from ..executor import Executor  # your real executor
+from ..executor_main import Executor  # your real executor
+
 
 def click(selector: str, *, strict: bool = True) -> dict:
     return Executor().click(selector, strict=strict)

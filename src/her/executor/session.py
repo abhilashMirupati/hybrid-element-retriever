@@ -1,9 +1,11 @@
 from __future__ import annotations
+
 import hashlib
 import time
-from typing import Any, Optional
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Optional
+
 import numpy as np
 
 from ..vectordb.two_tier_cache import TwoTierCache

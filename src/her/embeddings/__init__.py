@@ -1,9 +1,8 @@
 """Embeddings package exports with safe, optional heavy imports."""
 from . import _resolve
-
+from .element_embedder import ElementEmbedder
 # Hard deps
 from .query_embedder import QueryEmbedder
-from .element_embedder import ElementEmbedder
 
 # Optional deps: make import safe if onnxruntime/transformers missing
 try:

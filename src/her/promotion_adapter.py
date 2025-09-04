@@ -12,6 +12,7 @@ Backed by: src/her/vectordb/sqlite_cache.py (promotions table)
 """
 
 from typing import Iterable, Optional
+
 from her.vectordb.sqlite_cache import SQLiteKV
 
 

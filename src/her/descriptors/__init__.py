@@ -1,8 +1,9 @@
 """Descriptors package for element description and merging."""
 
-from .merge import merge_dom_ax
-from typing import Dict, Any
 from dataclasses import dataclass
+from typing import Any, Dict
+
+from .merge import merge_dom_ax
 
 
 def normalize_descriptor(node: Dict[str, Any]) -> Dict[str, Any]:

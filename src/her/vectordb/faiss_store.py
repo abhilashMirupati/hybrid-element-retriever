@@ -1,7 +1,7 @@
 """Vector store implementation that works with or without FAISS/numpy."""
 
-from typing import List, Tuple, Optional, Union
 import math
+from typing import List, Optional, Tuple, Union
 
 try:
     import numpy as np
