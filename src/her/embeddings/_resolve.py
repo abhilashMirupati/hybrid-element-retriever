@@ -33,7 +33,7 @@ def _models_root_from_env() -> Path:
     return (Path(__file__).resolve().parents[1] / "models")
 
 
-def resolve_element_embedding() -> ResolvedElementPaths:
+def resolve_element_embedding(models_root: Path | None = None) -> ResolvedElementPaths:
     """
     Preference order:
       1) ONNX at   <root>/markuplm-base-onnx/model.onnx
@@ -43,7 +43,7 @@ def resolve_element_embedding() -> ResolvedElementPaths:
     Matches tests that call resolve_element_embedding() with no args and
     expect attributes and ResolverError.
     """
-    root = _models_root_from_env()
+    root = models_root or _models_root_from_env()
 
     # Try ONNX
     onnx_dir = root / "markuplm-base-onnx"
@@ -58,9 +58,7 @@ def resolve_element_embedding() -> ResolvedElementPaths:
 
     # Try Transformers
     tf_dir = root / "markuplm-base"
-    if (tf_dir / "config.json").is_file() and (
-        (tf_dir / "pytorch_model.bin").is_file() or (tf_dir / "model.safetensors").is_file()
-    ):
+    if (tf_dir / "config.json").is_file():
         return ResolvedElementPaths(framework="transformers", model_dir=tf_dir)
 
     # Neither present
@@ -87,3 +85,9 @@ def resolve_text_embedding(models_root: Path | None = None) -> dict:
         f"Text embedding ONNX not found at {e5_dir}. "
         "Install models via scripts/install_models.ps1 or ./scripts/install_models.sh."
     )
+
+
+def preflight_require_models(models_root: Path | None = None) -> None:
+    """Fail-fast if either MiniLM (text) or MarkupLM (element) models are missing."""
+    resolve_text_embedding(models_root)
+    resolve_element_embedding(models_root)
