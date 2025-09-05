@@ -17,6 +17,12 @@ try:
 except Exception:  # pragma: no cover
     _PLAYWRIGHT = False
 
+# Strict executor (records promotions success/failure)
+try:
+    from .executor_main import Executor  # type: ignore
+except Exception:
+    Executor = None  # type: ignore
+
 
 logger = logging.getLogger("her.runner")
 
@@ -36,7 +42,7 @@ class Runner:
     - "Open <url>" navigates
     - Other actions resolve element via snapshot + pipeline, then act
     - Simple self-heal: one retry after re-snapshot
-    - Logs JSON per step
+    - Logs JSON per step, including top candidate xpaths + scores
     """
 
     def __init__(self, headless: bool = True) -> None:
@@ -93,7 +99,7 @@ class Runner:
     def _resolve_selector(self, phrase: str, snapshot: Dict[str, Any]) -> Dict[str, Any]:
         elements = snapshot.get("elements", [])
         if not elements:
-            return {"selector": "", "confidence": 0.0, "reason": "no-elements"}
+            return {"selector": "", "confidence": 0.0, "reason": "no-elements", "candidates": []}
         # Promotions: page signature + first frame hash
         ps = page_signature(str(snapshot.get("url", "")))
         frame_hash = None
@@ -102,8 +108,9 @@ class Runner:
             if mh:
                 frame_hash = mh
                 break
-        intent = self.intent.parse(phrase)
-        label_key = compute_label_key([w for w in (intent.target_phrase or phrase).split()])
+        # Compute label key from intent tokens
+        parsed = self.intent.parse(phrase)
+        label_key = compute_label_key([w for w in (parsed.target_phrase or phrase).split()])
         result = self.pipeline.query(
             phrase,
             elements,
@@ -112,23 +119,50 @@ class Runner:
             frame_hash=frame_hash,
             label_key=label_key,
         )
-        best = (result.get("results") or [])[:1]
+        candidates = []
+        for item in (result.get("results") or [])[:10]:
+            candidates.append({
+                "selector": item.get("selector", ""),
+                "score": float(item.get("score", 0.0)),
+                "meta": item.get("meta", {}),
+                "reasons": item.get("reasons", []),
+            })
+        best = candidates[:1]
         if not best:
-            return {"selector": "", "confidence": 0.0, "reason": "no-results"}
+            return {"selector": "", "confidence": 0.0, "reason": "no-results", "candidates": candidates, "promo": {"page_sig": ps, "frame_hash": frame_hash, "label_key": label_key}}
         return {
             "selector": best[0].get("selector", ""),
             "confidence": float(result.get("confidence", 0.0)),
             "meta": best[0].get("meta", {}),
             "reasons": best[0].get("reasons", []),
+            "candidates": candidates,
+            "promo": {"page_sig": ps, "frame_hash": frame_hash, "label_key": label_key},
         }
 
-    def _do_action(self, action: str, selector: str, value: Optional[str]) -> None:
+    def _do_action(self, action: str, selector: str, value: Optional[str], promo: Dict[str, Any]) -> None:
         if not _PLAYWRIGHT or not self._page:
             raise RuntimeError("Playwright unavailable for action execution")
+        # Prefer strict Executor if available (records promotions)
+        if Executor is not None:
+            ex = Executor(self._page)
+            kw = dict(page_sig=promo.get("page_sig"), frame_hash=promo.get("frame_hash"), label_key=promo.get("label_key"))
+            if action == "type" and value is not None:
+                ex.type(selector, str(value), **kw)
+                return
+            if action == "press" and value:
+                ex.press(selector, str(value), **kw)
+                return
+            # default click for click/select/hover/check etc.
+            ex.click(selector, **kw)
+            return
+        # Fallback: raw Playwright
         if action == "type" and value is not None:
             self._page.fill(f"xpath={selector}", value)
             return
-        # default click for click/select/press
+        if action == "press" and value:
+            self._page.locator(f"xpath={selector}").first.press(str(value))
+            return
+        # default click
         self._page.locator(f"xpath={selector}").first.click()
 
     def _validate(self, step: str) -> bool:
@@ -170,11 +204,16 @@ class Runner:
                 resolved = self._resolve_selector(intent.target_phrase or step, shot)
                 selector = resolved.get("selector", "")
                 conf = float(resolved.get("confidence", 0.0))
+                candidates = resolved.get("candidates", [])
                 ok = False
-                info: Dict[str, Any] = {"reason": resolved.get("reason"), "reasons": resolved.get("reasons", [])}
+                info: Dict[str, Any] = {
+                    "reason": resolved.get("reason"),
+                    "reasons": resolved.get("reasons", []),
+                    "candidates": candidates,
+                }
                 if selector:
                     try:
-                        self._do_action(intent.action, selector, intent.args)
+                        self._do_action(intent.action, selector, intent.args, resolved.get("promo", {}))
                         ok = True
                     except Exception as e1:
                         # Self-heal: re-snapshot and retry once
@@ -183,9 +222,10 @@ class Runner:
                         selector2 = resolved2.get("selector", "")
                         if selector2:
                             try:
-                                self._do_action(intent.action, selector2, intent.args)
+                                self._do_action(intent.action, selector2, intent.args, resolved2.get("promo", {}))
                                 selector = selector2
                                 conf = float(max(conf, resolved2.get("confidence", 0.0)))
+                                info["candidates_retry"] = resolved2.get("candidates", [])
                                 ok = True
                             except Exception as e2:  # pragma: no cover
                                 info["error"] = str(e2)
@@ -197,7 +237,8 @@ class Runner:
                     "selector": selector,
                     "confidence": conf,
                     "ok": ok,
-                    "info": info,
+                    "candidates": candidates,
+                    "info": {k: v for k, v in info.items() if k != "candidates"},
                 }, ensure_ascii=False))
         finally:
             self._close()
