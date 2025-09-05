@@ -8,10 +8,9 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 
 from her.embeddings._resolve import preflight_require_models
+from her.embeddings.text_embedder import TextEmbedder
 from her.embeddings.element_embedder import \
     ElementEmbedder  # 768-d deterministic fallback
-from her.embeddings.query_embedder import \
-    QueryEmbedder  # 384-d deterministic/light
 from her.hashing import element_dom_hash
 from her.vectordb.faiss_store import InMemoryVectorStore
 from her.vectordb.sqlite_cache import SQLiteKV
@@ -52,7 +51,8 @@ class HybridPipeline:
         self._models_root = Path(models_root) if models_root else None
 
         # Embedders
-        self.text_embedder = QueryEmbedder(dim=self._Q_DIM)
+        model_root = str((self._models_root or Path("src/her/models").resolve()) / "e5-small-onnx")
+        self.text_embedder = TextEmbedder(model_root=model_root)
         self.element_embedder = self._make_element_embedder()
 
         # Persistent cache

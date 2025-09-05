@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
@@ -10,7 +11,6 @@ from .parser.intent import IntentParser
 from .promotion_adapter import compute_label_key
 from .hashing import page_signature, dom_hash, frame_hash as compute_frame_hash
 from .pipeline import HybridPipeline
-from .browser.snapshot import snapshot_sync
 
 try:
     from playwright.sync_api import sync_playwright
@@ -18,7 +18,6 @@ try:
 except Exception:  # pragma: no cover
     _PLAYWRIGHT = False
 
-# Strict executor (records promotions success/failure)
 try:
     from .executor_main import Executor  # type: ignore
 except Exception:
@@ -26,8 +25,6 @@ except Exception:
 
 
 logger = logging.getLogger("her.runner")
-
-# Debug emission toggle
 _DEBUG_CANDS = os.getenv("HER_DEBUG_CANDIDATES", "0") == "1"
 
 
@@ -41,14 +38,6 @@ class StepResult:
 
 
 class Runner:
-    """Run plain-English steps end-to-end using HER pipeline.
-
-    - "Open <url>" navigates
-    - Other actions resolve element via snapshot + pipeline, then act
-    - Simple self-heal: one retry after re-snapshot
-    - Logs JSON per step, including top candidate xpaths + scores
-    """
-
     def __init__(self, headless: bool = True) -> None:
         self.headless = headless
         self.intent = IntentParser()
@@ -88,7 +77,6 @@ class Runner:
         self._playwright = None
 
     def _inline_snapshot(self) -> Dict[str, Any]:
-        # Evaluate DOM in the current page; single-frame, visibility-aware, compute absolute XPath
         js = """
 () => {
   const collapse = (s) => (s || '').replace(/\s+/g, ' ').trim();
@@ -159,7 +147,6 @@ class Runner:
             items = self._page.evaluate(js)
         except Exception:
             return {"elements": [], "dom_hash": "", "url": getattr(self._page, "url", "")}
-        # Attach frame metadata
         frame_url = getattr(self._page, "url", "")
         fh = compute_frame_hash(frame_url, items)
         for it in items:
@@ -177,18 +164,14 @@ class Runner:
                 page.goto(url, wait_until="networkidle")
             except Exception:
                 pass
-        # Prefer inline snapshot on the same page for state consistency
         return self._inline_snapshot()
 
     def _resolve_selector(self, phrase: str, snapshot: Dict[str, Any]) -> Dict[str, Any]:
         elements = snapshot.get("elements", [])
         if not elements:
             return {"selector": "", "confidence": 0.0, "reason": "no-elements", "candidates": []}
-        # Promotions: page signature + first frame hash (single frame here)
         ps = page_signature(str(snapshot.get("url", "")))
-        # Use the frame_hash from elements (all share same hash in inline snapshot)
         frame_hash = (elements[0].get("meta") or {}).get("frame_hash") or ps
-        # Compute label key from intent tokens
         parsed = self.intent.parse(phrase)
         label_key = compute_label_key([w for w in (parsed.target_phrase or phrase).split()])
         result = self.pipeline.query(
@@ -222,11 +205,43 @@ class Runner:
             "promo": {"page_sig": ps, "frame_hash": frame_hash, "label_key": label_key},
         }
 
+    def _dismiss_overlays(self) -> None:
+        if not _PLAYWRIGHT or not self._page:
+            return
+        selectors = [
+            'button[aria-label="Close"]',
+            'button[aria-label="Dismiss"]',
+            'button:has-text("Accept")',
+            'button:has-text("Agree")',
+            '#onetrust-accept-btn-handler',
+            '.cc-allow',
+            '[data-testid="close"]',
+            'button:has-text("No thanks")',
+        ]
+        for sel in selectors:
+            try:
+                el = self._page.query_selector(sel)
+                if el:
+                    el.click(timeout=500)
+            except Exception:
+                continue
+
+    def _scroll_into_view(self, selector: str) -> None:
+        if not _PLAYWRIGHT or not self._page:
+            return
+        try:
+            self._page.locator(f"xpath={selector}").first.scroll_into_view_if_needed(timeout=2000)
+        except Exception:
+            pass
+
     def _do_action(self, action: str, selector: str, value: Optional[str], promo: Dict[str, Any]) -> None:
         if not _PLAYWRIGHT or not self._page:
             raise RuntimeError("Playwright unavailable for action execution")
-        # Prefer strict Executor if available (records promotions)
-        if Executor is not None:
+        # Try scroll + overlay dismiss before attempting action
+        self._scroll_into_view(selector)
+        self._dismiss_overlays()
+        # Strict executor if available
+        if Executor is not None and action not in {"back", "refresh", "wait"}:
             ex = Executor(self._page)
             kw = dict(page_sig=promo.get("page_sig"), frame_hash=promo.get("frame_hash"), label_key=promo.get("label_key"))
             if action == "type" and value is not None:
@@ -235,17 +250,68 @@ class Runner:
             if action == "press" and value:
                 ex.press(selector, str(value), **kw)
                 return
-            # default click for click/select/hover/check etc.
+            if action == "hover":
+                self._page.locator(f"xpath={selector}").first.hover()
+                return
+            if action in {"check", "uncheck"}:
+                handle = self._page.locator(f"xpath={selector}").first
+                try:
+                    if action == "check":
+                        handle.check()
+                    else:
+                        handle.uncheck()
+                    return
+                except Exception:
+                    pass
+            if action == "select":
+                # Fallback: click element (menu/option)
+                ex.click(selector, **kw)
+                return
             ex.click(selector, **kw)
             return
-        # Fallback: raw Playwright
+        # Fallback raw Playwright and navigation/waits
         if action == "type" and value is not None:
             self._page.fill(f"xpath={selector}", value)
             return
         if action == "press" and value:
             self._page.locator(f"xpath={selector}").first.press(str(value))
             return
-        # default click
+        if action == "hover":
+            self._page.locator(f"xpath={selector}").first.hover()
+            return
+        if action in {"check", "uncheck"}:
+            handle = self._page.locator(f"xpath={selector}").first
+            try:
+                if action == "check":
+                    handle.check()
+                else:
+                    handle.uncheck()
+                return
+            except Exception:
+                handle.click()
+                return
+        if action == "select":
+            self._page.locator(f"xpath={selector}").first.click()
+            return
+        if action == "back":
+            try:
+                self._page.go_back()
+            except Exception:
+                pass
+            return
+        if action == "refresh":
+            try:
+                self._page.reload()
+            except Exception:
+                pass
+            return
+        if action == "wait":
+            try:
+                secs = float(value or 1)
+            except Exception:
+                secs = 1.0
+            self._page.wait_for_timeout(int(secs * 1000))
+            return
         self._page.locator(f"xpath={selector}").first.click()
 
     def _validate(self, step: str) -> bool:
@@ -271,6 +337,27 @@ class Runner:
                 return True
             except Exception:
                 return False
+        if low.startswith("validate ") and " exists" in low:
+            target = step[9:].rsplit(" exists", 1)[0].strip()
+            shot = self._snapshot()
+            resolved = self._resolve_selector(target, shot)
+            sel = resolved.get("selector", "")
+            if not sel:
+                return False
+            try:
+                count = self._page.locator(f"xpath={sel}").count()
+                return count > 0
+            except Exception:
+                return False
+        if low.startswith("validate page has text "):
+            # Expect quoted text
+            quote = step.split("validate page has text ", 1)[1].strip()
+            wanted = quote.strip('"').strip("'")
+            try:
+                content = self._page.content()
+                return wanted in content
+            except Exception:
+                return False
         return False
 
     def run(self, steps: List[str]) -> List[StepResult]:
@@ -294,36 +381,37 @@ class Runner:
                         break
                     continue
                 intent = self.intent.parse(step)
-                shot = self._snapshot()
-                resolved = self._resolve_selector(intent.target_phrase or step, shot)
-                selector = resolved.get("selector", "")
-                conf = float(resolved.get("confidence", 0.0))
-                candidates = resolved.get("candidates", [])
-                ok = False
+                attempts = 3
+                selector = ""
+                conf = 0.0
+                last_err: Optional[str] = None
+                candidates: List[Dict[str, Any]] = []
+                for attempt in range(attempts):
+                    shot = self._snapshot()
+                    resolved = self._resolve_selector(intent.target_phrase or step, shot)
+                    selector = resolved.get("selector", "")
+                    conf = float(resolved.get("confidence", 0.0))
+                    candidates = resolved.get("candidates", [])
+                    if selector:
+                        try:
+                            self._do_action(intent.action, selector, intent.args, resolved.get("promo", {}))
+                            last_err = None
+                            break
+                        except Exception as e1:
+                            last_err = str(e1)
+                            self._dismiss_overlays()
+                            time.sleep(0.25)
+                            continue
+                    else:
+                        # No selector; try dismiss overlays, small wait, and retry
+                        self._dismiss_overlays()
+                        time.sleep(0.25)
+                        continue
+                ok = last_err is None
                 info: Dict[str, Any] = {
-                    "reason": resolved.get("reason"),
-                    "reasons": resolved.get("reasons", []),
                     "candidates": candidates,
+                    "error": last_err,
                 }
-                if selector:
-                    try:
-                        self._do_action(intent.action, selector, intent.args, resolved.get("promo", {}))
-                        ok = True
-                    except Exception as e1:
-                        shot = self._snapshot()
-                        resolved2 = self._resolve_selector(intent.target_phrase or step, shot)
-                        selector2 = resolved2.get("selector", "")
-                        if selector2:
-                            try:
-                                self._do_action(intent.action, selector2, intent.args, resolved2.get("promo", {}))
-                                selector = selector2
-                                conf = float(max(conf, resolved2.get("confidence", 0.0)))
-                                info["candidates_retry"] = resolved2.get("candidates", [])
-                                ok = True
-                            except Exception as e2:  # pragma: no cover
-                                info["error"] = str(e2)
-                        else:
-                            info["error"] = str(e1)
                 logs.append(StepResult(step=step, selector=selector, confidence=conf, ok=ok, info=info))
                 payload = {
                     "step": step,
