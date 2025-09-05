@@ -29,7 +29,7 @@ class MarkupLMEmbedder:
         self.normalize = bool(normalize)
 
         # Load locally; no network calls.
-        self.processor = AutoProcessor.from_pretrained(model_dir)
+        self.processor = AutoProcessor.from_pretrained(self.model_dir)
         self.model: MarkupLMModel = MarkupLMModel.from_pretrained(model_dir).to(self.device)
         self.model.eval()
         with torch.no_grad():

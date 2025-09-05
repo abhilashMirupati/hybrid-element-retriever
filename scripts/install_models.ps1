@@ -102,7 +102,7 @@ snapshot_download(
     allow_patterns=[
         'config.json',
         'pytorch_model.bin',
-        'tokenizer.json','tokenizer_config.json',
+        'tokenizer.json','tokenizer_config.json', 'preprocessor_config.json'
         'vocab.txt','special_tokens_map.json','added_tokens.json'
     ],
 )

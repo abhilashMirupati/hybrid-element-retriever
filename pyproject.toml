@@ -30,12 +30,6 @@ dependencies = [
 dev = [
   "pytest>=7.4",
   "pytest-cov>=4.1",
-]
-java = [
-  "py4j==0.10.9.7",
-]
-dev = [
-  "pytest>=7",
   "black>=24.0",
   "flake8>=6.0",
   "mypy>=1.6",
@@ -43,18 +37,22 @@ dev = [
   # Helpful for Playwright tests:
   "playwright>=1.45",
 ]
+java = [
+  "py4j==0.10.9.7",
+]
 
 [project.scripts]
 her = "her.cli.main:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
-packages = ["her", "her.cli", "her.bridge", "her.embeddings", "her.recovery", "her.handlers", "her.utils", "her.vectordb"]
-
 
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["her*"]
+
+[tool.setuptools.package-data]
+her = ["py.typed"]
 
 [tool.setuptools.package-data]
 her = ["py.typed"]

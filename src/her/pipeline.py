@@ -97,7 +97,7 @@ class HybridPipeline:
                     model_dir = str(default)
             if model_dir:
                 try:
-                    emb = MarkupLMEmbedder(model_dir=model_dir, dim=self._E_DIM)  # type: ignore[arg-type]
+                    emb = MarkupLMEmbedder(model_dir=model_dir)  # type: ignore[arg-type]
                     log.info("Element embedder: MarkupLM @ %s", model_dir)
                     return emb
                 except Exception as e:
