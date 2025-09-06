@@ -28,6 +28,16 @@ def synthesize_xpath(desc: Dict) -> List[Tuple[str, str]]:
     if elid:
         add("id", f'//*[@id="{elid}"]')
 
+    # Special handling for data attributes (like data-quick-link)
+    data_quick_link = attrs.get("data-quick-link")
+    if data_quick_link and text:
+        add("data-quick-link", f'//*[@data-quick-link="{data_quick_link}" and normalize-space()="{text}"]')
+
+    # Special handling for href attributes in links
+    href = attrs.get("href")
+    if href and text and tag == "a":
+        add("href+text", f'//a[@href="{href}" and normalize-space()="{text}"]')
+
     role = attrs.get("role")
     if role and text:
         add("role+name", f'//*[@role="{role}" and (normalize-space(@aria-label)="{text}" or normalize-space()="{text}")]')

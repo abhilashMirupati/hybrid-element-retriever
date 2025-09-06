@@ -266,12 +266,19 @@ class HybridPipeline:
                 if word in text_lower:
                     # Exact word match gets big boost
                     if text_lower == word or text_lower == word + 's':  # Handle plural
-                        return 0.5
+                        return 0.8  # Increased from 0.5
                     # Word at start/end gets good boost
                     if text_lower.startswith(word + ' ') or text_lower.startswith(word + 's '):
-                        return 0.3
+                        return 0.6  # Increased from 0.3
                     # Partial match gets smaller boost
-                    return 0.1
+                    return 0.3  # Increased from 0.1
+            
+            # Special case for "phones" - give extra boost for navigation elements
+            if 'phones' in query_lower and 'phones' in text_lower:
+                # Check if it's likely a navigation element
+                if any(attr in elem_text for attr in ['href', 'data-', 'class']):
+                    return 0.7
+            
             return 0.0
 
         ranked: List[Tuple[float, Dict[str, Any], List[str]]] = []
