@@ -159,11 +159,16 @@ class HybridPipeline:
             assert len(vecs) == len(descs)
 
             for arr, el, h in zip(vecs, descs, hashes):
+                attrs = (el.get("attrs") or {})
                 meta = {
                     "hash": h,
                     "xpath": el.get("xpath") or "",
                     "tag": (el.get("tag") or "").lower(),
-                    "role": ((el.get("attrs") or {}).get("role") or "").lower(),
+                    "role": (attrs.get("role") or "").lower(),
+                    "text": el.get("text") or "",
+                    "href": attrs.get("href") or "",
+                    "aria_label": attrs.get("aria-label") or "",
+                    "title": attrs.get("title") or "",
                     "visible": bool(el.get("visible")),
                     "frame_url": el.get("frame_url") or (el.get("meta") or {}).get("frame_url") or "",
                     "frame_hash": (el.get("meta") or {}).get("frame_hash", ""),
