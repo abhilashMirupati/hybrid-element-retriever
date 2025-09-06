@@ -159,11 +159,16 @@ class HybridPipeline:
             assert len(vecs) == len(descs)
 
             for arr, el, h in zip(vecs, descs, hashes):
+                attrs = (el.get("attrs") or {})
                 meta = {
                     "hash": h,
                     "xpath": el.get("xpath") or "",
                     "tag": (el.get("tag") or "").lower(),
-                    "role": ((el.get("attrs") or {}).get("role") or "").lower(),
+                    "role": (attrs.get("role") or "").lower(),
+                    "text": el.get("text") or "",
+                    "href": attrs.get("href") or "",
+                    "aria_label": attrs.get("aria-label") or "",
+                    "title": attrs.get("title") or "",
                     "visible": bool(el.get("visible")),
                     "frame_url": el.get("frame_url") or (el.get("meta") or {}).get("frame_url") or "",
                     "frame_hash": (el.get("meta") or {}).get("frame_hash", ""),
@@ -180,7 +185,7 @@ class HybridPipeline:
     def embed_query(self, text: str) -> np.ndarray:
         if not isinstance(text, str) or not text.strip():
             raise ValueError("query text must be a non-empty string")
-        q = self.text_embedder.encode(text)
+        q = self.text_embedder.encode_one(text)
         q = np.array(q, dtype=np.float32).reshape(-1)
         if q.shape[0] != self._Q_DIM:
             fix = np.zeros((self._Q_DIM,), dtype=np.float32)
@@ -215,7 +220,8 @@ class HybridPipeline:
         q = self.embed_query(query)
 
         promo_top: Optional[Dict[str, Any]] = None
-        if page_sig and frame_hash and label_key:
+        disable_promo = os.getenv("HER_DISABLE_PROMOTION", "0") == "1"
+        if not disable_promo and page_sig and frame_hash and label_key:
             sel = lookup_promotion(self.kv, page_sig=page_sig, frame_hash=frame_hash, label_key=label_key)
             if sel:
                 promo_top = {

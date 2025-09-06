@@ -7,7 +7,7 @@ from typing import List, Optional
 
 import numpy as np
 import onnxruntime as ort
-from transformers import AutoTokenizer
+from transformers import PreTrainedTokenizerFast
 
 logger = logging.getLogger(__name__)
 
@@ -73,8 +73,11 @@ class TextEmbedder:
             )
         self.model_path = chosen
 
-        # Local tokenizer (no network).
-        self.tokenizer = AutoTokenizer.from_pretrained(self.model_dir, use_fast=True)
+        # Local fast tokenizer via tokenizer.json (no network, no config needed).
+        tok_json = self.model_dir / "tokenizer.json"
+        if not tok_json.is_file():
+            raise FileNotFoundError(f"Tokenizer file not found: {tok_json}")
+        self.tokenizer = PreTrainedTokenizerFast(tokenizer_file=str(tok_json))
 
         # Create (or reuse) ONNX session and infer dimension.
         self._session = self._get_session()
