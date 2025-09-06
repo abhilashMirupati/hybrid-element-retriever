@@ -304,12 +304,33 @@ class HybridPipeline:
                         elem_vec = np.array(store.vectors[idx], dtype=np.float32)
                         score = _cos(q, elem_vec)
                         
-                        # Give higher priority to product tiles
+                        # Apply intent-aware scoring in fallback
                         forced_score = max(score, 0.1)  # Base score
-                        if "product-tile" in elem_meta.get("attributes", {}).get("data-testid", ""):
-                            forced_score = max(forced_score, 0.5)  # High priority for product tiles
-                        elif elem_meta.get("tag", "").lower() == "button" and "filter" in elem_meta.get("attributes", {}).get("class", "").lower():
-                            forced_score = max(forced_score, 0.05)  # Lower priority for filter buttons
+                        
+                        # Apply the same intent-aware logic as MarkupLM
+                        tag = elem_meta.get("tag", "").lower()
+                        text = elem_meta.get("text", "").lower()
+                        attrs = elem_meta.get("attributes", {})
+                        
+                        # For product selection (iPhone, Samsung, etc.), prioritize product tiles
+                        if any(brand in query.lower() for brand in ["iphone", "samsung", "google", "motorola"]):
+                            if "product-tile" in attrs.get("data-testid", ""):
+                                forced_score = max(forced_score, 0.8)  # Maximum priority for product tiles
+                            elif "tile" in attrs.get("class", "").lower():
+                                forced_score = max(forced_score, 0.6)  # High priority for tile elements
+                            elif tag == "div" and any(word in text for word in ["iphone", "galaxy", "pixel"]):
+                                forced_score = max(forced_score, 0.4)  # Medium priority for product containers
+                            elif tag == "button" and "filter" in attrs.get("class", "").lower():
+                                forced_score = max(forced_score, 0.05)  # Very low priority for filter buttons
+                            elif tag == "button" and "apple" in text and "iphone" not in text:
+                                forced_score = max(forced_score, 0.02)  # Very low priority for Apple filter button
+                        
+                        # For filter selection, prioritize filter buttons
+                        elif "select" in query.lower() or "filter" in query.lower():
+                            if tag == "button":
+                                forced_score = max(forced_score, 0.6)  # High priority for buttons in filter context
+                            elif "filter" in attrs.get("class", "").lower():
+                                forced_score = max(forced_score, 0.8)  # Maximum priority for filter-specific elements
                         
                         all_hits.append((forced_score, elem_meta))
                         print(f"  ✅ Forced inclusion: Index {idx} | Score: {forced_score:.6f} | Tag: {elem_meta.get('tag', '')} | Text: '{elem_meta.get('text', '')[:50]}...'")
