@@ -78,6 +78,9 @@ logs/
 # Optional: if you generate models locally
 models/
 checkpoints/
+src/her/models/**
+.her_cache/**
+playwright/.cache/**
 
 # Bytecode and caches
 __pycache__/
