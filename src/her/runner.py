@@ -412,15 +412,17 @@ class Runner:
                 return count > 0
             except Exception:
                 return False
-        if low.startswith("validate page has text "):
-            # Expect quoted text
-            quote = step.split("validate page has text ", 1)[1].strip()
-            wanted = quote.strip('"').strip("'")
-            try:
-                content = self._page.content()
-                return wanted in content
-            except Exception:
-                return False
+        if "validate page has text" in low:
+            # Expect quoted text or plain text
+            parts = step.lower().split("validate page has text", 1)
+            if len(parts) > 1:
+                wanted = parts[1].strip().strip('"').strip("'")
+                try:
+                    content = self._page.content()
+                    return wanted.lower() in content.lower()
+                except Exception:
+                    return False
+            return False
         return False
 
     def run(self, steps: List[str]) -> List[StepResult]:
