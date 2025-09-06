@@ -249,11 +249,43 @@ class HybridPipeline:
             if role in ("button", "link", "tab", "menuitem"):
                 return 0.01
             return 0.0
+        
+        def _text_match_bonus(query_text: str, elem_text: str) -> float:
+            """Boost elements with exact text matches"""
+            query_lower = query_text.lower()
+            text_lower = elem_text.lower()
+            
+            # Extract key words from query
+            key_words = []
+            for word in query_lower.split():
+                if word not in ['click', 'on', 'the', 'in', 'btn', 'button', 'select', 'top']:
+                    key_words.append(word)
+            
+            # Check for exact matches
+            for word in key_words:
+                if word in text_lower:
+                    # Exact word match gets big boost
+                    if text_lower == word or text_lower == word + 's':  # Handle plural
+                        return 0.5
+                    # Word at start/end gets good boost
+                    if text_lower.startswith(word + ' ') or text_lower.startswith(word + 's '):
+                        return 0.3
+                    # Partial match gets smaller boost
+                    return 0.1
+            return 0.0
 
         ranked: List[Tuple[float, Dict[str, Any], List[str]]] = []
         for base_score, md in all_hits:
             reasons: List[str] = [f"cosine={base_score:.3f}"]
             b = _tag_bias(md.get("tag", "")) + _role_bonus(md.get("role", ""))
+            
+            # Add text matching bonus
+            elem_text = md.get("text", "")
+            text_bonus = _text_match_bonus(query, elem_text)
+            if text_bonus > 0:
+                b += text_bonus
+                reasons.append(f"+text_match={text_bonus:.3f}")
+            
             if b:
                 reasons.append(f"+bias={b:.3f}")
             ranked.append((base_score + b, md, reasons))
