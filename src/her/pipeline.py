@@ -513,8 +513,14 @@ class HybridPipeline:
             # Add penalty for filter buttons when looking for products
             if any(brand in query.lower() for brand in ["iphone", "samsung", "google", "motorola"]):
                 if tag == "button" and "filter" in (md.get("attributes", {}).get("class", "") or "").lower():
-                    b -= 0.5  # Penalty for filter buttons when looking for products
-                    reasons.append(f"-filter_penalty=0.500")
+                    b -= 1.0  # Strong penalty for filter buttons when looking for products
+                    reasons.append(f"-filter_penalty=1.000")
+                elif tag == "button" and "apple" in elem_text.lower() and "iphone" not in elem_text.lower():
+                    b -= 0.8  # Penalty for Apple filter button when looking for iPhone products
+                    reasons.append(f"-apple_filter_penalty=0.800")
+                elif "filter" in (md.get("attributes", {}).get("data-testid", "") or "").lower():
+                    b -= 0.6  # Penalty for filter elements when looking for products
+                    reasons.append(f"-filter_element_penalty=0.600")
             
             if b:
                 reasons.append(f"+bias={b:.3f}")
