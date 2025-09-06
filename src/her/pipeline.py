@@ -159,16 +159,19 @@ class HybridPipeline:
             assert len(vecs) == len(descs)
 
             for arr, el, h in zip(vecs, descs, hashes):
+                # Support both 'attrs' and 'attributes' for compatibility
+                attrs = el.get("attrs") or el.get("attributes") or {}
+                
                 meta = {
                     "hash": h,
                     "xpath": el.get("xpath") or "",
                     "tag": (el.get("tag") or "").lower(),
-                    "role": ((el.get("attrs") or {}).get("role") or "").lower(),
+                    "role": (attrs.get("role") or "").lower(),
                     "visible": bool(el.get("visible")),
                     "frame_url": el.get("frame_url") or (el.get("meta") or {}).get("frame_url") or "",
                     "frame_hash": (el.get("meta") or {}).get("frame_hash", ""),
                     "text": el.get("text") or "",
-                    "attributes": el.get("attrs") or {},
+                    "attributes": attrs,  # Use the unified attributes
                 }
                 idx = store.add_vector(arr.astype(np.float32).tolist(), meta)
                 frame_meta.append(meta)
@@ -205,16 +208,25 @@ class HybridPipeline:
         frame_hash: Optional[str] = None,
         label_key: Optional[str] = None,
     ) -> Dict[str, Any]:
+        print(f"\n🔍 STEP 1: MiniLM Text Search")
+        print(f"Query: '{query}'")
+        print(f"Total elements available: {len(elements)}")
+        
         if not isinstance(elements, list):
             raise ValueError("elements must be a list")
         if len(elements) == 0:
+            print("❌ No elements provided")
             return {"results": [], "strategy": "hybrid-delta", "confidence": 0.0}
 
         E, meta = self._prepare_elements(elements)
         if E.size == 0:
+            print("❌ No elements after preparation")
             return {"results": [], "strategy": "hybrid-delta", "confidence": 0.0}
 
+        print(f"✅ Prepared {E.shape[0]} elements for search")
+        
         q = self.embed_query(query)
+        print(f"✅ Query embedded, vector shape: {q.shape}")
 
         promo_top: Optional[Dict[str, Any]] = None
         if page_sig and frame_hash and label_key:
@@ -236,7 +248,14 @@ class HybridPipeline:
                 score = _cos(q, vec)
                 all_hits.append((score, md))
 
+        print(f"✅ Found {len(all_hits)} candidates from cosine similarity")
+        print(f"Top 5 candidates from MiniLM:")
+        for i, (score, meta) in enumerate(sorted(all_hits, key=lambda x: x[0], reverse=True)[:5]):
+            print(f"  {i+1}. Score: {score:.3f} | Tag: {meta.get('tag', '')} | Text: '{meta.get('text', '')[:50]}...' | XPath: {meta.get('xpath', '')[:80]}...")
+            print(f"      Attributes: {meta.get('attributes', {})}")
+
         if not all_hits and not promo_top:
+            print("❌ No hits found")
             return {"results": [], "strategy": "hybrid-delta", "confidence": 0.0}
 
         def _tag_bias(tag: str) -> float:
@@ -342,6 +361,14 @@ class HybridPipeline:
         ranked.sort(key=lambda t: t[0], reverse=True)
         ranked = ranked[:top_k]
 
+        print(f"\n🎯 STEP 2: MarkupLM Final Scoring")
+        print(f"Top {min(3, len(ranked))} final candidates after MarkupLM scoring:")
+        for i, (score, md, reasons) in enumerate(ranked[:3]):
+            print(f"  {i+1}. Final Score: {score:.3f} | Tag: {md.get('tag', '')} | Text: '{md.get('text', '')[:50]}...'")
+            print(f"      XPath: {md.get('xpath', '')[:100]}...")
+            print(f"      Attributes: {md.get('attributes', {})}")
+            print(f"      Reasons: {reasons}")
+
         results = []
         # Only add promotion if it's actually a good match
         if promo_top is not None:
@@ -349,9 +376,10 @@ class HybridPipeline:
             promo_meta = promo_top.get("meta", {})
             if _clickable_bonus(promo_meta) > 0 or promo_meta.get("tag", "").lower() in ("button", "a", "input", "select"):
                 results.append(promo_top)
+                print(f"✅ Using promoted element: {promo_top.get('selector', '')}")
             else:
                 # If promotion is not clickable, don't use it
-                pass
+                print(f"❌ Promoted element not clickable, skipping")
 
         for score, md, reasons in ranked:
             sel = md.get("xpath") or ""
