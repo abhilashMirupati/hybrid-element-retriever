@@ -233,6 +233,14 @@ class HybridPipeline:
             print(f"      XPath: {el.get('xpath', '')[:100]}...")
             print(f"      Attrs: {el.get('attrs', {})}")
         
+        # Debug: Check specifically for the Phones link
+        phones_links = [el for el in elements if el.get('tag', '').lower() == 'a' and 'phones' in el.get('text', '').lower()]
+        print(f"🔍 A tags with 'phones' text: {len(phones_links)}")
+        for i, el in enumerate(phones_links):
+            print(f"  {i+1}. Text: '{el.get('text', '')}' | Href: {el.get('attrs', {}).get('href', '')}")
+            print(f"      XPath: {el.get('xpath', '')}")
+            print(f"      Attrs: {el.get('attrs', {})}")
+        
         q = self.embed_query(query)
         print(f"✅ Query embedded, vector shape: {q.shape}")
 
