@@ -46,6 +46,19 @@ class Runner:
         self._browser = None
         self._playwright = None
 
+    def _normalize_url(self, url: str) -> str:
+        from urllib.parse import urlparse
+        try:
+            u = urlparse(url or "")
+            path = u.path.rstrip("/")
+            parts = [p for p in path.split("/") if p]
+            if parts and len(parts[0]) in (2, 5) and parts[0].isalpha():
+                parts = parts[1:]
+            norm = f"{u.scheme}://{u.netloc}/" + "/".join(parts)
+            return norm.rstrip("/")
+        except Exception:
+            return (url or "").split("?")[0].rstrip("/")
+
     def _ensure_browser(self):
         if not _PLAYWRIGHT:
             return None
@@ -193,7 +206,22 @@ class Runner:
         if _DEBUG_CANDS:
             top3 = [f"{c['score']:.3f}:{c['selector']}" for c in candidates[:3]]
             print(f"[HER DEBUG] candidates: {' | '.join(top3)}")
-        best = candidates[:1]
+        # Prefer the first candidate that actually exists in the current DOM
+        best: List[Dict[str, Any]] = []
+        for cand in candidates:
+            sel = cand.get("selector", "")
+            if not sel:
+                continue
+            try:
+                if self._page:
+                    handle = self._page.locator(f"xpath={sel}").first
+                    if handle.count() > 0 and handle.is_visible():
+                        best = [cand]
+                        break
+            except Exception:
+                continue
+        if not best and candidates:
+            best = [candidates[0]]
         if not best:
             return {"selector": "", "confidence": 0.0, "reason": "no-results", "candidates": candidates, "promo": {"page_sig": ps, "frame_hash": frame_hash, "label_key": label_key}}
         return {
@@ -267,8 +295,18 @@ class Runner:
                 # Fallback: click element (menu/option)
                 ex.click(selector, **kw)
                 return
-            ex.click(selector, **kw)
-            return
+            try:
+                ex.click(selector, **kw)
+                return
+            except Exception:
+                # Fallback to raw Playwright with force click if strict executor failed
+                try:
+                    h = self._page.locator(f"xpath={selector}").first
+                    h.scroll_into_view_if_needed(timeout=2000)
+                    h.click(timeout=5000, force=True)
+                    return
+                except Exception:
+                    raise
         # Fallback raw Playwright and navigation/waits
         if action == "type" and value is not None:
             self._page.fill(f"xpath={selector}", value)
@@ -324,7 +362,9 @@ class Runner:
                 current = self._page.url
             except Exception:
                 return False
-            return current.split("?")[0].rstrip("/") == expected.rstrip("/")
+            current = self._normalize_url(current)
+            exp_norm = self._normalize_url(expected)
+            return current == exp_norm
         if low.startswith("validate ") and " is visible" in low:
             target = step[9:].rsplit(" is visible", 1)[0].strip()
             shot = self._snapshot()
@@ -392,21 +432,39 @@ class Runner:
                     selector = resolved.get("selector", "")
                     conf = float(resolved.get("confidence", 0.0))
                     candidates = resolved.get("candidates", [])
+
+                    # Prepare a try-order: best first, then remaining candidate selectors
+                    try_order = []
                     if selector:
-                        try:
-                            self._do_action(intent.action, selector, intent.args, resolved.get("promo", {}))
-                            last_err = None
-                            break
-                        except Exception as e1:
-                            last_err = str(e1)
-                            self._dismiss_overlays()
-                            time.sleep(0.25)
-                            continue
-                    else:
+                        try_order.append(selector)
+                    try_order.extend([c.get("selector", "") for c in candidates if c.get("selector")])
+                    # Deduplicate while preserving order
+                    seen_sels = set()
+                    try_order = [s for s in try_order if not (s in seen_sels or seen_sels.add(s))]
+
+                    if not try_order:
                         # No selector; try dismiss overlays, small wait, and retry
                         self._dismiss_overlays()
                         time.sleep(0.25)
                         continue
+
+                    success = False
+                    for sel_try in try_order[:5]:  # limit to top-5 attempts per snapshot
+                        try:
+                            self._do_action(intent.action, sel_try, intent.args, resolved.get("promo", {}))
+                            selector = sel_try
+                            last_err = None
+                            success = True
+                            break
+                        except Exception as e1:
+                            last_err = str(e1)
+                            # Try next candidate after small remediation
+                            self._dismiss_overlays()
+                            self._scroll_into_view(sel_try)
+                            time.sleep(0.25)
+                            continue
+                    if success:
+                        break
                 ok = last_err is None
                 info: Dict[str, Any] = {
                     "candidates": candidates,
