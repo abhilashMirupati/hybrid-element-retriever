@@ -367,9 +367,9 @@ class HybridPipeline:
             tag = (tag or "").lower()
             if tag == "input":  return 0.08  # Highest priority for inputs
             if tag == "textarea": return 0.07  # High priority for textareas
-            if tag == "button": return 0.05  # Increased for buttons
-            if tag == "a":      return 0.04  # Increased for links
-            if tag == "select": return 0.03  # Added for selects
+            if tag == "a":      return 0.06  # High priority for links (navigation)
+            if tag == "button": return 0.05  # High priority for buttons
+            if tag == "select": return 0.03  # Medium priority for selects
             return 0.0
 
         def _role_bonus(role: str) -> float:
@@ -382,32 +382,36 @@ class HybridPipeline:
             """Give bonus to elements that are likely clickable or interactive"""
             tag = (meta.get("tag") or "").lower()
             attrs = meta.get("attributes", {})
-            
+
+            # Special bonus for links with href (navigation elements)
+            if tag == "a" and attrs.get("href"):
+                return 0.5  # Maximum bonus for navigation links
+
             # Check for clickable indicators
             clickable_indicators = [
                 "onclick", "href", "data-href", "data-link", "data-click",
                 "data-action", "data-testid", "role", "tabindex"
             ]
-            
+
             # If element has clickable attributes, give bonus
             if any(attr in attrs for attr in clickable_indicators):
-                return 0.3  # Increased significantly
-            
+                return 0.3  # High bonus for clickable attributes
+
             # If it's a known interactive tag
             if tag in ("button", "a", "input", "select", "textarea"):
-                return 0.25  # Increased significantly
-                
+                return 0.25  # Good bonus for interactive tags
+
             # If it has a role that suggests interactivity
             role = attrs.get("role", "").lower()
             if role in ("button", "link", "tab", "menuitem", "option", "textbox", "combobox"):
-                return 0.2  # Increased
-                
+                return 0.2  # Medium bonus for interactive roles
+
             # Check for clickable classes
             classes = attrs.get("class", "").lower()
             clickable_classes = ["button", "btn", "link", "clickable", "action", "tile__clickable", "input", "search"]
             if any(cls in classes for cls in clickable_classes):
-                return 0.15
-                
+                return 0.15  # Small bonus for clickable classes
+
             return 0.0
         
         def _text_match_bonus(query_text: str, elem_text: str) -> float:
@@ -424,14 +428,14 @@ class HybridPipeline:
             # Check for exact matches
             for word in key_words:
                 if word in text_lower:
-                    # Exact word match gets big boost
-                    if text_lower == word or text_lower == word + 's':  # Handle plural
-                        return 1.0  # Maximum boost for exact matches
-                    # Word at start/end gets good boost
-                    if text_lower.startswith(word + ' ') or text_lower.startswith(word + 's '):
-                        return 0.8  # High boost for start matches
-                    # Partial match gets smaller boost
-                    return 0.5  # Good boost for partial matches
+                    # Exact word match gets maximum boost
+                    if text_lower.strip() == word or text_lower.strip() == word + 's':
+                        return 2.0  # Maximum boost for exact matches
+                    # Word at start gets high boost
+                    if text_lower.strip().startswith(word) or text_lower.strip().startswith(word + 's'):
+                        return 1.5  # High boost for start matches
+                    # Word in text gets medium boost
+                    return 0.8  # Medium boost for partial matches
             
             return 0.0
 
