@@ -215,7 +215,8 @@ class HybridPipeline:
         q = self.embed_query(query)
 
         promo_top: Optional[Dict[str, Any]] = None
-        if page_sig and frame_hash and label_key:
+        disable_promo = os.getenv("HER_DISABLE_PROMOTION", "0") == "1"
+        if not disable_promo and page_sig and frame_hash and label_key:
             sel = lookup_promotion(self.kv, page_sig=page_sig, frame_hash=frame_hash, label_key=label_key)
             if sel:
                 promo_top = {

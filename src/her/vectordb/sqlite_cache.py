@@ -247,7 +247,7 @@ class SQLiteKV:
         with self._lock, self._connect() as con:
             cur = con.execute(
                 "SELECT selector, success_count, failure_count, updated_at FROM promotions "
-                "WHERE page_sig=? AND frame_hash=? AND label_key=? "
+                "WHERE page_sig=? AND frame_hash=? AND label_key=? AND success_count > 0 "
                 "ORDER BY success_count DESC, failure_count ASC, updated_at DESC LIMIT 1",
                 (page_sig, frame_hash, label_key),
             )
