@@ -458,6 +458,16 @@ class Runner:
                         break
                     continue
                 intent = self.intent.parse(step)
+                
+                # Debug: Print step JSON
+                print(f"\n📋 STEP JSON:")
+                print(f"  Raw Step: '{step}'")
+                print(f"  Action: '{intent.action}'")
+                print(f"  Target: '{intent.target_phrase}'")
+                print(f"  Args: '{intent.args}'")
+                print(f"  Constraints: {intent.constraints}")
+                print(f"  Confidence: {intent.confidence}")
+                
                 attempts = 3
                 selector = ""
                 conf = 0.0

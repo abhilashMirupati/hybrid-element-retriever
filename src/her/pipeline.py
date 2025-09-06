@@ -225,6 +225,14 @@ class HybridPipeline:
 
         print(f"✅ Prepared {E.shape[0]} elements for search")
         
+        # Debug: Check what elements we have with "phones" text
+        phones_in_elements = [el for el in elements if 'phones' in el.get('text', '').lower()]
+        print(f"🔍 Elements with 'phones' text in input: {len(phones_in_elements)}")
+        for i, el in enumerate(phones_in_elements[:3]):
+            print(f"  {i+1}. Tag: {el.get('tag', '')} | Text: '{el.get('text', '')}' | Visible: {el.get('visible', False)}")
+            print(f"      XPath: {el.get('xpath', '')[:100]}...")
+            print(f"      Attrs: {el.get('attrs', {})}")
+        
         q = self.embed_query(query)
         print(f"✅ Query embedded, vector shape: {q.shape}")
 
@@ -253,6 +261,17 @@ class HybridPipeline:
         for i, (score, meta) in enumerate(sorted(all_hits, key=lambda x: x[0], reverse=True)[:5]):
             print(f"  {i+1}. Score: {score:.3f} | Tag: {meta.get('tag', '')} | Text: '{meta.get('text', '')[:50]}...' | XPath: {meta.get('xpath', '')[:80]}...")
             print(f"      Attributes: {meta.get('attributes', {})}")
+        
+        # Debug: Check if we have any elements with "phones" text
+        phones_elements = [(score, meta) for score, meta in all_hits if 'phones' in meta.get('text', '').lower()]
+        if phones_elements:
+            print(f"\n🔍 Found {len(phones_elements)} elements with 'phones' text:")
+            for i, (score, meta) in enumerate(phones_elements[:3]):
+                print(f"  {i+1}. Score: {score:.3f} | Tag: {meta.get('tag', '')} | Text: '{meta.get('text', '')}'")
+                print(f"      XPath: {meta.get('xpath', '')}")
+                print(f"      Attributes: {meta.get('attributes', {})}")
+        else:
+            print(f"\n❌ No elements with 'phones' text found in {len(all_hits)} candidates!")
 
         if not all_hits and not promo_top:
             print("❌ No hits found")
