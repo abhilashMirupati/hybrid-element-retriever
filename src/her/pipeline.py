@@ -180,7 +180,7 @@ class HybridPipeline:
     def embed_query(self, text: str) -> np.ndarray:
         if not isinstance(text, str) or not text.strip():
             raise ValueError("query text must be a non-empty string")
-        q = self.text_embedder.encode(text)
+        q = self.text_embedder.encode_one(text)
         q = np.array(q, dtype=np.float32).reshape(-1)
         if q.shape[0] != self._Q_DIM:
             fix = np.zeros((self._Q_DIM,), dtype=np.float32)

@@ -46,6 +46,19 @@ class Runner:
         self._browser = None
         self._playwright = None
 
+    def _normalize_url(self, url: str) -> str:
+        from urllib.parse import urlparse
+        try:
+            u = urlparse(url or "")
+            path = u.path.rstrip("/")
+            parts = [p for p in path.split("/") if p]
+            if parts and len(parts[0]) in (2, 5) and parts[0].isalpha():
+                parts = parts[1:]
+            norm = f"{u.scheme}://{u.netloc}/" + "/".join(parts)
+            return norm.rstrip("/")
+        except Exception:
+            return (url or "").split("?")[0].rstrip("/")
+
     def _ensure_browser(self):
         if not _PLAYWRIGHT:
             return None
@@ -77,7 +90,7 @@ class Runner:
         self._playwright = None
 
     def _inline_snapshot(self) -> Dict[str, Any]:
-        js = """
+        js = r"""
 () => {
   const collapse = (s) => (s || '').replace(/\s+/g, ' ').trim();
   function isVisible(el) {
@@ -321,10 +334,11 @@ class Runner:
         if low.startswith("validate it landed on ") or low.startswith("validate landed on "):
             expected = step.split(" on ", 1)[1].strip().strip(",")
             try:
-                current = self._page.url
+                current = self._normalize_url(self._page.url)
+                exp_norm = self._normalize_url(expected)
+                return current == exp_norm
             except Exception:
                 return False
-            return current.split("?")[0].rstrip("/") == expected.rstrip("/")
         if low.startswith("validate ") and " is visible" in low:
             target = step[9:].rsplit(" is visible", 1)[0].strip()
             shot = self._snapshot()

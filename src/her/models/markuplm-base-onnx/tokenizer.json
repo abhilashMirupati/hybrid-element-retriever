@@ -1,5 +1,0 @@
-{
-  "offline": true,
-  "reason": "offline-or-missing-tokenizer",
-  "note": "HER embedders will use deterministic hash fallback."
-}
