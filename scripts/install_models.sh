@@ -13,11 +13,7 @@ require_cmd() {
   command -v "$1" >/dev/null 2>&1 || { echo "[HER] ERROR: '$1' not found"; exit 1; }
 }
 require_python_pkg() {
-  python3 - <<PY 2>/dev/null || { echo "[HER] ERROR: Missing Python package '$1'. Run: pip install huggingface_hub transformers onnxruntime optimum"; exit 1; }
-import importlib, sys
-importlib.import_module(sys.argv[1])
-PY
-  "$1"
+  python3 -c "import $1" 2>/dev/null || { echo "[HER] ERROR: Missing Python package '$1'. Run: pip install huggingface_hub transformers onnxruntime optimum"; exit 1; }
 }
 file_size() {
   # cross-platform stat (GNU vs BSD)
