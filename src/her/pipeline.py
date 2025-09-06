@@ -223,28 +223,29 @@ class HybridPipeline:
             print("❌ No elements after preparation")
             return {"results": [], "strategy": "hybrid-delta", "confidence": 0.0}
         
-        # Debug: Check if the Phones link made it through preparation
-        phones_links_prepared = [m for m in meta if m.get('tag', '').lower() == 'a' and 'phones' in m.get('text', '').lower()]
-        print(f"🔍 A tags with 'phones' text after preparation: {len(phones_links_prepared)}")
-        for i, m in enumerate(phones_links_prepared):
+        # Debug: Check if target elements made it through preparation
+        target_word = query.lower().split()[0] if query else "phones"  # Use first word of query as target
+        target_links_prepared = [m for m in meta if m.get('tag', '').lower() == 'a' and target_word in m.get('text', '').lower()]
+        print(f"🔍 A tags with '{target_word}' text after preparation: {len(target_links_prepared)}")
+        for i, m in enumerate(target_links_prepared):
             print(f"  {i+1}. Text: '{m.get('text', '')}' | Href: {m.get('attributes', {}).get('href', '')}")
             print(f"      XPath: {m.get('xpath', '')}")
             print(f"      Attributes: {m.get('attributes', {})}")
 
         print(f"✅ Prepared {E.shape[0]} elements for search")
         
-        # Debug: Check what elements we have with "phones" text
-        phones_in_elements = [el for el in elements if 'phones' in el.get('text', '').lower()]
-        print(f"🔍 Elements with 'phones' text in input: {len(phones_in_elements)}")
-        for i, el in enumerate(phones_in_elements[:3]):
+        # Debug: Check what elements we have with target text
+        target_in_elements = [el for el in elements if target_word in el.get('text', '').lower()]
+        print(f"🔍 Elements with '{target_word}' text in input: {len(target_in_elements)}")
+        for i, el in enumerate(target_in_elements[:3]):
             print(f"  {i+1}. Tag: {el.get('tag', '')} | Text: '{el.get('text', '')}' | Visible: {el.get('visible', False)}")
             print(f"      XPath: {el.get('xpath', '')[:100]}...")
             print(f"      Attrs: {el.get('attrs', {})}")
         
-        # Debug: Check specifically for the Phones link
-        phones_links = [el for el in elements if el.get('tag', '').lower() == 'a' and 'phones' in el.get('text', '').lower()]
-        print(f"🔍 A tags with 'phones' text: {len(phones_links)}")
-        for i, el in enumerate(phones_links):
+        # Debug: Check specifically for target links
+        target_links = [el for el in elements if el.get('tag', '').lower() == 'a' and target_word in el.get('text', '').lower()]
+        print(f"🔍 A tags with '{target_word}' text: {len(target_links)}")
+        for i, el in enumerate(target_links):
             print(f"  {i+1}. Text: '{el.get('text', '')}' | Href: {el.get('attrs', {}).get('href', '')}")
             print(f"      XPath: {el.get('xpath', '')}")
             print(f"      Attrs: {el.get('attrs', {})}")
@@ -274,27 +275,28 @@ class HybridPipeline:
 
         print(f"✅ Found {len(all_hits)} candidates from cosine similarity")
         
-        # Debug: Check ALL elements for phones text to see their actual scores
-        all_elements_with_phones = [(i, meta[i]) for i, m in enumerate(meta) if 'phones' in m.get('text', '').lower()]
-        print(f"\n🔍 ALL elements with 'phones' text and their indices:")
-        for idx, elem_meta in all_elements_with_phones:
+        # Debug: Check ALL elements for target text to see their actual scores
+        target_word = query.lower().split()[0] if query else "phones"  # Use first word of query as target
+        all_elements_with_target = [(i, meta[i]) for i, m in enumerate(meta) if target_word in m.get('text', '').lower()]
+        print(f"\n🔍 ALL elements with '{target_word}' text and their indices:")
+        for idx, elem_meta in all_elements_with_target:
             print(f"  Index {idx}: Tag: {elem_meta.get('tag', '')} | Text: '{elem_meta.get('text', '')}' | XPath: {elem_meta.get('xpath', '')[:80]}...")
         
         # Debug: Check if any of these elements are in the top candidates
-        phones_indices = [i for i, m in enumerate(meta) if 'phones' in m.get('text', '').lower()]
-        print(f"\n🔍 Phones elements indices: {phones_indices}")
+        target_indices = [i for i, m in enumerate(meta) if target_word in m.get('text', '').lower()]
+        print(f"\n🔍 {target_word.title()} elements indices: {target_indices}")
         print(f"🔍 Top candidates indices: {[h[1].get('_index', 'unknown') for h in all_hits]}")
         
-        # Check if any phones elements made it to top candidates
-        phones_in_top = [h for h in all_hits if h[1].get('_index', -1) in phones_indices]
-        print(f"🔍 Phones elements in top candidates: {len(phones_in_top)}")
-        for score, meta in phones_in_top:
+        # Check if any target elements made it to top candidates
+        target_in_top = [h for h in all_hits if h[1].get('_index', -1) in target_indices]
+        print(f"🔍 {target_word.title()} elements in top candidates: {len(target_in_top)}")
+        for score, meta in target_in_top:
             print(f"  Score: {score:.6f} | Tag: {meta.get('tag', '')} | Text: '{meta.get('text', '')}'")
         
         # FALLBACK: If no exact text matches are found, force include them
-        if len(phones_in_top) == 0:
+        if len(target_in_top) == 0:
             print(f"\n🔄 FALLBACK: No exact text matches found, forcing inclusion...")
-            for idx in phones_indices:
+            for idx in target_indices:
                 if idx < len(meta):
                     elem_meta = meta[idx]
                     # Calculate similarity score
@@ -335,27 +337,27 @@ class HybridPipeline:
             print(f"  {i+1}. Score: {score:.3f} | Tag: {meta.get('tag', '')} | Text: '{meta.get('text', '')[:50]}...' | XPath: {meta.get('xpath', '')[:80]}...")
             print(f"      Attributes: {meta.get('attributes', {})}")
         
-        # Debug: Check if we have any elements with "phones" text
-        phones_elements = [(score, meta) for score, meta in all_hits if 'phones' in meta.get('text', '').lower()]
-        if phones_elements:
-            print(f"\n🔍 Found {len(phones_elements)} elements with 'phones' text:")
-            for i, (score, meta) in enumerate(phones_elements[:3]):
+        # Debug: Check if we have any elements with target text
+        target_elements = [(score, meta) for score, meta in all_hits if target_word in meta.get('text', '').lower()]
+        if target_elements:
+            print(f"\n🔍 Found {len(target_elements)} elements with '{target_word}' text:")
+            for i, (score, meta) in enumerate(target_elements[:3]):
                 print(f"  {i+1}. Score: {score:.3f} | Tag: {meta.get('tag', '')} | Text: '{meta.get('text', '')}'")
                 print(f"      XPath: {meta.get('xpath', '')}")
                 print(f"      Attributes: {meta.get('attributes', {})}")
         else:
-            print(f"\n❌ No elements with 'phones' text found in {len(all_hits)} candidates!")
+            print(f"\n❌ No elements with '{target_word}' text found in {len(all_hits)} candidates!")
             
-        # Debug: Check specifically for the Phones A tag
-        phones_a_tags = [(score, meta) for score, meta in all_hits if meta.get('tag', '').lower() == 'a' and 'phones' in meta.get('text', '').lower()]
-        if phones_a_tags:
-            print(f"\n🔍 Found {len(phones_a_tags)} A tags with 'phones' text:")
-            for i, (score, meta) in enumerate(phones_a_tags):
+        # Debug: Check specifically for target A tags
+        target_a_tags = [(score, meta) for score, meta in all_hits if meta.get('tag', '').lower() == 'a' and target_word in meta.get('text', '').lower()]
+        if target_a_tags:
+            print(f"\n🔍 Found {len(target_a_tags)} A tags with '{target_word}' text:")
+            for i, (score, meta) in enumerate(target_a_tags):
                 print(f"  {i+1}. Score: {score:.3f} | Text: '{meta.get('text', '')}' | Href: {meta.get('attributes', {}).get('href', '')}")
                 print(f"      XPath: {meta.get('xpath', '')}")
                 print(f"      Attributes: {meta.get('attributes', {})}")
         else:
-            print(f"\n❌ No A tags with 'phones' text found in {len(all_hits)} candidates!")
+            print(f"\n❌ No A tags with '{target_word}' text found in {len(all_hits)} candidates!")
 
         if not all_hits and not promo_top:
             print("❌ No hits found")
@@ -363,9 +365,10 @@ class HybridPipeline:
 
         def _tag_bias(tag: str) -> float:
             tag = (tag or "").lower()
+            if tag == "input":  return 0.08  # Highest priority for inputs
+            if tag == "textarea": return 0.07  # High priority for textareas
             if tag == "button": return 0.05  # Increased for buttons
             if tag == "a":      return 0.04  # Increased for links
-            if tag == "input":  return 0.03  # Increased for inputs
             if tag == "select": return 0.03  # Added for selects
             return 0.0
 
@@ -376,7 +379,7 @@ class HybridPipeline:
             return 0.0
         
         def _clickable_bonus(meta: Dict[str, Any]) -> float:
-            """Give bonus to elements that are likely clickable"""
+            """Give bonus to elements that are likely clickable or interactive"""
             tag = (meta.get("tag") or "").lower()
             attrs = meta.get("attributes", {})
             
@@ -390,18 +393,18 @@ class HybridPipeline:
             if any(attr in attrs for attr in clickable_indicators):
                 return 0.3  # Increased significantly
             
-            # If it's a known clickable tag
-            if tag in ("button", "a", "input", "select"):
+            # If it's a known interactive tag
+            if tag in ("button", "a", "input", "select", "textarea"):
                 return 0.25  # Increased significantly
                 
             # If it has a role that suggests interactivity
             role = attrs.get("role", "").lower()
-            if role in ("button", "link", "tab", "menuitem", "option"):
+            if role in ("button", "link", "tab", "menuitem", "option", "textbox", "combobox"):
                 return 0.2  # Increased
                 
             # Check for clickable classes
             classes = attrs.get("class", "").lower()
-            clickable_classes = ["button", "btn", "link", "clickable", "action", "tile__clickable"]
+            clickable_classes = ["button", "btn", "link", "clickable", "action", "tile__clickable", "input", "search"]
             if any(cls in classes for cls in clickable_classes):
                 return 0.15
                 
@@ -415,7 +418,7 @@ class HybridPipeline:
             # Extract key words from query
             key_words = []
             for word in query_lower.split():
-                if word not in ['click', 'on', 'the', 'in', 'btn', 'button', 'select', 'top']:
+                if word not in ['click', 'on', 'the', 'in', 'btn', 'button', 'select', 'top', 'type']:
                     key_words.append(word)
             
             # Check for exact matches

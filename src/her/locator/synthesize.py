@@ -7,6 +7,8 @@ def synthesize_xpath(desc: Dict) -> List[Tuple[str, str]]:
     """
     Returns a list of (kind, xpath) in precedence order.
     Precedence: data-testid > data-quick-link > href+text > aria-label > id > role[name] > text exact > text contains
+    
+    Focuses on RELATIVE, ROBUST selectors that work across multiple runs.
     """
     tag = (desc.get("tag") or "*").lower()
     text = " ".join((desc.get("text") or "").split())
@@ -16,7 +18,7 @@ def synthesize_xpath(desc: Dict) -> List[Tuple[str, str]]:
     def add(kind: str, xp: str):
         out.append((kind, xp))
 
-    # Highest priority: data-testid
+    # Highest priority: data-testid (most stable)
     dtid = attrs.get("data-testid")
     if dtid:
         add("data-testid", f'//*[@data-testid="{dtid}"]')
@@ -26,27 +28,35 @@ def synthesize_xpath(desc: Dict) -> List[Tuple[str, str]]:
     if data_quick_link and text:
         add("data-quick-link", f'//*[@data-quick-link="{data_quick_link}" and normalize-space()="{text}"]')
 
-    # High priority: href+text (for links)
+    # High priority: href+text (for links) - more robust than absolute paths
     href = attrs.get("href")
     if href and text and tag == "a":
         add("href+text", f'//a[@href="{href}" and normalize-space()="{text}"]')
 
-    # Medium priority: aria-label
+    # Medium priority: aria-label (accessibility-friendly)
     aria = attrs.get("aria-label")
     if aria:
         add("aria-label", f'//*[@aria-label="{aria}"]')
 
-    # Medium priority: id
+    # Medium priority: id (stable if present)
     elid = attrs.get("id")
     if elid:
         add("id", f'//*[@id="{elid}"]')
 
-    # Lower priority: role+text
+    # Medium priority: class + text (more robust than absolute paths)
+    class_name = attrs.get("class")
+    if class_name and text and tag:
+        # Use first meaningful class name
+        first_class = class_name.split()[0] if class_name else ""
+        if first_class:
+            add("class+text", f'//{tag}[contains(@class, "{first_class}") and normalize-space()="{text}"]')
+
+    # Lower priority: role+text (accessibility-friendly)
     role = attrs.get("role")
     if role and text:
         add("role+name", f'//*[@role="{role}" and (normalize-space(@aria-label)="{text}" or normalize-space()="{text}")]')
 
-    # Fallback: text-based selectors
+    # Fallback: text-based selectors (most fragile but sometimes necessary)
     if text and tag:
         add("text-exact", f'//{tag}[normalize-space()="{text}"]')
     if text:
