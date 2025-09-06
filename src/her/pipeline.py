@@ -167,6 +167,8 @@ class HybridPipeline:
                     "visible": bool(el.get("visible")),
                     "frame_url": el.get("frame_url") or (el.get("meta") or {}).get("frame_url") or "",
                     "frame_hash": (el.get("meta") or {}).get("frame_hash", ""),
+                    "text": el.get("text") or "",
+                    "attributes": el.get("attrs") or {},
                 }
                 idx = store.add_vector(arr.astype(np.float32).tolist(), meta)
                 frame_meta.append(meta)
@@ -266,18 +268,12 @@ class HybridPipeline:
                 if word in text_lower:
                     # Exact word match gets big boost
                     if text_lower == word or text_lower == word + 's':  # Handle plural
-                        return 0.8  # Increased from 0.5
+                        return 1.0  # Maximum boost for exact matches
                     # Word at start/end gets good boost
                     if text_lower.startswith(word + ' ') or text_lower.startswith(word + 's '):
-                        return 0.6  # Increased from 0.3
+                        return 0.8  # High boost for start matches
                     # Partial match gets smaller boost
-                    return 0.3  # Increased from 0.1
-            
-            # Special case for "phones" - give extra boost for navigation elements
-            if 'phones' in query_lower and 'phones' in text_lower:
-                # Check if it's likely a navigation element
-                if any(attr in elem_text for attr in ['href', 'data-', 'class']):
-                    return 0.7
+                    return 0.5  # Good boost for partial matches
             
             return 0.0
 
