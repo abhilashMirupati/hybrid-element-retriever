@@ -1,9 +1,53 @@
-# Bridge module: rank fusion (markup + heuristics)
+"""Heuristic rank fusion for candidates given an intent.
+
+Avoid heavy imports; combine any existing candidate score with lightweight
+signals like tag/role priority and token overlap with the intent target.
+"""
+
 from typing import Any, Dict, List
 
 
+def _tokenize(text: str) -> List[str]:
+    return [t for t in (text or "").lower().split() if t]
+
+
+def _token_overlap(a: str, b: str) -> float:
+    ta, tb = set(_tokenize(a)), set(_tokenize(b))
+    if not ta or not tb:
+        return 0.0
+    return len(ta & tb) / float(len(ta | tb))
+
+
+def _tag_bias(tag: str) -> float:
+    t = (tag or "").lower()
+    if t == "button":
+        return 0.05
+    if t == "a":
+        return 0.03
+    if t == "input":
+        return 0.02
+    return 0.0
+
+
+def _role_bonus(role: str) -> float:
+    r = (role or "").lower()
+    if r in ("button", "link", "tab", "menuitem"):
+        return 0.02
+    return 0.0
+
+
 def fuse(candidates: List[Dict[str, Any]], intent: Dict[str, Any]) -> List[Dict[str, Any]]:
-    # Import your real rerank here (e.g., markuplm + heuristics)
-    from ..embeddings.element_embedder import score_with_markup  # example
-    scored = [dict(c, score=score_with_markup(c, intent)) for c in candidates]
-    return sorted(scored, key=lambda x: x["score"], reverse=True)
+    target = str(intent.get("target") or intent.get("target_phrase") or "")
+    scored: List[Dict[str, Any]] = []
+    for c in candidates:
+        base = float(c.get("score", 0.0))
+        desc = c.get("descriptor") or c
+        tag = (desc.get("tag") or desc.get("tagName") or "")
+        role = (desc.get("role") or (desc.get("attrs") or {}).get("role") or "")
+        text = str(desc.get("text") or "")
+        score = base + _tag_bias(tag) + _role_bonus(role) + 0.1 * _token_overlap(text, target)
+        out = dict(c)
+        out["score"] = score
+        scored.append(out)
+    scored.sort(key=lambda x: x["score"], reverse=True)
+    return scored
