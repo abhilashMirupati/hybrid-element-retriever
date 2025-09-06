@@ -266,16 +266,22 @@ class HybridPipeline:
             
             # If element has clickable attributes, give bonus
             if any(attr in attrs for attr in clickable_indicators):
-                return 0.1
+                return 0.3  # Increased significantly
             
             # If it's a known clickable tag
             if tag in ("button", "a", "input", "select"):
-                return 0.05
+                return 0.25  # Increased significantly
                 
             # If it has a role that suggests interactivity
             role = attrs.get("role", "").lower()
             if role in ("button", "link", "tab", "menuitem", "option"):
-                return 0.08
+                return 0.2  # Increased
+                
+            # Check for clickable classes
+            classes = attrs.get("class", "").lower()
+            clickable_classes = ["button", "btn", "link", "clickable", "action", "tile__clickable"]
+            if any(cls in classes for cls in clickable_classes):
+                return 0.15
                 
             return 0.0
         
@@ -321,6 +327,13 @@ class HybridPipeline:
             if clickable_bonus > 0:
                 b += clickable_bonus
                 reasons.append(f"+clickable={clickable_bonus:.3f}")
+            
+            # Add penalty for non-clickable containers with text
+            tag = (md.get("tag") or "").lower()
+            if tag in ("div", "span", "p") and elem_text and clickable_bonus == 0:
+                # This is likely a text container, not the actual clickable element
+                b -= 0.2
+                reasons.append(f"-container_penalty=0.200")
             
             if b:
                 reasons.append(f"+bias={b:.3f}")

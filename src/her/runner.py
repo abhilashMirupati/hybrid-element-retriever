@@ -423,6 +423,18 @@ class Runner:
                 except Exception:
                     return False
             return False
+        if "validate it landed on" in low:
+            # Validate URL navigation
+            parts = step.lower().split("validate it landed on", 1)
+            if len(parts) > 1:
+                expected_url = parts[1].strip().strip('"').strip("'")
+                try:
+                    current_url = self._page.url
+                    # Check if current URL contains the expected URL or vice versa
+                    return expected_url in current_url or current_url in expected_url
+                except Exception:
+                    return False
+            return False
         return False
 
     def run(self, steps: List[str]) -> List[StepResult]:
