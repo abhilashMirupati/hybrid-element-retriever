@@ -22,6 +22,10 @@ def test_verizon_flow():
         "Select Apple filter",
         "Select Apple iPhone 16 Pro",
         "Validate it landed on https://www.verizon.com/smartphones/apple-iphone-16-pro/",
+        "Select Desert Titanium",
+        "Select 512 GB",
+        "Click Add to Cart",
+        "Validate 'Added to your cart'",
     ]
 
     run_steps(steps, headless=True)
