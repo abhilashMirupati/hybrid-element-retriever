@@ -241,15 +241,42 @@ class HybridPipeline:
 
         def _tag_bias(tag: str) -> float:
             tag = (tag or "").lower()
-            if tag == "button": return 0.02
-            if tag == "a":      return 0.015
-            if tag == "input":  return 0.010
+            if tag == "button": return 0.05  # Increased for buttons
+            if tag == "a":      return 0.04  # Increased for links
+            if tag == "input":  return 0.03  # Increased for inputs
+            if tag == "select": return 0.03  # Added for selects
             return 0.0
 
         def _role_bonus(role: str) -> float:
             role = (role or "").lower()
             if role in ("button", "link", "tab", "menuitem"):
-                return 0.01
+                return 0.02  # Increased
+            return 0.0
+        
+        def _clickable_bonus(meta: Dict[str, Any]) -> float:
+            """Give bonus to elements that are likely clickable"""
+            tag = (meta.get("tag") or "").lower()
+            attrs = meta.get("attributes", {})
+            
+            # Check for clickable indicators
+            clickable_indicators = [
+                "onclick", "href", "data-href", "data-link", "data-click",
+                "data-action", "data-testid", "role", "tabindex"
+            ]
+            
+            # If element has clickable attributes, give bonus
+            if any(attr in attrs for attr in clickable_indicators):
+                return 0.1
+            
+            # If it's a known clickable tag
+            if tag in ("button", "a", "input", "select"):
+                return 0.05
+                
+            # If it has a role that suggests interactivity
+            role = attrs.get("role", "").lower()
+            if role in ("button", "link", "tab", "menuitem", "option"):
+                return 0.08
+                
             return 0.0
         
         def _text_match_bonus(query_text: str, elem_text: str) -> float:
@@ -289,6 +316,12 @@ class HybridPipeline:
                 b += text_bonus
                 reasons.append(f"+text_match={text_bonus:.3f}")
             
+            # Add clickable bonus
+            clickable_bonus = _clickable_bonus(md)
+            if clickable_bonus > 0:
+                b += clickable_bonus
+                reasons.append(f"+clickable={clickable_bonus:.3f}")
+            
             if b:
                 reasons.append(f"+bias={b:.3f}")
             ranked.append((base_score + b, md, reasons))
@@ -297,8 +330,15 @@ class HybridPipeline:
         ranked = ranked[:top_k]
 
         results = []
+        # Only add promotion if it's actually a good match
         if promo_top is not None:
-            results.append(promo_top)
+            # Check if promoted element is clickable
+            promo_meta = promo_top.get("meta", {})
+            if _clickable_bonus(promo_meta) > 0 or promo_meta.get("tag", "").lower() in ("button", "a", "input", "select"):
+                results.append(promo_top)
+            else:
+                # If promotion is not clickable, don't use it
+                pass
 
         for score, md, reasons in ranked:
             sel = md.get("xpath") or ""
