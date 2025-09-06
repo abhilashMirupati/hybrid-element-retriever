@@ -38,9 +38,11 @@ def synthesize_xpath(desc: Dict) -> List[Tuple[str, str]]:
     if aria:
         add("aria-label", f'//*[@aria-label="{aria}"]')
 
-    # Medium priority: id (stable if present)
+    # Medium priority: id + text (more specific than just id)
     elid = attrs.get("id")
-    if elid:
+    if elid and text:
+        add("id+text", f'//*[@id="{elid}" and normalize-space()="{text}"]')
+    elif elid:
         add("id", f'//*[@id="{elid}"]')
 
     # Medium priority: class + text (more robust than absolute paths)
@@ -50,6 +52,12 @@ def synthesize_xpath(desc: Dict) -> List[Tuple[str, str]]:
         first_class = class_name.split()[0] if class_name else ""
         if first_class:
             add("class+text", f'//{tag}[contains(@class, "{first_class}") and normalize-space()="{text}"]')
+    
+    # High priority: id + class + text (most specific for buttons/filters)
+    if elid and class_name and text and tag:
+        first_class = class_name.split()[0] if class_name else ""
+        if first_class:
+            add("id+class+text", f'//{tag}[@id="{elid}" and contains(@class, "{first_class}") and normalize-space()="{text}"]')
 
     # Lower priority: role+text (accessibility-friendly)
     role = attrs.get("role")

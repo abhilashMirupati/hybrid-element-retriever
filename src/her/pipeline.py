@@ -303,10 +303,16 @@ class HybridPipeline:
                     if idx < len(store.vectors):
                         elem_vec = np.array(store.vectors[idx], dtype=np.float32)
                         score = _cos(q, elem_vec)
-                        # Force include with high score
-                        forced_score = max(score, 0.1)  # Ensure it's above threshold
+                        
+                        # Give higher priority to product tiles
+                        forced_score = max(score, 0.1)  # Base score
+                        if "product-tile" in elem_meta.get("attributes", {}).get("data-testid", ""):
+                            forced_score = max(forced_score, 0.5)  # High priority for product tiles
+                        elif elem_meta.get("tag", "").lower() == "button" and "filter" in elem_meta.get("attributes", {}).get("class", "").lower():
+                            forced_score = max(forced_score, 0.05)  # Lower priority for filter buttons
+                        
                         all_hits.append((forced_score, elem_meta))
-                        print(f"  ✅ Forced inclusion: Index {idx} | Score: {forced_score:.6f} | Tag: {elem_meta.get('tag', '')} | Text: '{elem_meta.get('text', '')}'")
+                        print(f"  ✅ Forced inclusion: Index {idx} | Score: {forced_score:.6f} | Tag: {elem_meta.get('tag', '')} | Text: '{elem_meta.get('text', '')[:50]}...'")
         
         # Debug: Check the actual similarity score for the Phones A tag (index 111)
         phones_a_tag_index = 111  # We know from the debug output
@@ -438,6 +444,40 @@ class HybridPipeline:
                     return 0.8  # Medium boost for partial matches
             
             return 0.0
+        
+        def _intent_bonus(query_text: str, meta: Dict[str, Any]) -> float:
+            """Give bonus based on user intent (filter, select, click, etc.)"""
+            query_lower = query_text.lower()
+            tag = (meta.get("tag") or "").lower()
+            attrs = meta.get("attributes", {})
+            text = (meta.get("text") or "").lower()
+            
+            # For product selection (iPhone, Samsung, etc.), prioritize product tiles
+            if any(brand in query_lower for brand in ["iphone", "samsung", "google", "motorola"]):
+                if "product-tile" in attrs.get("data-testid", ""):
+                    return 0.5  # Maximum bonus for product tiles
+                if "tile" in attrs.get("class", "").lower():
+                    return 0.4  # High bonus for tile elements
+                if tag == "div" and any(word in text for word in ["iphone", "galaxy", "pixel"]):
+                    return 0.3  # Medium bonus for product containers
+            
+            # For "select" or "filter" intents, prioritize buttons and selectable elements
+            if "select" in query_lower or "filter" in query_lower:
+                if tag == "button":
+                    return 0.3  # High bonus for buttons in filter context
+                if attrs.get("role") in ["button", "option", "menuitem"]:
+                    return 0.2  # Medium bonus for role-based buttons
+                if "filter" in attrs.get("class", "").lower():
+                    return 0.4  # Maximum bonus for filter-specific elements
+            
+            # For "click" intents, prioritize interactive elements
+            if "click" in query_lower:
+                if tag in ["button", "a"]:
+                    return 0.2  # Good bonus for clickable elements
+                if attrs.get("href") or attrs.get("onclick"):
+                    return 0.3  # High bonus for elements with click handlers
+            
+            return 0.0
 
         ranked: List[Tuple[float, Dict[str, Any], List[str]]] = []
         for base_score, md in all_hits:
@@ -457,12 +497,24 @@ class HybridPipeline:
                 b += clickable_bonus
                 reasons.append(f"+clickable={clickable_bonus:.3f}")
             
+            # Add intent bonus
+            intent_bonus = _intent_bonus(query, md)
+            if intent_bonus > 0:
+                b += intent_bonus
+                reasons.append(f"+intent={intent_bonus:.3f}")
+            
             # Add penalty for non-clickable containers with text
             tag = (md.get("tag") or "").lower()
             if tag in ("div", "span", "p") and elem_text and clickable_bonus == 0:
                 # This is likely a text container, not the actual clickable element
                 b -= 0.2
                 reasons.append(f"-container_penalty=0.200")
+            
+            # Add penalty for filter buttons when looking for products
+            if any(brand in query.lower() for brand in ["iphone", "samsung", "google", "motorola"]):
+                if tag == "button" and "filter" in (md.get("attributes", {}).get("class", "") or "").lower():
+                    b -= 0.5  # Penalty for filter buttons when looking for products
+                    reasons.append(f"-filter_penalty=0.500")
             
             if b:
                 reasons.append(f"+bias={b:.3f}")
