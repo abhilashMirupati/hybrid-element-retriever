@@ -114,15 +114,69 @@ class Runner:
     while (s) { if (s.nodeName === el.nodeName) i++; s = s.previousElementSibling; }
     return i;
   }
-  function absoluteXPath(el) {
+  function generateRelativeXPath(el) {
     if (!el || el.nodeType !== 1) return '';
-    const parts = [];
-    while (el && el.nodeType === 1 && el !== document) {
-      const ix = siblingIndex(el);
-      parts.unshift(el.tagName.toUpperCase() + '[' + ix + ']');
-      el = el.parentElement;
+    
+    // Try to generate a relative XPath based on stable attributes
+    const tag = el.tagName.toLowerCase();
+    const attrs = {};
+    for (const a of el.attributes) {
+      attrs[a.name] = a.value;
     }
-    return '/' + parts.join('/');
+    
+    // Priority 1: data-testid
+    if (attrs['data-testid']) {
+      return `//*[@data-testid="${attrs['data-testid']}"]`;
+    }
+    
+    // Priority 2: id
+    if (attrs['id']) {
+      return `//*[@id="${attrs['id']}"]`;
+    }
+    
+    // Priority 3: aria-label
+    if (attrs['aria-label']) {
+      return `//*[@aria-label="${attrs['aria-label']}"]`;
+    }
+    
+    // Priority 4: href + text for links
+    if (tag === 'a' && attrs['href']) {
+      const text = (el.innerText || '').trim();
+      if (text) {
+        return `//a[@href="${attrs['href']}" and normalize-space()="${text}"]`;
+      }
+      return `//a[@href="${attrs['href']}"]`;
+    }
+    
+    // Priority 5: role + text
+    if (attrs['role'] && attrs['role'] !== 'presentation') {
+      const text = (el.innerText || '').trim();
+      if (text) {
+        return `//*[@role="${attrs['role']}" and normalize-space()="${text}"]`;
+      }
+      return `//*[@role="${attrs['role']}"]`;
+    }
+    
+    // Priority 6: class + text
+    if (attrs['class']) {
+      const text = (el.innerText || '').trim();
+      const firstClass = attrs['class'].split(' ')[0];
+      if (text && firstClass) {
+        return `//${tag}[contains(@class, "${firstClass}") and normalize-space()="${text}"]`;
+      }
+      if (firstClass) {
+        return `//${tag}[contains(@class, "${firstClass}")]`;
+      }
+    }
+    
+    // Priority 7: text only
+    const text = (el.innerText || '').trim();
+    if (text) {
+      return `//${tag}[normalize-space()="${text}"]`;
+    }
+    
+    // Fallback: tag only
+    return `//${tag}`;
   }
   function collectAttributes(el) {
     const result = {};
@@ -148,7 +202,7 @@ class Runner:
     const rect = el.getBoundingClientRect();
     out.push({
       text, tag, role: role || null, attrs,
-      xpath: absoluteXPath(el),
+      xpath: generateRelativeXPath(el),
       bbox: { x: Math.max(0, Math.round(rect.x)), y: Math.max(0, Math.round(rect.y)), width: Math.max(0, Math.round(rect.width)), height: Math.max(0, Math.round(rect.height)), w: Math.max(0, Math.round(rect.width)), h: Math.max(0, Math.round(rect.height)) },
       visible: true
     });
