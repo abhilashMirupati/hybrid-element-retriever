@@ -79,14 +79,22 @@ logs/
 models/
 checkpoints/
 
+# Local model artifacts
+src/her/models/**
+.her_cache/**
+
 # Bytecode and caches
 __pycache__/
 *.py[cod]
+*.pyc
 
 # Embedding & promotion databases
 .her_cache/
 **/embeddings.db
 **/promotion.db
+
+# Playwright cache
+playwright/.cache/**
 
 # Logs and dumps
 *.log

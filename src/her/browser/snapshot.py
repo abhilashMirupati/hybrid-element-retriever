@@ -130,8 +130,8 @@ class PageSnapshotter:
 
     async def _collect_from_frame(self, frame, options_dict: Dict[str, Any], depth: int, max_depth: int) -> List[Dict[str, Any]]:
         # Evaluate the DOM in this frame (includes shadow DOM traversal when enabled).
-        js = """(opts) => {
-  const collapse = (s) => (s || '').replace(/\\s+/g, ' ').trim();
+        js = r"""(opts) => {
+  const collapse = (s) => (s || '').replace(/\s+/g, ' ').trim();
 
   function isElementVisible(el, includeOffscreen, minArea) {
     const style = window.getComputedStyle(el);
@@ -375,6 +375,38 @@ class PageSnapshotter:
 
                 # De-duplicate
                 items = self._dedupe(items)
+
+                # Optional AX enrichment via CDP backend ids
+                try:
+                    client = await page.context.new_cdp_session(page)
+                    await client.send("DOM.enable")
+                    await client.send("Accessibility.enable")
+                    ax = await client.send("Accessibility.getFullAXTree", {})
+                    ax_nodes = ax.get("nodes", []) if isinstance(ax, dict) else (ax if isinstance(ax, list) else [])
+                    ax_by_backend: Dict[int, Dict[str, Any]] = {}
+                    for n in ax_nodes:
+                        bid = n.get("backendDOMNodeId")
+                        if isinstance(bid, int):
+                            ax_by_backend[bid] = {"role": n.get("role"), "name": n.get("name"), "state": n.get("state", {})}
+                    for it in items:
+                        xp = it.get("xpath")
+                        if not xp:
+                            continue
+                        try:
+                            node = await client.send("DOM.pushNodeByPathToFrontend", {"path": xp})
+                            node_id = node.get("nodeId")
+                            if node_id:
+                                desc = await client.send("DOM.describeNode", {"nodeId": node_id})
+                                backend = (desc.get("node") or {}).get("backendNodeId")
+                                if isinstance(backend, int) and backend in ax_by_backend:
+                                    axi = ax_by_backend[backend]
+                                    it["ax_role"] = axi.get("role")
+                                    it["ax_name"] = axi.get("name")
+                                    it["ax_state"] = axi.get("state")
+                        except Exception:
+                            continue
+                except Exception:
+                    pass
 
                 # Page-level DOM hash from per-frame sketches
                 try:

@@ -66,8 +66,50 @@ class Executor:
         h = self._query_element(selector)
         ok = False
         try:
-            h.first.wait_for(state="visible", timeout=self.action_timeout_ms)
-            h.first.click(timeout=self.action_timeout_ms, force=False)
+            # First try to scroll element into view
+            try:
+                h.first.scroll_into_view_if_needed(timeout=2000)
+            except Exception:
+                pass
+            
+            # Try to dismiss any overlays first
+            try:
+                # Common cookie/popup dismiss buttons
+                for dismiss_sel in ['button:has-text("Accept")', 'button:has-text("Close")', 
+                                   'button[aria-label="Close"]', '#onetrust-accept-btn-handler']:
+                    try:
+                        dismiss = self.page.locator(dismiss_sel).first
+                        if dismiss.is_visible(timeout=100):
+                            dismiss.click(timeout=500)
+                            time.sleep(0.5)
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+            
+            # Now try the actual click with retries
+            clicked = False
+            for attempt in range(3):
+                try:
+                    if attempt == 0:
+                        # First attempt: wait for visible and click normally
+                        h.first.wait_for(state="visible", timeout=self.action_timeout_ms // 2)
+                        h.first.click(timeout=self.action_timeout_ms // 2, force=False)
+                    elif attempt == 1:
+                        # Second attempt: try with JavaScript click
+                        self.page.evaluate("(el) => el.click()", h.first.element_handle())
+                    else:
+                        # Third attempt: force click
+                        h.first.click(force=True, timeout=self.action_timeout_ms // 2)
+                    clicked = True
+                    break
+                except Exception:
+                    if attempt < 2:
+                        time.sleep(0.5)
+                    continue
+            
+            if not clicked:
+                raise TimeoutError(f"Could not click element after 3 attempts")
             ok = True
         except PWTimeoutError as e:
             self._record(False, page_sig=page_sig, frame_hash=frame_hash, label_key=label_key, selector=selector)

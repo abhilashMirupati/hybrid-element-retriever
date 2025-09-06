@@ -20,8 +20,8 @@ def test_verizon_flow():
         "Open https://www.verizon.com/",
         "Click on Phones btn in top",
         "Select Apple filter",
-        "Select Apple iPhone 16e",
-        "Validate it landed on https://www.verizon.com/smartphones/apple-iphone-16e/",
+        "Select Apple iPhone 16 Pro",
+        "Validate it landed on https://www.verizon.com/smartphones/apple-iphone-16-pro/",
     ]
 
     run_steps(steps, headless=True)
