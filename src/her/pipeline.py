@@ -235,6 +235,16 @@ class HybridPipeline:
         assert q.shape[0] == self._Q_DIM, f"Query should be {self._Q_DIM}d, got {q.shape[0]}d"
         return _l2norm(q)
 
+    def _embed_query_markup(self, text: str) -> np.ndarray:
+        """Embed query using MarkupLM for reranking (768-d)."""
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError("query text must be a non-empty string")
+        # Create a dummy element for MarkupLM embedding
+        dummy_element = {"text": text, "tag": "query", "attributes": {}}
+        q = self.element_embedder.encode(dummy_element)
+        assert q.shape[0] == self._E_DIM, f"MarkupLM query should be {self._E_DIM}d, got {q.shape[0]}d"
+        return _l2norm(q)
+
     def embed_elements(self, elements: List[Dict[str, Any]]) -> np.ndarray:
         E, _ = self._prepare_elements(elements)
         return E
@@ -249,10 +259,9 @@ class HybridPipeline:
         frame_hash: Optional[str] = None,
         label_key: Optional[str] = None,
     ) -> Dict[str, Any]:
-        print(f"\n🔍 STEP 1: MiniLM Text Search")
+        print(f"\n🔍 STEP 1: MiniLM Shortlist (384-d)")
         print(f"Query: '{query}'")
         print(f"Total elements available: {len(elements)}")
-        print(f"🔍 MiniLM Input: Query='{query}' | Elements={len(elements)}")
         
         if not isinstance(elements, list):
             raise ValueError("elements must be a list")
@@ -260,50 +269,65 @@ class HybridPipeline:
             print("❌ No elements provided")
             return {"results": [], "strategy": "hybrid-delta", "confidence": 0.0}
 
+        # Prepare elements (creates both MiniLM and MarkupLM embeddings)
         E, meta = self._prepare_elements(elements)
         if E.size == 0:
             print("❌ No elements after preparation")
             return {"results": [], "strategy": "hybrid-delta", "confidence": 0.0}
         
-        print(f"🔍 Canonical Elements: {len(meta)} elements prepared")
-        print(f"🔍 Sample Canonical Element Structure:")
-        if meta:
-            sample = meta[0]
-            print(f"  Tag: {sample.get('tag', '')}")
-            print(f"  Text: '{sample.get('text', '')[:50]}...'")
-            print(f"  Attributes: {sample.get('attributes', {})}")
-            print(f"  XPath: {sample.get('xpath', '')[:80]}...")
+        print(f"✅ Prepared {len(meta)} elements with both MiniLM and MarkupLM embeddings")
         
-        # Debug: Check if target elements made it through preparation
-        target_word = query.lower().split()[0] if query else "element"  # Use first word of query as target
-        target_links_prepared = [m for m in meta if m.get('tag', '').lower() == 'a' and target_word in m.get('text', '').lower()]
-        print(f"🔍 A tags with '{target_word}' text after preparation: {len(target_links_prepared)}")
-        for i, m in enumerate(target_links_prepared):
-            print(f"  {i+1}. Text: '{m.get('text', '')}' | Href: {m.get('attributes', {}).get('href', '')}")
-            print(f"      XPath: {m.get('xpath', '')}")
-            print(f"      Attributes: {m.get('attributes', {})}")
+        # STEP 1: MiniLM shortlist (384-d)
+        q_mini = self.embed_query(query)  # 384-d query
+        print(f"✅ Query embedded with MiniLM, vector shape: {q_mini.shape}")
+        
+        # Search using MiniLM stores for shortlisting
+        mini_hits: List[Tuple[float, Dict[str, Any]]] = []
+        for fh, mini_store in self._mini_stores.items():
+            k = max(10, int(top_k * 2))  # Get more candidates for reranking
+            raw = mini_store.search(q_mini.tolist(), k=k)
+            for idx, _dist, md in raw:
+                vec = np.array(mini_store.vectors[idx], dtype=np.float32)
+                score = _cos(q_mini, vec)
+                mini_hits.append((score, md))
 
-        print(f"✅ Prepared {E.shape[0]} elements for search")
-        
-        # Debug: Check what elements we have with target text
-        target_in_elements = [el for el in elements if target_word in el.get('text', '').lower()]
-        print(f"🔍 Elements with '{target_word}' text in input: {len(target_in_elements)}")
-        for i, el in enumerate(target_in_elements[:3]):
-            print(f"  {i+1}. Tag: {el.get('tag', '')} | Text: '{el.get('text', '')}' | Visible: {el.get('visible', False)}")
-            print(f"      XPath: {el.get('xpath', '')[:100]}...")
-            print(f"      Attrs: {el.get('attrs', {})}")
-        
-        # Debug: Check specifically for target links
-        target_links = [el for el in elements if el.get('tag', '').lower() == 'a' and target_word in el.get('text', '').lower()]
-        print(f"🔍 A tags with '{target_word}' text: {len(target_links)}")
-        for i, el in enumerate(target_links):
-            print(f"  {i+1}. Text: '{el.get('text', '')}' | Href: {el.get('attrs', {}).get('href', '')}")
-            print(f"      XPath: {el.get('xpath', '')}")
-            print(f"      Attrs: {el.get('attrs', {})}")
-        
-        q = self.embed_query(query)
-        print(f"✅ Query embedded, vector shape: {q.shape}")
+        print(f"🔍 MiniLM found {len(mini_hits)} candidates")
+        print(f"🔍 Top {min(5, len(mini_hits))} MiniLM candidates:")
+        for i, (score, meta) in enumerate(mini_hits[:5]):
+            print(f"  {i+1}. Score: {score:.3f} | Tag: {meta.get('tag', '')} | Text: '{meta.get('text', '')[:50]}...'")
 
+        if not mini_hits:
+            print("❌ No hits from MiniLM shortlist")
+            return {"results": [], "strategy": "hybrid-delta", "confidence": 0.0}
+
+        # STEP 2: MarkupLM rerank (768-d)
+        print(f"\n🎯 STEP 2: MarkupLM Rerank (768-d)")
+        
+        # Get top candidates from MiniLM shortlist
+        mini_hits.sort(key=lambda x: x[0], reverse=True)
+        shortlist = mini_hits[:min(20, len(mini_hits))]  # Top 20 for reranking
+        
+        print(f"🔍 Reranking {len(shortlist)} candidates with MarkupLM")
+        
+        # Re-embed query and shortlist with MarkupLM
+        q_markup = self._embed_query_markup(query)  # 768-d query
+        shortlist_elements = [meta for (_, meta) in shortlist]
+        shortlist_embeddings = self.element_embedder.batch_encode(shortlist_elements)  # 768-d
+        
+        # Compute cosine similarity in 768-d space
+        markup_scores: List[Tuple[float, Dict[str, Any]]] = []
+        for i, (mini_score, meta) in enumerate(shortlist):
+            if i < shortlist_embeddings.shape[0]:
+                markup_vec = shortlist_embeddings[i]
+                markup_score = _cos(q_markup, markup_vec)
+                markup_scores.append((markup_score, meta))
+        
+        print(f"✅ MarkupLM reranking completed")
+        print(f"🔍 Top {min(3, len(markup_scores))} MarkupLM candidates:")
+        for i, (score, meta) in enumerate(markup_scores[:3]):
+            print(f"  {i+1}. Score: {score:.3f} | Tag: {meta.get('tag', '')} | Text: '{meta.get('text', '')[:50]}...'")
+
+        # Check for promotions
         promo_top: Optional[Dict[str, Any]] = None
         if page_sig and frame_hash and label_key:
             sel = lookup_promotion(self.kv, page_sig=page_sig, frame_hash=frame_hash, label_key=label_key)
@@ -315,28 +339,11 @@ class HybridPipeline:
                     "meta": {"frame_hash": frame_hash, "promoted": True},
                 }
 
-        all_hits: List[Tuple[float, Dict[str, Any]]] = []
-        for fh, store in self._stores.items():
-            k = max(5, int(top_k))
-            raw = store.search(q.tolist(), k=k)
-            for idx, _dist, md in raw:
-                vec = np.array(store.vectors[idx], dtype=np.float32)
-                score = _cos(q, vec)
-                all_hits.append((score, md))
-
-        print(f"✅ Found {len(all_hits)} candidates from cosine similarity")
-        print(f"🔍 MiniLM Output: Top {min(5, len(all_hits))} candidates:")
-        for i, (score, meta) in enumerate(all_hits[:5]):
-            print(f"  {i+1}. Score: {score:.3f} | Tag: {meta.get('tag', '')} | Text: '{meta.get('text', '')[:50]}...'")
-        
-        # Debug: Show MiniLM results
-        print(f"\n🔍 MiniLM found {len(all_hits)} candidates")
-        print(f"🔍 Top candidates indices: {[h[1].get('_index', 'unknown') for h in all_hits]}")
-
-        if not all_hits and not promo_top:
-            print("❌ No hits found")
+        if not markup_scores and not promo_top:
+            print("❌ No hits after MarkupLM reranking")
             return {"results": [], "strategy": "hybrid-delta", "confidence": 0.0}
 
+        # Apply heuristics to final scores
         def _tag_bias(tag: str) -> float:
             tag = (tag or "").lower()
             if tag == "input":  return 0.08  # Highest priority for inputs
@@ -355,7 +362,7 @@ class HybridPipeline:
         def _clickable_bonus(meta: Dict[str, Any]) -> float:
             """Give bonus to elements that are likely clickable or interactive"""
             tag = (meta.get("tag") or "").lower()
-            attrs = meta.get("attrs") or meta.get("attributes", {})
+            attrs = meta.get("attributes", {})
 
             # Special bonus for links with href (navigation elements)
             if tag == "a" and attrs.get("href"):
@@ -387,161 +394,18 @@ class HybridPipeline:
                 return 0.15  # Small bonus for clickable classes
 
             return 0.0
-        
-        def _text_match_bonus(query_text: str, elem_text: str) -> float:
-            """Boost elements with exact text matches"""
-            query_lower = query_text.lower()
-            text_lower = elem_text.lower()
-            
-            # Extract key words from query
-            key_words = []
-            for word in query_lower.split():
-                if word not in ['click', 'on', 'the', 'in', 'btn', 'button', 'select', 'top', 'type']:
-                    key_words.append(word)
-            
-            # Check for exact matches
-            for word in key_words:
-                if word in text_lower:
-                    # Exact word match gets maximum boost
-                    if text_lower.strip() == word or text_lower.strip() == word + 's':
-                        return 2.0  # Maximum boost for exact matches
-                    # Word at start gets high boost
-                    if text_lower.strip().startswith(word) or text_lower.strip().startswith(word + 's'):
-                        return 1.5  # High boost for start matches
-                    # Word in text gets medium boost
-                    return 0.8  # Medium boost for partial matches
-            
-            return 0.0
-        
-        def _intent_bonus(query_text: str, meta: Dict[str, Any]) -> float:
-            """Give bonus based on user intent (filter, select, click, etc.)"""
-            query_lower = query_text.lower()
-            tag = (meta.get("tag") or "").lower()
-            attrs = meta.get("attrs") or meta.get("attributes", {})
-            text = (meta.get("text") or "").lower()
-            
-            # Universal element scoring based on element characteristics (no hardcoded intent patterns)
-            # Let MiniLM and MarkupLM handle intent understanding naturally
-            if tag in ["a", "button"] and (attrs.get("href") or attrs.get("onclick")):
-                return 0.4  # High bonus for interactive elements
-            elif "tile" in attrs.get("class", "").lower() or "tile" in attrs.get("data-testid", "").lower():
-                return 0.5  # Maximum bonus for tile elements
-            elif tag == "div" and any(interactive_attr in attrs for interactive_attr in ["onclick", "href", "role", "tabindex"]):
-                return 0.3  # Medium bonus for interactive containers
-            elif tag in ["input", "select", "textarea"]:
-                return 0.4  # High bonus for form elements
-            elif tag == "button":
-                return 0.3  # Good bonus for buttons
-            elif any(filter_word in attrs.get("class", "").lower() for filter_word in ["filter", "sort", "control"]):
-                return 0.2  # Moderate bonus for filter-specific elements
-            elif "filter" in attrs.get("data-testid", "").lower():
-                return 0.2  # Moderate bonus for filter elements
-            elif attrs.get("role") in ["button", "option", "menuitem"]:
-                return 0.3  # Medium bonus for role-based buttons
-            
-            return 0.0
-        
-        def _disambiguation_bonus(query_text: str, meta: Dict[str, Any], all_hits: List[Tuple[float, Dict[str, Any]]]) -> float:
-            """Give bonus to elements that are better disambiguated from similar elements"""
-            query_lower = query_text.lower()
-            tag = (meta.get("tag") or "").lower()
-            attrs = meta.get("attrs") or meta.get("attributes", {})
-            text = (meta.get("text") or "").lower()
-            
-            # Find other elements with similar text
-            similar_elements = []
-            for score, other_meta in all_hits:
-                other_text = (other_meta.get("text") or "").lower()
-                if other_text == text and other_meta != meta:
-                    similar_elements.append(other_meta)
-            
-            if not similar_elements:
-                return 0.0  # No disambiguation needed
-            
-            # Give bonus based on better context/attributes
-            bonus = 0.0
-            
-            # Bonus for having more specific attributes
-            specific_attrs = ["data-testid", "id", "href", "onclick", "role", "aria-label"]
-            attr_count = sum(1 for attr in specific_attrs if attrs.get(attr))
-            other_attr_counts = [sum(1 for attr in specific_attrs if (other_meta.get("attrs") or other_meta.get("attributes", {})).get(attr)) for other_meta in similar_elements]
-            if attr_count > max(other_attr_counts, default=0):
-                bonus += 0.2  # Bonus for having more specific attributes
-            
-            # Bonus for being more interactive
-            if tag in ["a", "button", "input", "select", "textarea"]:
-                other_interactive_count = sum(1 for other_meta in similar_elements if other_meta.get("tag", "").lower() in ["a", "button", "input", "select", "textarea"])
-                if other_interactive_count == 0:  # Only this element is interactive
-                    bonus += 0.3  # High bonus for being the only interactive element
-            
-            # Bonus for having href (navigation elements)
-            if tag == "a" and attrs.get("href"):
-                other_href_count = sum(1 for other_meta in similar_elements if other_meta.get("tag", "").lower() == "a" and (other_meta.get("attrs") or other_meta.get("attributes", {})).get("href"))
-                if other_href_count == 0:  # Only this element has href
-                    bonus += 0.2  # Bonus for being the only navigation element
-            
-            # Bonus for having onclick (interactive elements)
-            if attrs.get("onclick"):
-                other_onclick_count = sum(1 for other_meta in similar_elements if (other_meta.get("attrs") or other_meta.get("attributes", {})).get("onclick"))
-                if other_onclick_count == 0:  # Only this element has onclick
-                    bonus += 0.2  # Bonus for being the only clickable element
-            
-            return min(bonus, 0.5)  # Cap at 0.5
 
+        # Apply heuristics to MarkupLM scores
         ranked: List[Tuple[float, Dict[str, Any], List[str]]] = []
-        for base_score, md in all_hits:
-            reasons: List[str] = [f"cosine={base_score:.3f}"]
+        for base_score, md in markup_scores:
+            reasons: List[str] = [f"markup_cosine={base_score:.3f}"]
             b = _tag_bias(md.get("tag", "")) + _role_bonus(md.get("role", ""))
-            
-            # Add text matching bonus
-            elem_text = md.get("text", "")
-            text_bonus = _text_match_bonus(query, elem_text)
-            if text_bonus > 0:
-                b += text_bonus
-                reasons.append(f"+text_match={text_bonus:.3f}")
             
             # Add clickable bonus
             clickable_bonus = _clickable_bonus(md)
             if clickable_bonus > 0:
                 b += clickable_bonus
                 reasons.append(f"+clickable={clickable_bonus:.3f}")
-            
-            # Add intent bonus
-            intent_bonus = _intent_bonus(query, md)
-            if intent_bonus > 0:
-                b += intent_bonus
-                reasons.append(f"+intent={intent_bonus:.3f}")
-            
-            # Add disambiguation bonus for elements with same text but different context
-            disambiguation_bonus = _disambiguation_bonus(query, md, all_hits)
-            if disambiguation_bonus > 0:
-                b += disambiguation_bonus
-                reasons.append(f"+disambiguation={disambiguation_bonus:.3f}")
-            
-            # Add penalty for non-clickable containers with text
-            tag = (md.get("tag") or "").lower()
-            if tag in ("div", "span", "p") and elem_text and clickable_bonus == 0:
-                # This is likely a text container, not the actual clickable element
-                b -= 0.2
-                reasons.append(f"-container_penalty=0.200")
-            
-            # Universal intent-aware penalties based on query context
-            query_lower = query.lower()
-            
-            # Universal element scoring based on element characteristics (no hardcoded intent patterns)
-            # Let MiniLM and MarkupLM handle intent understanding naturally
-            if tag == "button" and any(filter_word in ((md.get("attrs") or md.get("attributes", {})).get("class", "") or "").lower() for filter_word in ["filter", "sort", "control"]):
-                b -= 0.5  # Moderate penalty for filter buttons
-                reasons.append(f"-filter_penalty=0.500")
-            elif "filter" in ((md.get("attrs") or md.get("attributes", {})).get("data-testid", "") or "").lower():
-                b -= 0.3  # Moderate penalty for filter elements
-                reasons.append(f"-filter_element_penalty=0.300")
-            elif tag == "button" and any(control_word in elem_text.lower() for control_word in ["clear", "reset", "apply", "sort"]):
-                b -= 0.3  # Moderate penalty for control buttons
-                reasons.append(f"-control_penalty=0.300")
-            elif tag == "button" and len(elem_text.split()) == 1 and any(word in elem_text.lower() for word in ["apple", "samsung", "google", "motorola"]):
-                b -= 0.2  # Small penalty for brand filter buttons
-                reasons.append(f"-brand_filter_penalty=0.200")
             
             if b:
                 reasons.append(f"+bias={b:.3f}")
@@ -550,13 +414,12 @@ class HybridPipeline:
         ranked.sort(key=lambda t: t[0], reverse=True)
         ranked = ranked[:top_k]
 
-        print(f"\n🎯 STEP 2: MarkupLM Final Scoring")
-        print(f"🔍 MarkupLM Input: {len(ranked)} candidates from MiniLM")
-        print(f"Top {min(3, len(ranked))} final candidates after MarkupLM scoring:")
+        print(f"\n🎯 STEP 3: Final Heuristic Scoring")
+        print(f"🔍 Applied heuristics to {len(ranked)} MarkupLM candidates")
+        print(f"Top {min(3, len(ranked))} final candidates:")
         for i, (score, md, reasons) in enumerate(ranked[:3]):
             print(f"  {i+1}. Final Score: {score:.3f} | Tag: {md.get('tag', '')} | Text: '{md.get('text', '')[:50]}...'")
             print(f"      XPath: {md.get('xpath', '')[:100]}...")
-            print(f"      Attributes: {md.get('attributes', {})}")
             print(f"      Reasons: {reasons}")
 
         results = []
@@ -585,6 +448,6 @@ class HybridPipeline:
 
         return {
             "results": results[:top_k],
-            "strategy": "hybrid-delta+promotion" if promo_top else "hybrid-delta",
+            "strategy": "hybrid-minilm-markuplm+promotion" if promo_top else "hybrid-minilm-markuplm",
             "confidence": confidence,
         }
