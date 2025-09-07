@@ -352,58 +352,56 @@ class HybridPipeline:
             print("❌ No hits after MarkupLM reranking")
             return {"results": [], "strategy": "hybrid-delta", "confidence": 0.0}
 
-        # Apply heuristics to final scores
+        # Apply universal UI automation heuristics (minimal bias, let MarkupLM + user intent dominate)
         def _tag_bias(tag: str) -> float:
+            """Minimal tag bias - only for essential UI automation elements"""
             tag = (tag or "").lower()
-            # Reduced bias - let MarkupLM + user intent be primary
-            if tag == "input":  return 0.01  # Reduced from 0.08
-            if tag == "textarea": return 0.01  # Reduced from 0.07
-            if tag == "a":      return 0.01  # Reduced from 0.06
-            if tag == "button": return 0.01  # Reduced from 0.05
-            if tag == "select": return 0.01  # Reduced from 0.03
+            # Only give minimal bias to essential interactive elements
+            if tag in ("input", "textarea", "select"):  # Form elements
+                return 0.005
+            if tag in ("button", "a"):  # Action elements
+                return 0.003
             return 0.0
 
         def _role_bonus(role: str) -> float:
+            """Minimal role bonus - only for essential accessibility roles"""
             role = (role or "").lower()
-            if role in ("button", "link", "tab", "menuitem"):
-                return 0.01  # Reduced from 0.02
+            if role in ("button", "link", "tab", "menuitem", "option"):
+                return 0.002
             return 0.0
         
         def _clickable_bonus(meta: Dict[str, Any]) -> float:
-            """Give bonus to elements that are likely clickable or interactive"""
+            """Universal clickable bonus - works for all websites and use cases"""
             tag = (meta.get("tag") or "").lower()
             attrs = meta.get("attributes", {})
+            text = (meta.get("text") or "").strip()
 
-            # Reduced bonus - let MarkupLM + user intent be primary
-            if tag == "a" and attrs.get("href"):
-                return 0.1  # Reduced from 0.5
-
-            # Check for clickable indicators
+            # Universal clickable indicators (works across all websites)
             clickable_indicators = [
                 "onclick", "href", "data-href", "data-link", "data-click",
-                "data-action", "data-testid", "role", "tabindex"
+                "data-action", "data-testid", "data-test-id", "role", "tabindex",
+                "aria-label", "aria-labelledby", "title", "alt"
             ]
 
-            # If element has clickable attributes, give bonus
+            score = 0.0
+
+            # Bonus for interactive tags
+            if tag in ("button", "a", "input", "select", "textarea", "label"):
+                score += 0.02
+
+            # Bonus for clickable attributes
             if any(attr in attrs for attr in clickable_indicators):
-                return 0.05  # Reduced from 0.3
+                score += 0.01
 
-            # If it's a known interactive tag
-            if tag in ("button", "a", "input", "select", "textarea"):
-                return 0.25  # Good bonus for interactive tags
+            # Bonus for elements with meaningful text (likely interactive)
+            if text and len(text) > 0 and len(text) < 100:
+                score += 0.01
 
-            # If it has a role that suggests interactivity
-            role = attrs.get("role", "").lower()
-            if role in ("button", "link", "tab", "menuitem", "option", "textbox", "combobox"):
-                return 0.2  # Medium bonus for interactive roles
+            # Bonus for elements with data attributes (modern web apps)
+            if any(attr.startswith("data-") for attr in attrs.keys()):
+                score += 0.005
 
-            # Check for clickable classes
-            classes = attrs.get("class", "").lower()
-            clickable_classes = ["button", "btn", "link", "clickable", "action", "tile__clickable", "input", "search"]
-            if any(cls in classes for cls in clickable_classes):
-                return 0.15  # Small bonus for clickable classes
-
-            return 0.0
+            return score
 
         # Apply heuristics to MarkupLM scores
         ranked: List[Tuple[float, Dict[str, Any], List[str]]] = []

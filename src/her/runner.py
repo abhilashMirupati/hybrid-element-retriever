@@ -275,14 +275,16 @@ class Runner:
         frame_hash = (elements[0].get("meta") or {}).get("frame_hash") or ps
         parsed = self.intent.parse(phrase)
         label_key = compute_label_key([w for w in (parsed.target_phrase or phrase).split()])
+        # Use parsed target phrase for better MiniLM matching
+        target_phrase = parsed.target_phrase or phrase
         result = self.pipeline.query(
-            phrase,
+            target_phrase,  # Use parsed target phrase for MiniLM
             elements,
             top_k=10,
             page_sig=ps,
             frame_hash=frame_hash,
             label_key=label_key,
-            user_intent=phrase,  # Pass user intent to MarkupLM
+            user_intent=phrase,  # Pass full phrase as user intent to MarkupLM
         )
         candidates = []
         for item in (result.get("results") or [])[:10]:
@@ -392,6 +394,11 @@ class Runner:
             element = self._page.locator(f"xpath={selector}").first
             self._scroll_into_view(element)
             element.fill(value)
+            return
+        if action == "sendkeys" and value is not None:
+            element = self._page.locator(f"xpath={selector}").first
+            self._scroll_into_view(element)
+            element.type(value)
             return
         if action == "press" and value:
             element = self._page.locator(f"xpath={selector}").first
@@ -701,15 +708,43 @@ class Runner:
                 return False
         if low.startswith("validate ") and " is visible" in low:
             target = step[9:].rsplit(" is visible", 1)[0].strip()
-            shot = self._snapshot()
-            resolved = self._resolve_selector(target, shot)
-            sel = resolved.get("selector", "")
-            if not sel:
-                return False
+            # Remove quotes from target text
+            target = target.strip("'\"")
+            
             try:
-                self._page.locator(f"xpath={sel}").first.wait_for(state="visible", timeout=5000)
-                return True
-            except Exception:
+                # Try multiple strategies to find the text
+                strategies = [
+                    f"text={target}",  # Exact text match
+                    f"text*={target}",  # Partial text match
+                    f"[aria-label*='{target}']",  # Aria label
+                    f"[title*='{target}']",  # Title attribute
+                ]
+                
+                for strategy in strategies:
+                    try:
+                        locator = self._page.locator(strategy)
+                        if locator.count() > 0:
+                            # Check if any matching element is visible
+                            for i in range(locator.count()):
+                                if locator.nth(i).is_visible():
+                                    return True
+                    except Exception:
+                        continue
+                
+                # Fallback: use snapshot-based search
+                shot = self._snapshot()
+                resolved = self._resolve_selector(target, shot)
+                sel = resolved.get("selector", "")
+                if sel:
+                    try:
+                        self._page.locator(f"xpath={sel}").first.wait_for(state="visible", timeout=2000)
+                        return True
+                    except Exception:
+                        pass
+                
+                return False
+            except Exception as e:
+                print(f"Text validation error: {e}")
                 return False
         if low.startswith("validate ") and " exists" in low:
             target = step[9:].rsplit(" exists", 1)[0].strip()
