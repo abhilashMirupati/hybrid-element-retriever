@@ -263,6 +263,14 @@ class Runner:
                 page.wait_for_timeout(2000)
                 # Try to dismiss any initial popups/overlays
                 self._dismiss_overlays()
+                # Scroll down to load more products (especially for product listing pages)
+                if "smartphones" in url or "products" in url:
+                    # Scroll to load all products
+                    page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                    page.wait_for_timeout(2000)
+                    # Scroll back up a bit to ensure products are visible
+                    page.evaluate("window.scrollTo(0, document.body.scrollHeight / 3)")
+                    page.wait_for_timeout(1000)
             except Exception:
                 pass
         return self._inline_snapshot()
