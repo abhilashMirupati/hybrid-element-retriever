@@ -309,15 +309,19 @@ class HybridPipeline:
                         
                         # Apply the same penalties as the main scoring
                         if any(word in query.lower() for word in ["select", "click", "choose", "pick"]) and not any(word in query.lower() for word in ["filter", "sort", "search"]):
-                            # Item selection intent - penalize filter buttons heavily
-                            if tag == "button" and any(filter_word in attrs.get("class", "").lower() for filter_word in ["filter", "sort", "control"]):
-                                forced_score = 0.01  # Very low priority for filter buttons
-                            elif tag == "button" and "apple" in text and "iphone" not in text:
-                                forced_score = 0.01  # Very low priority for Apple filter button
-                            elif "product-tile" in attrs.get("data-testid", "").lower():
+                            # Item selection intent - prioritize interactive elements with content
+                            if "product-tile" in attrs.get("data-testid", "").lower():
                                 forced_score = max(forced_score, 0.9)  # Maximum priority for product tiles
-                            elif "iphone" in text and "pro" in text:
-                                forced_score = max(forced_score, 0.8)  # High priority for iPhone Pro products
+                            elif "tile" in attrs.get("class", "").lower() or "tile" in attrs.get("data-testid", "").lower():
+                                forced_score = max(forced_score, 0.8)  # High priority for tile elements
+                            elif tag in ["a", "button"] and (attrs.get("href") or attrs.get("onclick")):
+                                forced_score = max(forced_score, 0.7)  # High priority for interactive elements
+                            elif tag == "div" and any(interactive_attr in attrs for interactive_attr in ["onclick", "href", "role", "tabindex"]):
+                                forced_score = max(forced_score, 0.6)  # High priority for interactive containers
+                            elif tag == "button" and any(filter_word in attrs.get("class", "").lower() for filter_word in ["filter", "sort", "control"]):
+                                forced_score = max(forced_score, 0.01)  # Very low priority for filter buttons
+                            elif tag == "button" and any(control_word in text for control_word in ["clear", "reset", "apply", "sort"]):
+                                forced_score = max(forced_score, 0.01)  # Very low priority for control buttons
                         
                         # Apply universal intent-aware logic based on query context
                         tag = elem_meta.get("tag", "").lower()
