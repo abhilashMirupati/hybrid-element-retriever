@@ -388,16 +388,23 @@ class Runner:
             return
         # Fallback raw Playwright and navigation/waits
         if action == "type" and value is not None:
-            self._page.fill(f"xpath={selector}", value)
+            element = self._page.locator(f"xpath={selector}").first
+            self._scroll_into_view(element)
+            element.fill(value)
             return
         if action == "press" and value:
-            self._page.locator(f"xpath={selector}").first.press(str(value))
+            element = self._page.locator(f"xpath={selector}").first
+            self._scroll_into_view(element)
+            element.press(str(value))
             return
         if action == "hover":
-            self._page.locator(f"xpath={selector}").first.hover()
+            element = self._page.locator(f"xpath={selector}").first
+            self._scroll_into_view(element)
+            element.hover()
             return
         if action in {"check", "uncheck"}:
             handle = self._page.locator(f"xpath={selector}").first
+            self._scroll_into_view(handle)
             try:
                 if action == "check":
                     handle.check()
@@ -433,6 +440,45 @@ class Runner:
         # For click actions, try to find the best element
         self._click_best_element(selector)
 
+    def _scroll_into_view(self, element) -> None:
+        """Scroll element into view if it's not visible."""
+        try:
+            # Check if element is in viewport
+            bbox = element.bounding_box()
+            if not bbox:
+                return
+            
+            viewport = self._page.viewport_size
+            if not viewport:
+                return
+            
+            # Check if element is at least partially visible
+            element_top = bbox['y']
+            element_bottom = bbox['y'] + bbox['height']
+            element_left = bbox['x']
+            element_right = bbox['x'] + bbox['width']
+            
+            viewport_height = viewport['height']
+            viewport_width = viewport['width']
+            
+            # Check if element is visible in viewport
+            is_visible = (
+                element_top >= 0 and element_top < viewport_height and
+                element_left >= 0 and element_left < viewport_width and
+                element_bottom > 0 and element_right > 0
+            )
+            
+            if not is_visible:
+                print(f"🔄 Element not in viewport, scrolling into view...")
+                element.scroll_into_view_if_needed()
+                self._page.wait_for_timeout(500)  # Wait for scroll to complete
+                print(f"✅ Scrolled element into view")
+            else:
+                print(f"✅ Element already in viewport")
+                
+        except Exception as e:
+            print(f"⚠️  Could not scroll element into view: {e}")
+
     def _click_best_element(self, selector: str) -> None:
         """Click the best element when there are multiple matches."""
         if not _PLAYWRIGHT or not self._page:
@@ -446,8 +492,10 @@ class Runner:
             if count == 0:
                 raise Exception(f"No elements found for selector: {selector}")
             elif count == 1:
-                # Only one element, click it
-                locators.first.click()
+                # Only one element, scroll into view and click it
+                element = locators.first
+                self._scroll_into_view(element)
+                element.click()
                 return
             
             # Multiple elements - find the best one
@@ -495,15 +543,24 @@ class Runner:
             
             if best_element:
                 print(f"✅ Clicking best element (score: {best_score:.1f})")
+                self._scroll_into_view(best_element)
                 best_element.click()
             else:
                 print(f"⚠️  No suitable element found, clicking first visible one")
-                locators.first.click()
+                element = locators.first
+                self._scroll_into_view(element)
+                element.click()
                 
         except Exception as e:
             print(f"❌ Error clicking element: {e}")
             # Fallback to first element
-            self._page.locator(f"xpath={selector}").first.click()
+            try:
+                element = self._page.locator(f"xpath={selector}").first
+                self._scroll_into_view(element)
+                element.click()
+            except Exception as e2:
+                print(f"❌ Fallback click also failed: {e2}")
+                raise
 
     def _validate(self, step: str) -> bool:
         if not _PLAYWRIGHT or not self._page:
