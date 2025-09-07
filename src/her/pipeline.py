@@ -289,14 +289,17 @@ class HybridPipeline:
             print(f"  {i+1}. Score: {score:.3f} | Tag: {meta.get('tag', '')} | Text: '{meta.get('text', '')[:50]}...'")
         
         # Debug: Check ALL elements for target text to see their actual scores
-        target_word = query.lower().split()[0] if query else "element"  # Use first word of query as target
-        all_elements_with_target = [(i, m) for i, m in enumerate(meta) if isinstance(m, dict) and target_word in m.get('text', '').lower()]
+        # Extract the most relevant target word from the query (skip action words)
+        action_words = {"click", "select", "type", "fill", "choose", "pick", "open", "navigate", "go", "press", "tap"}
+        query_words = [w for w in query.lower().split() if w not in action_words and len(w) > 2]
+        target_word = query_words[0] if query_words else "element"
+        all_elements_with_target = [(i, m) for i, m in enumerate(elements) if isinstance(m, dict) and target_word in m.get('text', '').lower()]
         print(f"\n🔍 ALL elements with '{target_word}' text and their indices:")
         for idx, elem_meta in all_elements_with_target:
             print(f"  Index {idx}: Tag: {elem_meta.get('tag', '')} | Text: '{elem_meta.get('text', '')}' | XPath: {elem_meta.get('xpath', '')[:80]}...")
         
         # Debug: Check if any of these elements are in the top candidates
-        target_indices = [i for i, m in enumerate(meta) if isinstance(m, dict) and target_word in m.get('text', '').lower()]
+        target_indices = [i for i, m in enumerate(elements) if isinstance(m, dict) and target_word in m.get('text', '').lower()]
         print(f"\n🔍 {target_word.title()} elements indices: {target_indices}")
         print(f"🔍 Top candidates indices: {[h[1].get('_index', 'unknown') for h in all_hits]}")
         
