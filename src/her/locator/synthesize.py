@@ -32,6 +32,12 @@ def synthesize_xpath(desc: Dict) -> List[Tuple[str, str]]:
     href = attrs.get("href")
     if href and text and tag == "a":
         add("href+text", f'//a[@href="{href}" and normalize-space()="{text}"]')
+        # Add more specific combinations for uniqueness
+        class_name = attrs.get("class", "")
+        if class_name:
+            add("href+text+class", f'//a[@href="{href}" and normalize-space()="{text}" and contains(@class, "{class_name.split()[0]}")]')
+        # Also add with position for uniqueness
+        add("href+text+pos", f'(//a[@href="{href}" and normalize-space()="{text}"])[1]')
 
     # Medium priority: aria-label (accessibility-friendly)
     aria = attrs.get("aria-label")
@@ -42,8 +48,22 @@ def synthesize_xpath(desc: Dict) -> List[Tuple[str, str]]:
     elid = attrs.get("id")
     if elid and text:
         add("id+text", f'//*[@id="{elid}" and normalize-space()="{text}"]')
+        # Add position-based for uniqueness
+        add("id+text+pos", f'(//*[@id="{elid}" and normalize-space()="{text}"])[1]')
     elif elid:
         add("id", f'//*[@id="{elid}"]')
+        # Add position-based for uniqueness
+        add("id+pos", f'(//*[@id="{elid}"])[1]')
+    
+    # High priority: id + tag (more specific than just id)
+    if elid and tag != "*":
+        add("id+tag", f'//{tag}[@id="{elid}"]')
+        # Add position-based for uniqueness
+        add("id+tag+pos", f'(//{tag}[@id="{elid}"])[1]')
+        # Add with text for even more specificity
+        if text:
+            add("id+tag+text", f'//{tag}[@id="{elid}" and normalize-space()="{text}"]')
+            add("id+tag+text+pos", f'(//{tag}[@id="{elid}" and normalize-space()="{text}"])[1]')
 
     # Medium priority: class + text (more robust than absolute paths)
     class_name = attrs.get("class")
@@ -69,6 +89,13 @@ def synthesize_xpath(desc: Dict) -> List[Tuple[str, str]]:
         add("text-exact", f'//{tag}[normalize-space()="{text}"]')
     if text:
         add("text-contains", f'//*[contains(normalize-space(), "{text}")]')
+
+    # Add position-based selectors for better uniqueness
+    if text and tag:
+        # Try with position if we have text and tag
+        add("text-exact-position", f'//{tag}[normalize-space()="{text}"][1]')
+    elif text:
+        add("text-exact-position", f'//*[normalize-space()="{text}"][1]')
 
     return out
 

@@ -1,116 +1,114 @@
 # Hybrid Element Retriever (HER)
 
-Production-grade framework that turns **plain English** into **robust UI actions** via a hybrid pipeline:
-**NL intent → DOM/AX snapshot → delta-aware embeddings → per-frame vector search → tie-breaks → XPath → execute → promotions**.
+Production-grade framework that turns **plain English** into **robust UI actions** via a **2-stage hybrid pipeline**:
+**MiniLM (384-d) → FAISS shortlist → MarkupLM (768-d) → rerank → heuristics → XPath → execute → promotions**.
 
+## 🚀 **Key Features**
+
+- ✅ **2-Stage Hybrid Search**: MiniLM (384-d) for fast shortlisting + MarkupLM (768-d) for precise reranking
+- ✅ **Real Model Integration**: Uses actual MiniLM and MarkupLM models (not mocks)
 - ✅ **CPU-friendly** (Windows 11 friendly)
-- ✅ **Cold / Warm / Delta** flows
-- ✅ **SQLite-backed** embedding cache + promotions
-- ✅ **Per-frame** vector stores (FAISS if available, pure Python fallback)
+- ✅ **Cold / Warm / Delta** flows with SQLite caching
+- ✅ **Per-frame** vector stores (FAISS for performance)
+- ✅ **Promotion System**: Learns from successful actions
 - ✅ **Fail-fast** (no silent passes)
+- ✅ **Production Ready**: Tested with real Verizon.com flow
 
 ---
 
 ## 1) Quickstart
 
-> **Python**: 3.12 recommended  
+> **Python**: 3.12+ recommended  
 > **OS**: Windows/macOS/Linux  
-> **Strict mode**: enabled by default; errors are explicit.
+> **Models**: Real MiniLM + MarkupLM (installed automatically)
 
-### Windows (PowerShell)
-```powershell
-# 1. Create venv
-py -3.12 -m venv .venv
-. .\.venv\Scripts\Activate.ps1
-python -m pip install -U pip
+### Installation
 
-# 2. Install deps
-pip install -r requirements.txt
+```bash
+# 1. Install dependencies
+pip install --break-system-packages -r requirements.txt
+pip install --break-system-packages playwright pytest pytest-xdist pytest-timeout
 
-# 3. Install Playwright browsers (Chromium)
+# 2. Install Playwright browsers
 python -m playwright install chromium
 
-# 4. Download local models (MiniLM ONNX, MarkupLM)
-.\scripts\install_models.ps1
-
-# 5. Initialize caches/DB
-$env:HER_MODELS_DIR = (Resolve-Path "src/her/models").Path
-$env:HER_CACHE_DIR  = (Resolve-Path ".her_cache").Path
-.\scripts\init_dbs.ps1
-macOS/Linux (bash)
-bash
-Copy code
-python3.12 -m venv .venv
-source .venv/bin/activate
-python -m pip install -U pip
-pip install -r requirements.txt
-python -m playwright install chromium
+# 3. Install real models (MiniLM + MarkupLM)
 bash scripts/install_models.sh
 
-export HER_MODELS_DIR="$(pwd)/src/her/models"
-export HER_CACHE_DIR="$(pwd)/.her_cache"
-mkdir -p "$HER_CACHE_DIR"
-bash scripts/init_dbs.sh
-Environment variables
+# 4. Run tests to verify everything works
+HER_E2E=1 python -m pytest tests/test_verizon_flow.py -v -s --timeout=300
+```
 
-HER_MODELS_DIR → absolute path to models (e.g., src/her/models)
+### Environment Variables
 
-HER_CACHE_DIR → cache directory (e.g., .her_cache)
+```bash
+export HER_MODELS_DIR="$(pwd)/src/her/models"  # Path to models
+export HER_CACHE_DIR="$(pwd)/.her_cache"       # Cache directory
+```
 
-2) Key Concepts
-Cold / Warm / Delta
-Cold: first visit → embed all elements; cache to SQLite.
+## 2) Key Concepts
 
-Warm: revisit (same page/frame) → reuse cached vectors; rebuild in-mem stores quickly.
+### 2-Stage Hybrid Search
+1. **MiniLM Shortlist (384-d)**: Fast text-based search to find top-K candidates
+2. **MarkupLM Rerank (768-d)**: Precise structural understanding for final ranking
+3. **Heuristics**: Apply clickable bonuses, tag biases, and text matching
 
-Delta: only embed new/changed elements using element_dom_hash.
+### Cold / Warm / Delta Flows
+- **Cold**: First visit → embed all elements; cache to SQLite
+- **Warm**: Revisit (same page/frame) → reuse cached vectors; rebuild in-mem stores quickly  
+- **Delta**: Only embed new/changed elements using element_dom_hash
 
-Per-frame Vector Stores
-Each frame_hash gets its own in-memory store (FAISS if available). Stores are rebuilt when the frame changes.
+### Per-frame Vector Stores
+Each frame_hash gets its own in-memory store (FAISS for performance). Stores are rebuilt when the frame changes.
 
-Promotions
+### Promotions System
 After successful actions, the final selector is persisted (scoped by page_sig, frame_hash, label_key). Next time, HER pre-checks promotions before vector search.
 
-3) Minimal Usage (Python)
-python
-Copy code
+## 3) Usage Example
+
+```python
+from her.runner import run_steps
+
+# Simple step-by-step execution
+steps = [
+    "Open https://www.verizon.com/",
+    "Click on Phones btn in top",
+    "Select Apple filter", 
+    "Select Apple iPhone 16 Pro",
+    "Validate it landed on https://www.verizon.com/smartphones/apple-iphone-16-pro/"
+]
+
+# Run with real models and hybrid search
+run_steps(steps, headless=True)
+```
+
+### Advanced Usage
+
+```python
 from her.pipeline import HybridPipeline
 from her.promotion_adapter import compute_label_key
 from her.executor_main import Executor
 
-# 1) Snapshot page with your existing browser/snapshot code
-#    -> 'elements' is a list of element descriptors, each with meta.frame_hash etc.
+# 1) Create pipeline with real models
+pipe = HybridPipeline(models_root=Path("src/her/models"))
 
-pipe = HybridPipeline()
-label_key = compute_label_key(["send", "message"])  # from parsed intent
-
+# 2) Query with hybrid search
 out = pipe.query(
-    query="click Send",
-    elements=elements,
+    query="click Send button",
+    elements=elements,  # from DOM snapshot
     top_k=10,
-    page_sig="PAGE_SIGNATURE_STABLE",      # required for promotions
-    frame_hash="FRAME_HASH_OF_TARGET",     # from element meta
-    label_key=label_key,                   # from intent label tokens
+    page_sig="PAGE_SIGNATURE_STABLE",
+    frame_hash="FRAME_HASH_OF_TARGET", 
+    label_key=compute_label_key(["send", "button"])
 )
 
+# 3) Get best selector
 best = out["results"][0]
 selector = best["selector"]
-
-# 2) Execute (Playwright)
-from playwright.sync_api import sync_playwright
-
-with sync_playwright() as p:
-    browser = p.chromium.launch()
-    page = browser.new_page()
-    page.goto("https://example.com")
-    ex = Executor(page)
-    ex.click(
-        selector,
-        page_sig="PAGE_SIGNATURE_STABLE",
-        frame_hash="FRAME_HASH_OF_TARGET",
-        label_key=label_key,
-    )
-    browser.close()
+print(f"Found selector: {selector}")
+print(f"Confidence: {out['confidence']:.3f}")
+print(f"Strategy: {out['strategy']}")  # "hybrid-minilm-markuplm"
+```
 4) Architecture (ASCII)
 sql
 Copy code
