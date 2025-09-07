@@ -295,13 +295,14 @@ class Runner:
         # Use parsed target phrase for better MiniLM matching
         target_phrase = parsed.target_phrase or phrase
         result = self.pipeline.query(
-            target_phrase,  # Use parsed target phrase for MiniLM
+            target_phrase,  # Query: parsed target phrase for MiniLM
             elements,
             top_k=10,
             page_sig=ps,
             frame_hash=frame_hash,
             label_key=label_key,
-            user_intent=phrase,  # Pass full phrase as user intent to MarkupLM
+            user_intent=phrase,  # User Intent: full phrase
+            target=parsed.target_phrase,  # Target: parsed target phrase
         )
         candidates = []
         for item in (result.get("results") or [])[:10]:

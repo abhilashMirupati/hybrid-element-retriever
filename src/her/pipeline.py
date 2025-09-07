@@ -192,12 +192,13 @@ class HybridPipeline:
         E = np.vstack(all_markup_vecs).astype(np.float32, copy=False) if all_markup_vecs else np.zeros((0, self._E_DIM), dtype=np.float32)
         return E, all_meta
 
-    def _compute_intent_score(self, user_intent: str, meta: Dict[str, Any]) -> float:
-        """Compute user intent score for MarkupLM reranking - context-aware scoring."""
-        if not user_intent:
+    def _compute_intent_score(self, user_intent: Optional[str], target: Optional[str], query: str, meta: Dict[str, Any]) -> float:
+        """Compute intent score using all three parameters: Intent/Target/Query for MarkupLM reranking."""
+        if not user_intent and not target:
             return 0.0
         
-        intent_lower = user_intent.lower()
+        # Combine all parameters for comprehensive scoring
+        all_intent_text = " ".join(filter(None, [user_intent, target, query])).lower()
         text = (meta.get("text") or "").lower()
         tag = (meta.get("tag") or "").lower()
         role = (meta.get("attributes", {}).get("role") or "").lower()
@@ -205,45 +206,59 @@ class HybridPipeline:
         
         score = 0.0
         
-        # Context-aware scoring based on user intent type
-        if "filter" in intent_lower:
-            # For filter intents, prioritize interactive filter elements
-            if tag in ("button", "input", "select") and "filter" in text:
-                score += 0.5  # Highest score for filter buttons
-            elif tag in ("button", "input", "select") and any(word in text for word in intent_lower.split()):
-                score += 0.4  # High score for interactive elements with matching text
-            elif "filter" in text and tag not in ("button", "input", "select"):
-                score += 0.1  # Low score for non-interactive filter text
-            elif tag in ("button", "input", "select"):
-                score += 0.2  # Medium score for other interactive elements
-        elif "select" in intent_lower or "click" in intent_lower:
-            # For selection intents, prioritize clickable elements
-            if tag in ("button", "a", "input", "select"):
-                score += 0.3  # High score for clickable elements
-            elif role in ("button", "link", "tab", "menuitem", "option"):
-                score += 0.2  # Medium score for accessible elements
-        else:
-            # For general intents, use original logic but with lower weights
-            if intent_lower in text:
-                score += 0.2  # Reduced from 0.3
-            intent_words = intent_lower.split()
+        # 1. Query matching (most important - what user is looking for)
+        if query:
+            query_words = query.lower().split()
             text_words = text.split()
-            word_matches = sum(1 for word in intent_words if word in text_words)
-            score += word_matches * 0.05  # Reduced from 0.1
+            query_matches = sum(1 for word in query_words if word in text_words)
+            if query_matches > 0:
+                score += min(0.3, query_matches * 0.1)  # Up to 0.3 for query matches
         
-        # Check href for intent
-        if href and any(word in href for word in intent_lower.split()):
-            score += 0.1  # Reduced from 0.2
+        # 2. Target matching (what user wants to interact with)
+        if target:
+            target_lower = target.lower()
+            if target_lower in text:
+                score += 0.2  # Exact target match
+            elif any(word in text for word in target_lower.split()):
+                score += 0.1  # Partial target match
         
-        # Check tag relevance
-        if any(word in tag for word in intent_lower.split()):
-            score += 0.05  # Reduced from 0.1
+        # 3. User intent matching (action user wants to perform)
+        if user_intent:
+            intent_lower = user_intent.lower()
+            
+            # Context-aware scoring based on intent type
+            if "filter" in intent_lower:
+                # For filter intents, prioritize interactive filter elements
+                if tag in ("button", "input", "select") and "filter" in text:
+                    score += 0.3  # High score for filter buttons
+                elif tag in ("button", "input", "select"):
+                    score += 0.1  # Medium score for other interactive elements
+            elif any(word in intent_lower for word in ["click", "select", "press"]):
+                # For click/select intents, prioritize clickable elements
+                if tag in ("button", "a", "input", "select"):
+                    score += 0.2  # High score for clickable elements
+                elif role in ("button", "link", "tab", "menuitem", "option"):
+                    score += 0.1  # Medium score for accessible elements
         
-        # Check role relevance
-        if any(word in role for word in intent_lower.split()):
-            score += 0.05  # Reduced from 0.1
+        # 4. Href relevance (for links)
+        if href and query:
+            query_words = query.lower().split()
+            if any(word in href for word in query_words):
+                score += 0.1
         
-        return min(score, 0.5)  # Cap at 0.5
+        # 5. Tag relevance (element type matching)
+        if query:
+            query_words = query.lower().split()
+            if any(word in tag for word in query_words):
+                score += 0.05
+        
+        # 6. Role relevance (accessibility)
+        if query:
+            query_words = query.lower().split()
+            if any(word in role for word in query_words):
+                score += 0.05
+        
+        return min(score, 0.6)  # Cap at 0.6 for multi-parameter scoring
 
     def _apply_basic_heuristics(self, markup_scores: List[Tuple[float, Dict[str, Any]]], user_intent: str) -> List[Tuple[float, Dict[str, Any], List[str]]]:
         """Apply basic heuristics only when MarkupLM scores are close"""
@@ -330,6 +345,7 @@ class HybridPipeline:
         frame_hash: Optional[str] = None,
         label_key: Optional[str] = None,
         user_intent: Optional[str] = None,
+        target: Optional[str] = None,
     ) -> Dict[str, Any]:
         print(f"\n🔍 STEP 1: MiniLM Shortlist (384-d)")
         print(f"Query: '{query}'")
@@ -383,6 +399,7 @@ class HybridPipeline:
         print(f"🔍 MarkupLM Processing Details:")
         print(f"   Query: '{query}'")
         print(f"   User Intent: '{user_intent}'")
+        print(f"   Target: '{target}'")
         print(f"   Shortlist elements: {len(shortlist)}")
         
         # Re-embed query and shortlist with MarkupLM (limit to top 10 for performance)
@@ -397,10 +414,10 @@ class HybridPipeline:
                 markup_vec = shortlist_embeddings[i]
                 markup_score = _cos(q_markup, markup_vec)
                 
-                # Apply user intent scoring to MarkupLM results
+                # Apply multi-parameter scoring to MarkupLM results
                 intent_score = 0.0
-                if user_intent:
-                    intent_score = self._compute_intent_score(user_intent, meta)
+                if user_intent or target:
+                    intent_score = self._compute_intent_score(user_intent, target, query, meta)
                     markup_score += intent_score
                 
                 # Debug each element
