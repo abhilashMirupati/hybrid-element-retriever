@@ -107,9 +107,9 @@ class Runner:
   
   function isInteractive(el) {
     const tag = el.tagName.toLowerCase();
-    const interactiveTags = ['button', 'a', 'input', 'select', 'textarea', 'option'];
+    const interactiveTags = ['button', 'a', 'input', 'select', 'textarea', 'option', 'label'];
     const role = el.getAttribute('role');
-    const interactiveRoles = ['button', 'link', 'menuitem', 'tab', 'option', 'radio', 'checkbox'];
+    const interactiveRoles = ['button', 'link', 'menuitem', 'tab', 'option', 'radio', 'checkbox', 'switch'];
     
     // Check if it's an interactive tag
     if (interactiveTags.includes(tag)) return true;
@@ -127,13 +127,22 @@ class Runner:
     // Check for specific input types that are interactive
     if (tag === 'input') {
       const type = el.getAttribute('type');
-      const interactiveTypes = ['button', 'submit', 'reset', 'radio', 'checkbox', 'file', 'image'];
+      const interactiveTypes = ['button', 'submit', 'reset', 'radio', 'checkbox', 'file', 'image', 'range', 'color'];
       if (type && interactiveTypes.includes(type)) return true;
     }
     
     // Check for elements with tabindex (focusable)
     const tabIndex = el.getAttribute('tabindex');
     if (tabIndex && parseInt(tabIndex) >= 0) return true;
+    
+    // Check for form elements
+    if (['form', 'fieldset', 'legend'].includes(tag)) return true;
+    
+    // Check for elements with data attributes indicating interactivity
+    const dataAttrs = ['data-testid', 'data-id', 'data-value', 'data-action'];
+    for (const attr of dataAttrs) {
+      if (el.getAttribute(attr)) return true;
+    }
     
     return false;
   }
@@ -209,11 +218,17 @@ class Runner:
       return `//*[@id="${attrs['id']}"][${pos}]`;
     }
     
-    // Priority 3: aria-label + text
+    // Priority 3: aria-label + text + type (for inputs)
     if (attrs['aria-label'] && text) {
+      if (attrs['type']) {
+        return `//*[@aria-label="${attrs['aria-label']}" and @type="${attrs['type']}" and normalize-space()="${text}"]`;
+      }
       return `//*[@aria-label="${attrs['aria-label']}" and normalize-space()="${text}"]`;
     }
     if (attrs['aria-label']) {
+      if (attrs['type']) {
+        return `//*[@aria-label="${attrs['aria-label']}" and @type="${attrs['type']}"]`;
+      }
       return `//*[@aria-label="${attrs['aria-label']}"]`;
     }
     
@@ -266,24 +281,35 @@ class Runner:
     return `//${tag}[${pos}]`;
   }
   function collectAttributes(el) {
-    // CAPTURE ALL ATTRIBUTES - Don't filter out any attributes
+    // CAPTURE ALL ATTRIBUTES - Universal attribute collection
     const result = {};
     for (const a of el.attributes) {
       const n = a.name;
       // Only skip style and event handlers, keep everything else
       if (n === 'style' || n.startsWith('on')) continue;
       const v = String(a.value || '').trim();
-      // Include ALL attributes, even empty ones for radio buttons
+      // Include ALL attributes - critical for radio buttons, inputs, etc.
       result[n] = v;
     }
+    
+    // Add computed properties for better element identification
+    const computed = window.getComputedStyle(el);
+    result['_computed_display'] = computed.display;
+    result['_computed_visibility'] = computed.visibility;
+    result['_computed_opacity'] = computed.opacity;
+    result['_computed_cursor'] = computed.cursor;
+    
     return result;
   }
   const out = [];
   const visited = new Set();
   const nodes = document.querySelectorAll('*');
   for (const el of nodes) {
-    // CAPTURE ALL ELEMENTS - Don't filter by visibility
+    // CAPTURE ALL ELEMENTS - No filtering, capture everything
     if (visited.has(el)) continue; visited.add(el);
+    
+    // Skip only completely invalid elements
+    if (!el || el.nodeType !== 1) continue;
     const tag = el.tagName.toUpperCase();
     const role = el.getAttribute('role');
     const attrs = collectAttributes(el);

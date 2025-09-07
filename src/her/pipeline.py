@@ -225,16 +225,33 @@ class HybridPipeline:
             if query_matches > 0:
                 score += min(0.3, query_matches * 0.1)  # Up to 0.3 for query matches
             
-            # Special handling for color selection - look for aria-label matches
-            if any(word in query.lower() for word in ['color', 'titanium', 'desert', 'black', 'white', 'natural']):
-                aria_label = meta.get('attributes', {}).get('aria-label', '').lower()
-                if aria_label and any(word in aria_label for word in query_words):
-                    score += 0.5  # Very high bonus for aria-label matches
-                
-                # Also check data-testid for color elements
-                data_testid = meta.get('attributes', {}).get('data-testid', '').lower()
-                if data_testid and any(word in data_testid for word in query_words):
-                    score += 0.3  # High bonus for data-testid matches
+            # Universal attribute matching for all interactive elements
+            attrs = meta.get('attributes', {})
+            
+            # Check aria-label (highest priority for accessibility)
+            aria_label = attrs.get('aria-label', '').lower()
+            if aria_label and any(word in aria_label for word in query_words):
+                score += 0.6  # Very high bonus for aria-label matches
+            
+            # Check data-testid (common in modern UIs)
+            data_testid = attrs.get('data-testid', '').lower()
+            if data_testid and any(word in data_testid for word in query_words):
+                score += 0.4  # High bonus for data-testid matches
+            
+            # Check title attribute
+            title = attrs.get('title', '').lower()
+            if title and any(word in title for word in query_words):
+                score += 0.3  # Medium bonus for title matches
+            
+            # Check value attribute (for inputs)
+            value = attrs.get('value', '').lower()
+            if value and any(word in value for word in query_words):
+                score += 0.3  # Medium bonus for value matches
+            
+            # Check name attribute (for form elements)
+            name = attrs.get('name', '').lower()
+            if name and any(word in name for word in query_words):
+                score += 0.2  # Small bonus for name matches
         
         # 2. Target matching (what user wants to interact with)
         if target:
@@ -248,29 +265,37 @@ class HybridPipeline:
         if user_intent:
             intent_lower = user_intent.lower()
             is_interactive = meta.get('interactive', False)
+            attrs = meta.get('attributes', {})
             
-            # Context-aware scoring based on intent type
+            # Universal intent-based scoring
             if "filter" in intent_lower:
                 # For filter intents, prioritize interactive filter elements
-                if is_interactive and "filter" in text:
-                    score += 0.4  # Highest score for interactive filter elements
-                elif tag in ("button", "input", "select") and "filter" in text:
-                    score += 0.3  # High score for filter buttons
+                if is_interactive and ("filter" in text or "filter" in attrs.get('aria-label', '').lower()):
+                    score += 0.5  # Highest score for interactive filter elements
+                elif tag in ("button", "input", "select") and ("filter" in text or "filter" in attrs.get('aria-label', '').lower()):
+                    score += 0.4  # High score for filter buttons
                 elif is_interactive:
-                    score += 0.2  # Medium score for other interactive elements
-            elif any(word in intent_lower for word in ["click", "select", "press"]):
+                    score += 0.3  # Medium score for other interactive elements
+            elif any(word in intent_lower for word in ["click", "select", "press", "choose", "pick"]):
                 # For click/select intents, prioritize interactive elements
                 if is_interactive:
-                    score += 0.4  # Highest score for interactive elements
-                elif tag in ("button", "a", "input", "select"):
-                    score += 0.2  # High score for clickable elements
-                elif role in ("button", "link", "tab", "menuitem", "option"):
-                    score += 0.1  # Medium score for accessible elements
+                    score += 0.5  # Highest score for interactive elements
+                elif tag in ("button", "a", "input", "select", "option"):
+                    score += 0.3  # High score for clickable elements
+                elif role in ("button", "link", "tab", "menuitem", "option", "radio", "checkbox"):
+                    score += 0.2  # Medium score for accessible elements
                 
-                # Special bonus for radio buttons when selecting colors
-                if tag == "input" and meta.get('attributes', {}).get('type') == 'radio':
-                    if any(word in query.lower() for word in ['color', 'titanium', 'desert', 'black', 'white', 'natural']):
-                        score += 0.3  # High bonus for radio buttons in color selection
+                # Special bonuses for specific element types
+                if tag == "input":
+                    input_type = attrs.get('type', '')
+                    if input_type == 'radio':
+                        score += 0.3  # High bonus for radio buttons
+                    elif input_type in ['checkbox', 'button', 'submit']:
+                        score += 0.2  # Medium bonus for other interactive inputs
+                elif tag == "button":
+                    score += 0.2  # Medium bonus for buttons
+                elif tag == "a":
+                    score += 0.1  # Small bonus for links
         
         # 4. Href relevance (for links)
         if href and query:
@@ -295,8 +320,8 @@ class HybridPipeline:
         return final_score
 
     def _apply_basic_heuristics(self, markup_scores: List[Tuple[float, Dict[str, Any]]], user_intent: str) -> List[Tuple[float, Dict[str, Any], List[str]]]:
-        """Apply basic heuristics only when MarkupLM scores are close"""
-        print(f"\\n🔍 Applying Basic Heuristics (only when scores are close)")
+        """Apply universal heuristics for all websites and UI patterns"""
+        print(f"\\n🔍 Applying Universal Heuristics")
         print(f"   User Intent: '{user_intent}'")
         
         ranked: List[Tuple[float, Dict[str, Any], List[str]]] = []
@@ -304,35 +329,69 @@ class HybridPipeline:
             reasons: List[str] = [f"markup_cosine={base_score:.3f}"]
             bonus = 0.0
             
-            # Basic heuristics - only essential checks
+            # Universal element analysis
             tag = (md.get("tag") or "").lower()
             text = (md.get("text") or "").lower()
             visible = md.get("visible", True)
             below_fold = md.get("below_fold", False)
+            is_interactive = md.get("interactive", False)
+            attrs = md.get("attributes", {})
             
-            # 1. Must be clickable for click/select actions
-            if any(word in user_intent.lower() for word in ["click", "select", "press"]):
-                if tag in ("button", "a", "input", "select", "option"):
-                    bonus += 0.1
-                    reasons.append("+clickable=0.100")
-                elif tag in ("div", "span") and not any(attr in text for attr in ["click", "button", "link"]):
-                    bonus -= 0.05  # Penalty for non-clickable elements
-                    reasons.append("-non_clickable=-0.050")
+            # 1. Interactivity bonus (universal)
+            if is_interactive:
+                bonus += 0.2
+                reasons.append("+interactive=0.200")
+            elif tag in ("button", "a", "input", "select", "option"):
+                bonus += 0.1
+                reasons.append("+clickable=0.100")
+            elif tag in ("div", "span", "p") and any(word in user_intent.lower() for word in ["click", "select", "press"]):
+                bonus -= 0.1
+                reasons.append("-non_clickable=-0.100")
             
-            # 2. Must be visible (not hidden)
+            # 2. Visibility penalty (universal)
             if not visible:
-                bonus -= 0.2
-                reasons.append("-hidden=-0.200")
+                bonus -= 0.3
+                reasons.append("-hidden=-0.300")
             
-            # 3. Prefer elements above the fold
+            # 3. Below fold penalty (universal)
             if below_fold:
-                bonus -= 0.05
-                reasons.append("-below_fold=-0.050")
+                bonus -= 0.2
+                reasons.append("-below_fold=-0.200")
             
-            # 4. Avoid navigation/header elements (basic check)
-            if any(word in text for word in ["menu", "nav", "header", "footer", "skip"]):
+            # 4. Element type specific bonuses (universal)
+            if tag == 'input':
+                input_type = attrs.get('type', '')
+                if input_type == 'radio' and any(word in user_intent.lower() for word in ['select', 'choose', 'pick']):
+                    bonus += 0.3
+                    reasons.append("+radio_button=0.300")
+                elif input_type in ['checkbox', 'button', 'submit']:
+                    bonus += 0.2
+                    reasons.append("+input_button=0.200")
+            elif tag == 'button' and any(word in user_intent.lower() for word in ['click', 'select', 'press']):
+                bonus += 0.2
+                reasons.append("+button=0.200")
+            elif tag == 'a' and any(word in user_intent.lower() for word in ['click', 'select']):
+                bonus += 0.1
+                reasons.append("+link=0.100")
+            
+            # 5. Content relevance (universal)
+            if 'filter' in user_intent.lower() and 'filter' in text:
+                bonus += 0.2
+                reasons.append("+filter_content=0.200")
+            elif 'search' in user_intent.lower() and 'search' in text:
+                bonus += 0.2
+                reasons.append("+search_content=0.200")
+            
+            # 6. Navigation/header penalty (universal)
+            nav_keywords = ['navigation', 'nav', 'header', 'footer', 'menu', 'sidebar', 'breadcrumb']
+            if any(word in text for word in nav_keywords):
                 bonus -= 0.1
                 reasons.append("-nav_element=-0.100")
+            
+            # 7. Accessibility bonus (universal)
+            if attrs.get('aria-label') or attrs.get('aria-labelledby'):
+                bonus += 0.1
+                reasons.append("+accessible=0.100")
             
             final_score = base_score + bonus
             ranked.append((final_score, md, reasons))
@@ -341,7 +400,7 @@ class HybridPipeline:
             print(f"   Element {i+1}:")
             print(f"     Text: '{md.get('text', '')[:50]}...'")
             print(f"     Tag: {md.get('tag', '')}")
-            print(f"     Visible: {visible}, Below Fold: {below_fold}")
+            print(f"     Visible: {visible}, Below Fold: {below_fold}, Interactive: {is_interactive}")
             print(f"     MarkupLM: {base_score:.3f}, Bonus: {bonus:+.3f}, Final: {final_score:.3f}")
             print(f"     Reasons: {reasons}")
         
