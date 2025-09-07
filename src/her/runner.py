@@ -522,9 +522,13 @@ class Runner:
             for i in range(count):
                 try:
                     element = locators.nth(i)
+                    print(f"  🔍 Analyzing element {i+1}/{count}")
                     
                     # Check if element is visible and clickable
-                    if not element.is_visible():
+                    is_visible = element.is_visible()
+                    print(f"  👁️  Element {i+1}: Visible = {is_visible}")
+                    if not is_visible:
+                        print(f"  ❌ Element {i+1}: Not visible, skipping")
                         continue
                     
                     # Get element properties
@@ -613,7 +617,15 @@ class Runner:
                     if id_attr or role or href:
                         score += 200
                     
-                    # HEURISTIC 9: Universal element scoring (no hardcoded penalties)
+                    # HEURISTIC 9: Position preference for multiple identical elements
+                    # If there are multiple elements with same ID/text, prefer later ones (e.g., [2] instead of [1])
+                    if count > 1 and i > 0:  # If there are multiple elements and this is not the first
+                        # Give bonus to later elements (they're usually more specific/active)
+                        position_bonus = i * 50  # 50 points per position
+                        score += position_bonus
+                        print(f"  📍 Position bonus for element #{i+1}: +{position_bonus}")
+                    
+                    # HEURISTIC 10: Universal element scoring (no hardcoded penalties)
                     # All elements are potentially valid targets based on user intent
                     
                     # Add intent score
