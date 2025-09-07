@@ -130,8 +130,7 @@ def merge_dom_ax(
         
         # Extract text content for better MiniLM matching
         text_content = extract_text_content(merged_node)
-        if text_content:
-            merged_node['text'] = text_content
+        merged_node['text'] = text_content  # Always store text content, even if empty
         
         merged_nodes.append(merged_node)
     
