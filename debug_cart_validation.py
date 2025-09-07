@@ -35,24 +35,36 @@ def debug_cart_validation():
         runner._snapshot()  # Get current state
         result = runner._resolve_selector("Desert Titanium", runner._snapshot())
         if result.get("selector"):
+            print(f"  XPath: {result['selector']}")
+            print(f"  Confidence: {result.get('confidence', 'N/A')}")
             runner._do_action("click", result["selector"], None, result.get("promo", {}), "Desert Titanium")
             time.sleep(2)
+        else:
+            print("  ❌ No selector found for Desert Titanium")
         
         # Select 512 GB
         print("💾 Selecting 512 GB...")
         runner._snapshot()  # Get current state
         result = runner._resolve_selector("512 GB", runner._snapshot())
         if result.get("selector"):
+            print(f"  XPath: {result['selector']}")
+            print(f"  Confidence: {result.get('confidence', 'N/A')}")
             runner._do_action("click", result["selector"], None, result.get("promo", {}), "512 GB")
             time.sleep(2)
+        else:
+            print("  ❌ No selector found for 512 GB")
         
         # Click Add to Cart
         print("🛒 Clicking Add to Cart...")
         runner._snapshot()  # Get current state
         result = runner._resolve_selector("Add to Cart", runner._snapshot())
         if result.get("selector"):
+            print(f"  XPath: {result['selector']}")
+            print(f"  Confidence: {result.get('confidence', 'N/A')}")
             runner._do_action("click", result["selector"], None, result.get("promo", {}), "Add to Cart")
             time.sleep(3)  # Wait longer for response
+        else:
+            print("  ❌ No selector found for Add to Cart")
         
         # Check what text appears
         print("🔍 Checking for cart confirmation text...")
