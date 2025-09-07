@@ -444,6 +444,10 @@ class Runner:
         """Scroll element into view if it's not visible."""
         try:
             # Check if element is in viewport
+            if not hasattr(element, 'bounding_box'):
+                print(f"⚠️  Element does not have bounding_box method, skipping scroll")
+                return
+                
             bbox = element.bounding_box()
             if not bbox:
                 return
@@ -504,6 +508,7 @@ class Runner:
             # Try to find the most visible and clickable element
             best_element = None
             best_score = -1
+            element_details = []
             
             for i in range(count):
                 try:
@@ -518,8 +523,18 @@ class Runner:
                     if not bbox or bbox['width'] <= 0 or bbox['height'] <= 0:
                         continue
                     
-                    # Calculate score based on visibility and size
-                    score = bbox['width'] * bbox['height']  # Area as score
+                    # Get element text and attributes for better scoring
+                    try:
+                        text = element.text_content() or ""
+                        tag_name = element.evaluate("el => el.tagName.toLowerCase()") or ""
+                        role = element.get_attribute("role") or ""
+                    except:
+                        text = ""
+                        tag_name = ""
+                        role = ""
+                    
+                    # Calculate score based on multiple factors
+                    score = bbox['width'] * bbox['height']  # Area as base score
                     
                     # Bonus for being in viewport center
                     viewport = self._page.viewport_size
@@ -534,15 +549,43 @@ class Runner:
                         center_bonus = max(0, 1000 - distance)  # Bonus decreases with distance
                         score += center_bonus
                     
+                    # Bonus for being higher on the page (top elements are usually more important)
+                    top_bonus = max(0, 1000 - bbox['y'])  # Higher elements get more bonus
+                    score += top_bonus
+                    
+                    # Bonus for interactive elements
+                    if tag_name in ['a', 'button'] or role in ['button', 'link']:
+                        score += 500
+                    
+                    # Bonus for having meaningful text
+                    if text and len(text.strip()) > 0:
+                        score += 100
+                    
+                    element_details.append({
+                        'index': i,
+                        'element': element,
+                        'score': score,
+                        'text': text[:50],
+                        'tag': tag_name,
+                        'bbox': bbox
+                    })
+                    
                     if score > best_score:
                         best_score = score
                         best_element = element
                         
-                except Exception:
+                except Exception as e:
+                    print(f"⚠️  Error evaluating element {i}: {e}")
                     continue
             
+            # Log all elements for debugging
+            print(f"📋 Element analysis:")
+            for detail in sorted(element_details, key=lambda x: x['score'], reverse=True)[:5]:
+                print(f"  {detail['index']+1}. Score: {detail['score']:.1f} | {detail['tag']} | '{detail['text']}' | Pos: ({detail['bbox']['x']:.0f}, {detail['bbox']['y']:.0f})")
+            
             if best_element:
-                print(f"✅ Clicking best element (score: {best_score:.1f})")
+                best_index = next(i for i, detail in enumerate(element_details) if detail['element'] == best_element)
+                print(f"✅ Clicking best element #{best_index+1} (score: {best_score:.1f})")
                 self._scroll_into_view(best_element)
                 best_element.click()
             else:
