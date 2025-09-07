@@ -310,8 +310,8 @@ class HybridPipeline:
         if len(target_in_top) == 0:
             print(f"\n🔄 FALLBACK: No exact text matches found, forcing inclusion...")
             for idx in target_indices:
-                if idx < len(meta):
-                    elem_meta = meta[idx]
+                if idx < len(elements):
+                    elem_meta = elements[idx]
                     # Calculate similarity score
                     if idx < len(store.vectors):
                         elem_vec = np.array(store.vectors[idx], dtype=np.float32)
@@ -323,7 +323,7 @@ class HybridPipeline:
                         # Get element metadata first
                         tag = elem_meta.get("tag", "").lower()
                         text = elem_meta.get("text", "").lower()
-                        attrs = elem_meta.get("attributes", {})
+                        attrs = elem_meta.get("attrs") or elem_meta.get("attributes", {})
                         query_lower = query.lower()
                         
                         # Universal element scoring based on element characteristics (no hardcoded intent patterns)
@@ -410,7 +410,7 @@ class HybridPipeline:
         def _clickable_bonus(meta: Dict[str, Any]) -> float:
             """Give bonus to elements that are likely clickable or interactive"""
             tag = (meta.get("tag") or "").lower()
-            attrs = meta.get("attributes", {})
+            attrs = meta.get("attrs") or meta.get("attributes", {})
 
             # Special bonus for links with href (navigation elements)
             if tag == "a" and attrs.get("href"):
@@ -472,7 +472,7 @@ class HybridPipeline:
             """Give bonus based on user intent (filter, select, click, etc.)"""
             query_lower = query_text.lower()
             tag = (meta.get("tag") or "").lower()
-            attrs = meta.get("attributes", {})
+            attrs = meta.get("attrs") or meta.get("attributes", {})
             text = (meta.get("text") or "").lower()
             
             # Universal element scoring based on element characteristics (no hardcoded intent patterns)
@@ -500,7 +500,7 @@ class HybridPipeline:
             """Give bonus to elements that are better disambiguated from similar elements"""
             query_lower = query_text.lower()
             tag = (meta.get("tag") or "").lower()
-            attrs = meta.get("attributes", {})
+            attrs = meta.get("attrs") or meta.get("attributes", {})
             text = (meta.get("text") or "").lower()
             
             # Find other elements with similar text
@@ -519,7 +519,7 @@ class HybridPipeline:
             # Bonus for having more specific attributes
             specific_attrs = ["data-testid", "id", "href", "onclick", "role", "aria-label"]
             attr_count = sum(1 for attr in specific_attrs if attrs.get(attr))
-            other_attr_counts = [sum(1 for attr in specific_attrs if other_meta.get("attributes", {}).get(attr)) for other_meta in similar_elements]
+            other_attr_counts = [sum(1 for attr in specific_attrs if (other_meta.get("attrs") or other_meta.get("attributes", {})).get(attr)) for other_meta in similar_elements]
             if attr_count > max(other_attr_counts, default=0):
                 bonus += 0.2  # Bonus for having more specific attributes
             
@@ -531,13 +531,13 @@ class HybridPipeline:
             
             # Bonus for having href (navigation elements)
             if tag == "a" and attrs.get("href"):
-                other_href_count = sum(1 for other_meta in similar_elements if other_meta.get("tag", "").lower() == "a" and other_meta.get("attributes", {}).get("href"))
+                other_href_count = sum(1 for other_meta in similar_elements if other_meta.get("tag", "").lower() == "a" and (other_meta.get("attrs") or other_meta.get("attributes", {})).get("href"))
                 if other_href_count == 0:  # Only this element has href
                     bonus += 0.2  # Bonus for being the only navigation element
             
             # Bonus for having onclick (interactive elements)
             if attrs.get("onclick"):
-                other_onclick_count = sum(1 for other_meta in similar_elements if other_meta.get("attributes", {}).get("onclick"))
+                other_onclick_count = sum(1 for other_meta in similar_elements if (other_meta.get("attrs") or other_meta.get("attributes", {})).get("onclick"))
                 if other_onclick_count == 0:  # Only this element has onclick
                     bonus += 0.2  # Bonus for being the only clickable element
             
@@ -585,10 +585,10 @@ class HybridPipeline:
             
             # Universal element scoring based on element characteristics (no hardcoded intent patterns)
             # Let MiniLM and MarkupLM handle intent understanding naturally
-            if tag == "button" and any(filter_word in (md.get("attributes", {}).get("class", "") or "").lower() for filter_word in ["filter", "sort", "control"]):
+            if tag == "button" and any(filter_word in ((md.get("attrs") or md.get("attributes", {})).get("class", "") or "").lower() for filter_word in ["filter", "sort", "control"]):
                 b -= 0.5  # Moderate penalty for filter buttons
                 reasons.append(f"-filter_penalty=0.500")
-            elif "filter" in (md.get("attributes", {}).get("data-testid", "") or "").lower():
+            elif "filter" in ((md.get("attrs") or md.get("attributes", {})).get("data-testid", "") or "").lower():
                 b -= 0.3  # Moderate penalty for filter elements
                 reasons.append(f"-filter_element_penalty=0.300")
             elif tag == "button" and any(control_word in elem_text.lower() for control_word in ["clear", "reset", "apply", "sort"]):
