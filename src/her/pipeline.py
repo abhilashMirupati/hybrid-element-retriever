@@ -192,6 +192,43 @@ class HybridPipeline:
         E = np.vstack(all_markup_vecs).astype(np.float32, copy=False) if all_markup_vecs else np.zeros((0, self._E_DIM), dtype=np.float32)
         return E, all_meta
 
+    def _compute_intent_score(self, user_intent: str, meta: Dict[str, Any]) -> float:
+        """Compute user intent score for MarkupLM reranking."""
+        if not user_intent:
+            return 0.0
+        
+        intent_lower = user_intent.lower()
+        text = (meta.get("text") or "").lower()
+        tag = (meta.get("tag") or "").lower()
+        role = (meta.get("attributes", {}).get("role") or "").lower()
+        href = (meta.get("attributes", {}).get("href") or "").lower()
+        
+        score = 0.0
+        
+        # Exact text match gets highest score
+        if intent_lower in text:
+            score += 0.3
+        
+        # Partial word matches
+        intent_words = intent_lower.split()
+        text_words = text.split()
+        word_matches = sum(1 for word in intent_words if word in text_words)
+        score += word_matches * 0.1
+        
+        # Check href for intent
+        if href and any(word in href for word in intent_words):
+            score += 0.2
+        
+        # Check tag relevance
+        if any(word in tag for word in intent_words):
+            score += 0.1
+        
+        # Check role relevance
+        if any(word in role for word in intent_words):
+            score += 0.1
+        
+        return score
+
     def embed_query(self, text: str) -> np.ndarray:
         if not isinstance(text, str) or not text.strip():
             raise ValueError("query text must be a non-empty string")
@@ -223,6 +260,7 @@ class HybridPipeline:
         page_sig: Optional[str] = None,
         frame_hash: Optional[str] = None,
         label_key: Optional[str] = None,
+        user_intent: Optional[str] = None,
     ) -> Dict[str, Any]:
         print(f"\n🔍 STEP 1: MiniLM Shortlist (384-d)")
         print(f"Query: '{query}'")
@@ -279,12 +317,18 @@ class HybridPipeline:
         shortlist_elements = [meta for (_, meta) in shortlist]
         shortlist_embeddings = self.element_embedder.batch_encode(shortlist_elements)  # 768-d
         
-        # Compute cosine similarity in 768-d space
+        # Compute cosine similarity in 768-d space with user intent awareness
         markup_scores: List[Tuple[float, Dict[str, Any]]] = []
         for i, (mini_score, meta) in enumerate(shortlist):
             if i < shortlist_embeddings.shape[0]:
                 markup_vec = shortlist_embeddings[i]
                 markup_score = _cos(q_markup, markup_vec)
+                
+                # Apply user intent scoring to MarkupLM results
+                if user_intent:
+                    intent_score = self._compute_intent_score(user_intent, meta)
+                    markup_score += intent_score
+                
                 markup_scores.append((markup_score, meta))
         
         print(f"✅ MarkupLM reranking completed")
@@ -311,17 +355,18 @@ class HybridPipeline:
         # Apply heuristics to final scores
         def _tag_bias(tag: str) -> float:
             tag = (tag or "").lower()
-            if tag == "input":  return 0.08  # Highest priority for inputs
-            if tag == "textarea": return 0.07  # High priority for textareas
-            if tag == "a":      return 0.06  # High priority for links (navigation)
-            if tag == "button": return 0.05  # High priority for buttons
-            if tag == "select": return 0.03  # Medium priority for selects
+            # Reduced bias - let MarkupLM + user intent be primary
+            if tag == "input":  return 0.01  # Reduced from 0.08
+            if tag == "textarea": return 0.01  # Reduced from 0.07
+            if tag == "a":      return 0.01  # Reduced from 0.06
+            if tag == "button": return 0.01  # Reduced from 0.05
+            if tag == "select": return 0.01  # Reduced from 0.03
             return 0.0
 
         def _role_bonus(role: str) -> float:
             role = (role or "").lower()
             if role in ("button", "link", "tab", "menuitem"):
-                return 0.02  # Increased
+                return 0.01  # Reduced from 0.02
             return 0.0
         
         def _clickable_bonus(meta: Dict[str, Any]) -> float:
@@ -329,9 +374,9 @@ class HybridPipeline:
             tag = (meta.get("tag") or "").lower()
             attrs = meta.get("attributes", {})
 
-            # Special bonus for links with href (navigation elements)
+            # Reduced bonus - let MarkupLM + user intent be primary
             if tag == "a" and attrs.get("href"):
-                return 0.5  # Maximum bonus for navigation links
+                return 0.1  # Reduced from 0.5
 
             # Check for clickable indicators
             clickable_indicators = [
@@ -341,7 +386,7 @@ class HybridPipeline:
 
             # If element has clickable attributes, give bonus
             if any(attr in attrs for attr in clickable_indicators):
-                return 0.3  # High bonus for clickable attributes
+                return 0.05  # Reduced from 0.3
 
             # If it's a known interactive tag
             if tag in ("button", "a", "input", "select", "textarea"):

@@ -282,6 +282,7 @@ class Runner:
             page_sig=ps,
             frame_hash=frame_hash,
             label_key=label_key,
+            user_intent=phrase,  # Pass user intent to MarkupLM
         )
         candidates = []
         for item in (result.get("results") or [])[:10]:
@@ -605,9 +606,8 @@ class Runner:
                     if id_attr or role or href:
                         score += 200
                     
-                    # HEURISTIC 9: Avoid elements that look like navigation/header
-                    if any(nav_word in class_name.lower() for nav_word in ['nav', 'header', 'menu', 'footer']):
-                        score -= 100  # Slight penalty for navigation elements
+                    # HEURISTIC 9: Universal element scoring (no hardcoded penalties)
+                    # All elements are potentially valid targets based on user intent
                     
                     # Add intent score
                     score += intent_score
