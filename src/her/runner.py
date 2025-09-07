@@ -724,6 +724,12 @@ class Runner:
             print(f"🔍 Found {count} elements with selector: {selector}")
             print(f"🎯 User intent: '{user_intent}'")
             
+            # Determine if we need interactive elements based on action type
+            interactive_actions = ["click", "select", "enter", "type", "sendkeys"]
+            require_interactive = any(action in user_intent.lower() for action in interactive_actions)
+            
+            print(f"   Action type: {user_intent} | Require interactive: {require_interactive}")
+            
             # Try to find the most visible and clickable element
             best_element = None
             best_score = -1
@@ -746,7 +752,8 @@ class Runner:
                             print(f"   Element {i+1}: Could not scroll into view - skipping")
                             continue
                     
-                    if not element.is_enabled():
+                    # Only check if enabled for interactive actions
+                    if require_interactive and not element.is_enabled():
                         print(f"   Element {i+1}: Not enabled - skipping")
                         continue
                     
