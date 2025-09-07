@@ -32,6 +32,23 @@ def extract_text_content(node: Dict[str, Any]) -> str:
         if ax_name:
             text_parts.append(ax_name)
     
+    # For interactive elements, get text from attributes
+    attrs = node.get('attributes', {})
+    if isinstance(attrs, list):
+        # Convert list format ['key1', 'value1', 'key2', 'value2'] to dict
+        attrs_dict = {}
+        for i in range(0, len(attrs), 2):
+            if i + 1 < len(attrs):
+                attrs_dict[attrs[i]] = attrs[i + 1]
+        attrs = attrs_dict
+    
+    if isinstance(attrs, dict):
+        # Priority order for text content in attributes
+        text_attrs = ['aria-label', 'data-placeholder-text', 'title', 'value', 'alt']
+        for attr in text_attrs:
+            if attr in attrs and attrs[attr]:
+                text_parts.append(attrs[attr].strip())
+    
     # Get text from children (if available)
     children = node.get('children', [])
     if children:

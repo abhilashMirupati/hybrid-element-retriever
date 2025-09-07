@@ -171,10 +171,10 @@ class Runner:
                                 attrs_dict[str(attrs[i])] = attrs[i + 1]
                         attrs = attrs_dict
                     
-                    # Get text content
-                    text = node.get('nodeValue', '').strip()
+                    # Get text content - prioritize the text extracted by merge function
+                    text = node.get('text', '').strip()
                     if not text:
-                        text = node.get('text', '').strip()
+                        text = node.get('nodeValue', '').strip()
                     
                     # For interactive elements, try to get text from accessibility tree
                     if not text and node.get('accessibility'):
