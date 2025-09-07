@@ -3,6 +3,8 @@
 from typing import Any, Dict, List, Optional, Tuple
 import logging
 
+from .config import get_config, CanonicalMode
+
 logger = logging.getLogger(__name__)
 
 
@@ -12,6 +14,7 @@ def merge_dom_ax(
 ) -> List[Dict[str, Any]]:
     """
     Merge DOM nodes with accessibility tree nodes using backend node IDs.
+    Respects canonical descriptor building mode configuration.
     
     Args:
         dom_nodes: List of DOM nodes with backendNodeId
@@ -20,8 +23,28 @@ def merge_dom_ax(
     Returns:
         List of merged nodes with combined DOM + accessibility attributes
     """
+    config = get_config()
+    canonical_mode = config.get_canonical_mode()
+    
+    logger.debug(f"Canonical mode: {canonical_mode.value}")
+    logger.debug(f"DOM nodes: {len(dom_nodes)}, Accessibility nodes: {len(ax_nodes)}")
+    
+    # Handle different canonical modes
+    if canonical_mode == CanonicalMode.DOM_ONLY:
+        logger.debug("DOM_ONLY mode: Using DOM nodes as-is")
+        return dom_nodes
+    
+    if canonical_mode == CanonicalMode.ACCESSIBILITY_ONLY:
+        logger.debug("ACCESSIBILITY_ONLY mode: Using accessibility nodes as-is")
+        return ax_nodes
+    
+    # BOTH mode - merge DOM and accessibility tree
     if not ax_nodes:
-        logger.debug("No accessibility tree nodes available, returning DOM nodes as-is")
+        if config.is_accessibility_mandatory():
+            logger.warning("⚠️  Accessibility extraction is mandatory but no accessibility nodes found!")
+            logger.warning("   Falling back to DOM nodes only")
+        else:
+            logger.debug("No accessibility tree nodes available, returning DOM nodes as-is")
         return dom_nodes
     
     # Create a mapping from accessibility nodeId to accessibility data
@@ -49,25 +72,37 @@ def merge_dom_ax(
             merged_nodes.append(dom_node)
             continue
         
-        # Merge DOM and accessibility attributes
-        merged_node = merge_node_attributes(dom_node, ax_node)
+        # Merge DOM and accessibility attributes based on mode
+        merged_node = merge_node_attributes(dom_node, ax_node, canonical_mode)
         merged_nodes.append(merged_node)
     
     logger.debug(f"Successfully merged {len(merged_nodes)} nodes")
     return merged_nodes
 
 
-def merge_node_attributes(dom_node: Dict[str, Any], ax_node: Dict[str, Any]) -> Dict[str, Any]:
+def merge_node_attributes(dom_node: Dict[str, Any], ax_node: Dict[str, Any], canonical_mode: CanonicalMode = CanonicalMode.BOTH) -> Dict[str, Any]:
     """
-    Merge attributes from DOM and accessibility tree nodes.
+    Merge attributes from DOM and accessibility tree nodes based on canonical mode.
     
     Args:
         dom_node: DOM node with attributes
         ax_node: Accessibility tree node with accessibility properties
+        canonical_mode: Canonical descriptor building mode
         
     Returns:
         Merged node with combined attributes
     """
+    config = get_config()
+    
+    if canonical_mode == CanonicalMode.DOM_ONLY:
+        # DOM only mode - return DOM node as-is
+        return dom_node
+    
+    if canonical_mode == CanonicalMode.ACCESSIBILITY_ONLY:
+        # Accessibility only mode - return accessibility node as-is
+        return ax_node
+    
+    # BOTH mode - merge DOM and accessibility tree
     # Start with DOM node as base
     merged = dom_node.copy()
     
@@ -97,29 +132,6 @@ def merge_node_attributes(dom_node: Dict[str, Any], ax_node: Dict[str, Any]) -> 
         'multiselectable': ax_node.get('multiselectable', ''),
         'readonly': ax_node.get('readonly', ''),
         'required': ax_node.get('required', ''),
-        'autocomplete': ax_node.get('autocomplete', ''),
-        'haspopup': ax_node.get('haspopup', ''),
-        'level': ax_node.get('level', ''),
-        'valuemin': ax_node.get('valuemin', ''),
-        'valuemax': ax_node.get('valuemax', ''),
-        'valuetext': ax_node.get('valuetext', ''),
-        'orientation': ax_node.get('orientation', ''),
-        'setsize': ax_node.get('setsize', ''),
-        'posinset': ax_node.get('posinset', ''),
-        'activedescendant': ax_node.get('activedescendant', ''),
-        'controls': ax_node.get('controls', ''),
-        'describedby': ax_node.get('describedby', ''),
-        'flowto': ax_node.get('flowto', ''),
-        'labelledby': ax_node.get('labelledby', ''),
-        'owns': ax_node.get('owns', ''),
-        'live': ax_node.get('live', ''),
-        'atomic': ax_node.get('atomic', ''),
-        'relevant': ax_node.get('relevant', ''),
-        'busy': ax_node.get('busy', ''),
-        'current': ax_node.get('current', ''),
-        'invalid': ax_node.get('invalid', ''),
-        'keyshortcuts': ax_node.get('keyshortcuts', ''),
-        'roledescription': ax_node.get('roledescription', ''),
         'autocomplete': ax_node.get('autocomplete', ''),
         'haspopup': ax_node.get('haspopup', ''),
         'level': ax_node.get('level', ''),

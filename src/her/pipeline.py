@@ -340,16 +340,19 @@ class HybridPipeline:
             is_interactive = md.get("interactive", False)
             attrs = md.get("attributes", {})
             
-            # 1. Interactivity bonus (universal)
+            # 1. Interactivity bonus (universal) - HIGHEST PRIORITY
             if is_interactive:
-                bonus += 0.2
-                reasons.append("+interactive=0.200")
+                bonus += 0.5  # Increased bonus for interactive elements
+                reasons.append("+interactive=0.500")
             elif tag in ("button", "a", "input", "select", "option"):
-                bonus += 0.1
-                reasons.append("+clickable=0.100")
+                bonus += 0.2  # Increased bonus for clickable tags
+                reasons.append("+clickable=0.200")
+            elif tag == "#text" and any(word in user_intent.lower() for word in ["click", "select", "press"]):
+                bonus -= 1.0  # Heavy penalty for text nodes on click actions
+                reasons.append("-text_node_click=-1.000")
             elif tag in ("div", "span", "p") and any(word in user_intent.lower() for word in ["click", "select", "press"]):
-                bonus -= 0.1
-                reasons.append("-non_clickable=-0.100")
+                bonus -= 0.3  # Increased penalty for non-clickable elements
+                reasons.append("-non_clickable=-0.300")
             
             # 2. Visibility penalty (universal)
             if not visible:

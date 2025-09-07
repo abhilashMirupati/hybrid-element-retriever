@@ -69,6 +69,56 @@ class Runner:
             self._page.set_default_timeout(15000)
         return self._page
 
+    def _is_element_interactive(self, tag: str, attrs: Dict[str, Any], role: str) -> bool:
+        """
+        Determine if an element is interactive based on tag, attributes, and role.
+        
+        Args:
+            tag: Element tag name
+            attrs: Element attributes
+            role: Accessibility role
+            
+        Returns:
+            True if element is interactive, False otherwise
+        """
+        # Skip text nodes
+        if tag == '#text' or not tag:
+            return False
+        
+        # Check interactive tags
+        interactive_tags = ['button', 'a', 'input', 'select', 'textarea', 'option', 'label', 'form', 'fieldset']
+        if tag.lower() in interactive_tags:
+            return True
+        
+        # Check interactive roles
+        interactive_roles = ['button', 'link', 'menuitem', 'tab', 'option', 'radio', 'checkbox', 'switch', 'textbox', 'combobox', 'listbox', 'menu', 'menubar', 'toolbar', 'slider', 'progressbar', 'scrollbar', 'tablist', 'tree', 'grid', 'cell', 'row', 'columnheader', 'rowheader', 'dialog', 'alertdialog', 'log', 'marquee', 'status', 'timer', 'tooltip']
+        if role and role.lower() in interactive_roles:
+            return True
+        
+        # Check for click handlers
+        if attrs.get('onclick') or attrs.get('onmousedown') or attrs.get('onmouseup'):
+            return True
+        
+        # Check for tabindex (focusable)
+        tabindex = attrs.get('tabindex')
+        if tabindex and str(tabindex).isdigit() and int(tabindex) >= 0:
+            return True
+        
+        # Check for specific input types
+        if tag.lower() == 'input':
+            input_type = attrs.get('type', '').lower()
+            interactive_types = ['button', 'submit', 'reset', 'radio', 'checkbox', 'file', 'image', 'range', 'color', 'date', 'datetime-local', 'email', 'month', 'number', 'password', 'search', 'tel', 'text', 'time', 'url', 'week']
+            if input_type in interactive_types:
+                return True
+        
+        # Check for data attributes indicating interactivity
+        data_attrs = ['data-testid', 'data-id', 'data-value', 'data-action', 'data-click', 'data-toggle']
+        for attr in data_attrs:
+            if attrs.get(attr):
+                return True
+        
+        return False
+
     def _close(self) -> None:
         try:
             if self._page:
@@ -143,6 +193,9 @@ class Runner:
                             else:
                                 xpath = f"//{tag.lower()}"
                     
+                    # Determine if element is interactive
+                    interactive = self._is_element_interactive(tag, attrs, role)
+                    
                     # Create element descriptor
                     element = {
                         'text': text,
@@ -153,7 +206,7 @@ class Runner:
                         'bbox': node.get('bbox', {'x': 0, 'y': 0, 'width': 0, 'height': 0, 'w': 0, 'h': 0}),
                         'visible': node.get('visible', True),
                         'below_fold': node.get('below_fold', False),
-                        'interactive': node.get('interactive', False),
+                        'interactive': interactive,
                         'backendNodeId': node.get('backendNodeId'),
                         'accessibility': node.get('accessibility', {})
                     }
