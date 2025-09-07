@@ -224,7 +224,7 @@ class HybridPipeline:
             return {"results": [], "strategy": "hybrid-delta", "confidence": 0.0}
         
         # Debug: Check if target elements made it through preparation
-        target_word = query.lower().split()[0] if query else "phones"  # Use first word of query as target
+        target_word = query.lower().split()[0] if query else "element"  # Use first word of query as target
         target_links_prepared = [m for m in meta if m.get('tag', '').lower() == 'a' and target_word in m.get('text', '').lower()]
         print(f"🔍 A tags with '{target_word}' text after preparation: {len(target_links_prepared)}")
         for i, m in enumerate(target_links_prepared):
@@ -276,7 +276,7 @@ class HybridPipeline:
         print(f"✅ Found {len(all_hits)} candidates from cosine similarity")
         
         # Debug: Check ALL elements for target text to see their actual scores
-        target_word = query.lower().split()[0] if query else "phones"  # Use first word of query as target
+        target_word = query.lower().split()[0] if query else "element"  # Use first word of query as target
         all_elements_with_target = [(i, meta[i]) for i, m in enumerate(meta) if target_word in m.get('text', '').lower()]
         print(f"\n🔍 ALL elements with '{target_word}' text and their indices:")
         for idx, elem_meta in all_elements_with_target:
@@ -307,6 +307,12 @@ class HybridPipeline:
                         # Apply intent-aware scoring in fallback
                         forced_score = max(score, 0.1)  # Base score
                         
+                        # Get element metadata first
+                        tag = elem_meta.get("tag", "").lower()
+                        text = elem_meta.get("text", "").lower()
+                        attrs = elem_meta.get("attributes", {})
+                        query_lower = query.lower()
+                        
                         # Universal element scoring based on element characteristics (no hardcoded intent patterns)
                         # Let MiniLM and MarkupLM handle intent understanding naturally
                         if "product-tile" in attrs.get("data-testid", "").lower():
@@ -322,49 +328,13 @@ class HybridPipeline:
                         elif tag == "button" and any(control_word in text for control_word in ["clear", "reset", "apply", "sort"]):
                             forced_score = max(forced_score, 0.3)  # Lower priority for control buttons
                         
-                        # Apply universal intent-aware logic based on query context
-                        tag = elem_meta.get("tag", "").lower()
-                        text = elem_meta.get("text", "").lower()
-                        attrs = elem_meta.get("attributes", {})
-                        query_lower = query.lower()
-                        
-                        # Universal scoring based on intent patterns
-                        if any(word in query_lower for word in ["select", "click", "choose", "pick"]) and not any(word in query_lower for word in ["filter", "sort", "search"]):
-                            # Item selection intent - prioritize product tiles and interactive elements
-                            if "product-tile" in attrs.get("data-testid", "").lower():
-                                forced_score = max(forced_score, 0.9)  # Maximum priority for product tiles
-                            elif "tile" in attrs.get("class", "").lower() or "tile" in attrs.get("data-testid", "").lower():
-                                forced_score = max(forced_score, 0.8)  # High priority for tile elements
-                            elif "iphone" in text and "pro" in text:
-                                forced_score = max(forced_score, 0.8)  # High priority for iPhone Pro products
-                            elif tag in ["a", "button"] and (attrs.get("href") or attrs.get("onclick")):
-                                forced_score = max(forced_score, 0.7)  # High priority for interactive elements
-                            elif tag == "div" and any(interactive_attr in attrs for interactive_attr in ["onclick", "href", "role", "tabindex"]):
-                                forced_score = max(forced_score, 0.6)  # High priority for interactive containers
-                            elif tag == "button" and any(filter_word in attrs.get("class", "").lower() for filter_word in ["filter", "sort", "control"]):
-                                forced_score = max(forced_score, 0.01)  # Very low priority for filter buttons
-                            elif tag == "button" and any(control_word in text for control_word in ["clear", "reset", "apply", "sort"]):
-                                forced_score = max(forced_score, 0.01)  # Very low priority for control buttons
-                            elif tag == "button" and "apple" in text and "iphone" not in text:
-                                forced_score = max(forced_score, 0.01)  # Very low priority for Apple filter button
-                        
-                        elif any(word in query_lower for word in ["filter", "sort", "search"]) and not any(word in query_lower for word in ["select", "click", "choose", "pick"]):
-                            # Filtering intent - prioritize filter/control elements
-                            if tag == "button":
-                                forced_score = max(forced_score, 0.7)  # High priority for buttons in filter context
-                            elif any(filter_word in attrs.get("class", "").lower() for filter_word in ["filter", "sort", "control"]):
-                                forced_score = max(forced_score, 0.8)  # Maximum priority for filter-specific elements
-                            elif "filter" in attrs.get("data-testid", "").lower():
-                                forced_score = max(forced_score, 0.8)  # Maximum priority for filter elements
-                            elif tag in ["div", "span", "p"] and not any(attr in attrs for attr in ["onclick", "href", "role", "tabindex"]):
-                                forced_score = max(forced_score, 0.2)  # Low priority for non-interactive containers
-                        
-                        else:
-                            # General intent - prioritize interactive elements
-                            if tag in ["a", "button"] and (attrs.get("href") or attrs.get("onclick")):
-                                forced_score = max(forced_score, 0.6)  # High priority for interactive elements
-                            elif tag in ["input", "select", "textarea"]:
-                                forced_score = max(forced_score, 0.7)  # High priority for form elements
+                        # Additional universal scoring based on element characteristics
+                        if len(text.split()) >= 2 and any(word in text for word in ["pro", "max", "plus", "ultra"]):
+                            forced_score = max(forced_score, 0.8)  # High priority for product variants
+                        elif tag == "button" and len(text.split()) == 1 and any(word in text for word in ["apple", "samsung", "google", "motorola"]):
+                            forced_score = max(forced_score, 0.3)  # Lower priority for brand filter buttons
+                        elif tag in ["input", "select", "textarea"]:
+                            forced_score = max(forced_score, 0.6)  # High priority for form elements
                         
                         all_hits.append((forced_score, elem_meta))
                         print(f"  ✅ Forced inclusion: Index {idx} | Score: {forced_score:.6f} | Tag: {elem_meta.get('tag', '')} | Text: '{elem_meta.get('text', '')[:50]}...'")
@@ -507,37 +477,24 @@ class HybridPipeline:
             attrs = meta.get("attributes", {})
             text = (meta.get("text") or "").lower()
             
-            # Universal intent-based scoring
-            if any(word in query_lower for word in ["select", "click", "choose", "pick"]) and not any(word in query_lower for word in ["filter", "sort", "search"]):
-                # Item selection intent - prioritize interactive elements with content
-                if tag in ["a", "button"] and (attrs.get("href") or attrs.get("onclick")):
-                    return 0.4  # High bonus for interactive elements
-                elif "tile" in attrs.get("class", "").lower() or "tile" in attrs.get("data-testid", "").lower():
-                    return 0.5  # Maximum bonus for tile elements
-                elif tag == "div" and any(interactive_attr in attrs for interactive_attr in ["onclick", "href", "role", "tabindex"]):
-                    return 0.3  # Medium bonus for interactive containers
-                elif tag in ["input", "select", "textarea"]:
-                    return 0.4  # High bonus for form elements
-            
-            elif any(word in query_lower for word in ["filter", "sort", "search"]) and not any(word in query_lower for word in ["select", "click", "choose", "pick"]):
-                # Filtering intent - prioritize filter/control elements
-                if tag == "button":
-                    return 0.4  # High bonus for buttons in filter context
-                elif any(filter_word in attrs.get("class", "").lower() for filter_word in ["filter", "sort", "control"]):
-                    return 0.5  # Maximum bonus for filter-specific elements
-                elif "filter" in attrs.get("data-testid", "").lower():
-                    return 0.5  # Maximum bonus for filter elements
-                elif attrs.get("role") in ["button", "option", "menuitem"]:
-                    return 0.3  # Medium bonus for role-based buttons
-            
-            elif "click" in query_lower:
-                # General click intent - prioritize interactive elements
-                if tag in ["button", "a"]:
-                    return 0.3  # Good bonus for clickable elements
-                elif attrs.get("href") or attrs.get("onclick"):
-                    return 0.4  # High bonus for elements with click handlers
-                elif tag in ["input", "select", "textarea"]:
-                    return 0.3  # Good bonus for form elements
+            # Universal element scoring based on element characteristics (no hardcoded intent patterns)
+            # Let MiniLM and MarkupLM handle intent understanding naturally
+            if tag in ["a", "button"] and (attrs.get("href") or attrs.get("onclick")):
+                return 0.4  # High bonus for interactive elements
+            elif "tile" in attrs.get("class", "").lower() or "tile" in attrs.get("data-testid", "").lower():
+                return 0.5  # Maximum bonus for tile elements
+            elif tag == "div" and any(interactive_attr in attrs for interactive_attr in ["onclick", "href", "role", "tabindex"]):
+                return 0.3  # Medium bonus for interactive containers
+            elif tag in ["input", "select", "textarea"]:
+                return 0.4  # High bonus for form elements
+            elif tag == "button":
+                return 0.3  # Good bonus for buttons
+            elif any(filter_word in attrs.get("class", "").lower() for filter_word in ["filter", "sort", "control"]):
+                return 0.2  # Moderate bonus for filter-specific elements
+            elif "filter" in attrs.get("data-testid", "").lower():
+                return 0.2  # Moderate bonus for filter elements
+            elif attrs.get("role") in ["button", "option", "menuitem"]:
+                return 0.3  # Medium bonus for role-based buttons
             
             return 0.0
         
@@ -628,28 +585,20 @@ class HybridPipeline:
             # Universal intent-aware penalties based on query context
             query_lower = query.lower()
             
-            # If query suggests product/item selection (not filtering)
-            if any(word in query_lower for word in ["select", "click", "choose", "pick"]) and not any(word in query_lower for word in ["filter", "sort", "search"]):
-                # Penalize filter/control elements when user wants to select items
-                if tag == "button" and any(filter_word in (md.get("attributes", {}).get("class", "") or "").lower() for filter_word in ["filter", "sort", "control"]):
-                    b -= 2.0  # Strong penalty for filter buttons when selecting items
-                    reasons.append(f"-filter_penalty=2.000")
-                elif "filter" in (md.get("attributes", {}).get("data-testid", "") or "").lower():
-                    b -= 1.5  # Strong penalty for filter elements when selecting items
-                    reasons.append(f"-filter_element_penalty=1.500")
-                elif tag == "button" and any(control_word in elem_text.lower() for control_word in ["clear", "reset", "apply", "sort"]):
-                    b -= 1.0  # Strong penalty for control buttons when selecting items
-                    reasons.append(f"-control_penalty=1.000")
-                elif tag == "button" and "apple" in elem_text.lower() and "iphone" not in elem_text.lower():
-                    b -= 1.5  # Strong penalty for Apple filter button when selecting iPhone products
-                    reasons.append(f"-apple_filter_penalty=1.500")
-            
-            # If query suggests filtering/sorting (not item selection)
-            elif any(word in query_lower for word in ["filter", "sort", "search"]) and not any(word in query_lower for word in ["select", "click", "choose", "pick"]):
-                # Penalize non-interactive elements when user wants to filter
-                if tag in ["div", "span", "p"] and not any(attr in (md.get("attributes", {}) or {}) for attr in ["onclick", "href", "role", "tabindex"]):
-                    b -= 0.3  # Penalty for non-interactive containers when filtering
-                    reasons.append(f"-non_interactive_penalty=0.300")
+            # Universal element scoring based on element characteristics (no hardcoded intent patterns)
+            # Let MiniLM and MarkupLM handle intent understanding naturally
+            if tag == "button" and any(filter_word in (md.get("attributes", {}).get("class", "") or "").lower() for filter_word in ["filter", "sort", "control"]):
+                b -= 0.5  # Moderate penalty for filter buttons
+                reasons.append(f"-filter_penalty=0.500")
+            elif "filter" in (md.get("attributes", {}).get("data-testid", "") or "").lower():
+                b -= 0.3  # Moderate penalty for filter elements
+                reasons.append(f"-filter_element_penalty=0.300")
+            elif tag == "button" and any(control_word in elem_text.lower() for control_word in ["clear", "reset", "apply", "sort"]):
+                b -= 0.3  # Moderate penalty for control buttons
+                reasons.append(f"-control_penalty=0.300")
+            elif tag == "button" and len(elem_text.split()) == 1 and any(word in elem_text.lower() for word in ["apple", "samsung", "google", "motorola"]):
+                b -= 0.2  # Small penalty for brand filter buttons
+                reasons.append(f"-brand_filter_penalty=0.200")
             
             if b:
                 reasons.append(f"+bias={b:.3f}")
