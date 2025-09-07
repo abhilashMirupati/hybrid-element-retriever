@@ -434,8 +434,30 @@ class HybridPipeline:
 
             return score
 
+        # Show MarkupLM scores WITHOUT rule-based scoring
+        print(f"🎯 STEP 3: MarkupLM Scores (BEFORE rule-based scoring)")
+        print(f"🔍 Pure MarkupLM ranking for {len(markup_scores)} candidates:")
+        for i, (base_score, md) in enumerate(markup_scores):
+            print(f"   {i+1}. MarkupLM Score: {base_score:.3f} | Tag: {md.get('tag', '')} | Text: '{md.get('text', '')[:50]}...'")
+            print(f"       XPath: {md.get('xpath', '')[:80]}...")
+        
+        # Check if MarkupLM already has the right element on top
+        if markup_scores:
+            top_element = markup_scores[0][1]
+            print(f"\\n🔍 MarkupLM's #1 choice:")
+            print(f"   Text: '{top_element.get('text', '')[:50]}...'")
+            print(f"   Tag: {top_element.get('tag', '')}")
+            print(f"   XPath: {top_element.get('xpath', '')[:80]}...")
+            print(f"   Score: {markup_scores[0][0]:.3f}")
+            
+            # Check if it's the Apple filter button
+            if 'Apple_2' in top_element.get('xpath', ''):
+                print("   ✅ MarkupLM correctly identified Apple filter button!")
+            else:
+                print("   ❌ MarkupLM did NOT identify Apple filter button")
+        
         # Apply heuristics to MarkupLM scores
-        print(f"🎯 STEP 3: Final Heuristic Scoring")
+        print(f"\\n🎯 STEP 4: Applying Rule-Based Scoring (Questionable)")
         print(f"🔍 Applied heuristics to {len(markup_scores)} MarkupLM candidates")
         ranked: List[Tuple[float, Dict[str, Any], List[str]]] = []
         for i, (base_score, md) in enumerate(markup_scores):
@@ -459,11 +481,10 @@ class HybridPipeline:
             print(f"     Text: '{md.get('text', '')[:50]}...'")
             print(f"     Tag: {md.get('tag', '')}")
             print(f"     XPath: {md.get('xpath', '')[:80]}...")
-            print(f"     Base Score: {base_score:.3f}")
-            print(f"     Tag Bias: {_tag_bias(md.get('tag', '')):.3f}")
-            print(f"     Role Bonus: {_role_bonus(md.get('role', '')):.3f}")
-            print(f"     Clickable Bonus: {clickable_bonus:.3f}")
+            print(f"     MarkupLM Score: {base_score:.3f}")
+            print(f"     Rule-Based Bonus: {b:.3f}")
             print(f"     Final Score: {final_score:.3f}")
+            print(f"     Score Change: {final_score - base_score:+.3f}")
             print(f"     Reasons: {reasons}")
 
         ranked.sort(key=lambda t: t[0], reverse=True)
