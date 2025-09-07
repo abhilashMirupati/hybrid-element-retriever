@@ -44,6 +44,10 @@ def synthesize_xpath(desc: Dict) -> List[Tuple[str, str]]:
         add("id+text", f'//*[@id="{elid}" and normalize-space()="{text}"]')
     elif elid:
         add("id", f'//*[@id="{elid}"]')
+    
+    # High priority: id + tag (more specific than just id)
+    if elid and tag != "*":
+        add("id+tag", f'//{tag}[@id="{elid}"]')
 
     # Medium priority: class + text (more robust than absolute paths)
     class_name = attrs.get("class")
@@ -69,6 +73,13 @@ def synthesize_xpath(desc: Dict) -> List[Tuple[str, str]]:
         add("text-exact", f'//{tag}[normalize-space()="{text}"]')
     if text:
         add("text-contains", f'//*[contains(normalize-space(), "{text}")]')
+
+    # Add position-based selectors for better uniqueness
+    if text and tag:
+        # Try with position if we have text and tag
+        add("text-exact-position", f'//{tag}[normalize-space()="{text}"][1]')
+    elif text:
+        add("text-exact-position", f'//*[normalize-space()="{text}"][1]')
 
     return out
 

@@ -408,7 +408,8 @@ class Runner:
                 handle.click()
                 return
         if action == "select":
-            self._page.locator(f"xpath={selector}").first.click()
+            # For select actions, try to find the most visible/clickable element
+            self._click_best_element(selector)
             return
         if action == "back":
             try:
@@ -429,7 +430,80 @@ class Runner:
                 secs = 1.0
             self._page.wait_for_timeout(int(secs * 1000))
             return
-        self._page.locator(f"xpath={selector}").first.click()
+        # For click actions, try to find the best element
+        self._click_best_element(selector)
+
+    def _click_best_element(self, selector: str) -> None:
+        """Click the best element when there are multiple matches."""
+        if not _PLAYWRIGHT or not self._page:
+            return
+        
+        try:
+            # Get all matching elements
+            locators = self._page.locator(f"xpath={selector}")
+            count = locators.count()
+            
+            if count == 0:
+                raise Exception(f"No elements found for selector: {selector}")
+            elif count == 1:
+                # Only one element, click it
+                locators.first.click()
+                return
+            
+            # Multiple elements - find the best one
+            print(f"🔍 Found {count} elements with selector: {selector}")
+            
+            # Try to find the most visible and clickable element
+            best_element = None
+            best_score = -1
+            
+            for i in range(count):
+                try:
+                    element = locators.nth(i)
+                    
+                    # Check if element is visible and clickable
+                    if not element.is_visible():
+                        continue
+                    
+                    # Get element properties
+                    bbox = element.bounding_box()
+                    if not bbox or bbox['width'] <= 0 or bbox['height'] <= 0:
+                        continue
+                    
+                    # Calculate score based on visibility and size
+                    score = bbox['width'] * bbox['height']  # Area as score
+                    
+                    # Bonus for being in viewport center
+                    viewport = self._page.viewport_size
+                    if viewport:
+                        center_x = bbox['x'] + bbox['width'] / 2
+                        center_y = bbox['y'] + bbox['height'] / 2
+                        viewport_center_x = viewport['width'] / 2
+                        viewport_center_y = viewport['height'] / 2
+                        
+                        # Distance from center (closer is better)
+                        distance = ((center_x - viewport_center_x) ** 2 + (center_y - viewport_center_y) ** 2) ** 0.5
+                        center_bonus = max(0, 1000 - distance)  # Bonus decreases with distance
+                        score += center_bonus
+                    
+                    if score > best_score:
+                        best_score = score
+                        best_element = element
+                        
+                except Exception:
+                    continue
+            
+            if best_element:
+                print(f"✅ Clicking best element (score: {best_score:.1f})")
+                best_element.click()
+            else:
+                print(f"⚠️  No suitable element found, clicking first visible one")
+                locators.first.click()
+                
+        except Exception as e:
+            print(f"❌ Error clicking element: {e}")
+            # Fallback to first element
+            self._page.locator(f"xpath={selector}").first.click()
 
     def _validate(self, step: str) -> bool:
         if not _PLAYWRIGHT or not self._page:
