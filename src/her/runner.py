@@ -172,9 +172,15 @@ class Runner:
                         attrs = attrs_dict
                     
                     # Get text content
-                    text = node.get('text', '').strip()
+                    text = node.get('nodeValue', '').strip()
                     if not text:
-                        text = node.get('nodeValue', '').strip()
+                        text = node.get('text', '').strip()
+                    
+                    # For interactive elements, try to get text from accessibility tree
+                    if not text and node.get('accessibility'):
+                        text = node['accessibility'].get('name', '').strip()
+                        if not text:
+                            text = node['accessibility'].get('value', '').strip()
                     
                     # Get tag name
                     tag = (node.get('tagName') or node.get('nodeName') or '').upper()
@@ -185,7 +191,7 @@ class Runner:
                         role = node['accessibility'].get('role', '')
                     
                     # Debug: Print element details
-                    print(f"🔍 Processing element: tag='{tag}', text='{text[:50]}...', attrs={len(attrs)}")
+                    print(f"🔍 Processing element: tag='{tag}', text='{text[:50]}{'...' if len(text) > 50 else ''}', attrs={len(attrs)}")
                     
                     # Generate XPath if not present
                     xpath = node.get('xpath', '')
@@ -245,6 +251,9 @@ class Runner:
             print("   Falling back to basic DOM snapshot...")
             import traceback
             traceback.print_exc()
+            
+            # Force fallback to JavaScript approach
+            pass
         
         # Fallback to original JavaScript-based snapshot
         js = r"""

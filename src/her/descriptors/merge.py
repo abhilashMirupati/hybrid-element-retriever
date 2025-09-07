@@ -8,6 +8,42 @@ from ..config import get_config, CanonicalMode
 logger = logging.getLogger(__name__)
 
 
+def extract_text_content(node: Dict[str, Any]) -> str:
+    """
+    Extract text content from a DOM node, including child text nodes.
+    This is important for interactive elements where text is in child nodes.
+    
+    Args:
+        node: DOM node with potential child nodes
+        
+    Returns:
+        Combined text content from the node and its children
+    """
+    text_parts = []
+    
+    # Get direct text content
+    node_value = node.get('nodeValue', '').strip()
+    if node_value:
+        text_parts.append(node_value)
+    
+    # Get text from accessibility tree
+    if 'accessibility' in node:
+        ax_name = node['accessibility'].get('name', '').strip()
+        if ax_name:
+            text_parts.append(ax_name)
+    
+    # Get text from children (if available)
+    children = node.get('children', [])
+    if children:
+        for child in children:
+            if isinstance(child, dict):
+                child_text = child.get('nodeValue', '').strip()
+                if child_text:
+                    text_parts.append(child_text)
+    
+    return ' '.join(text_parts).strip()
+
+
 def merge_dom_ax(
     dom_nodes: List[Dict[str, Any]], 
     ax_nodes: List[Dict[str, Any]]
@@ -74,6 +110,12 @@ def merge_dom_ax(
         
         # Merge DOM and accessibility attributes based on mode
         merged_node = merge_node_attributes(dom_node, ax_node, canonical_mode)
+        
+        # Extract text content for better MiniLM matching
+        text_content = extract_text_content(merged_node)
+        if text_content:
+            merged_node['text'] = text_content
+        
         merged_nodes.append(merged_node)
     
     logger.debug(f"Successfully merged {len(merged_nodes)} nodes")
