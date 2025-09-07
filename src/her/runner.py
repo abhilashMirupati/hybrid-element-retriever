@@ -139,8 +139,33 @@ class Runner:
   }
   function siblingIndex(el) {
     let i = 1; let s = el.previousElementSibling;
-    while (s) { if (s.nodeName === el.nodeName) i++; s = s.previousElementSibling; }
+    while (s) { 
+      if (s.nodeName === el.nodeName) i++; 
+      s = s.previousElementSibling; 
+    }
     return i;
+  }
+  
+  function getElementPosition(el) {
+    // Get position among elements with same tag and id
+    const tag = el.tagName.toLowerCase();
+    const id = el.id;
+    
+    if (id) {
+      // For elements with ID, count previous siblings with same tag and id
+      let pos = 1;
+      let s = el.previousElementSibling;
+      while (s) {
+        if (s.nodeName === el.nodeName && s.id === id) {
+          pos++;
+        }
+        s = s.previousElementSibling;
+      }
+      return pos;
+    } else {
+      // For elements without ID, use regular sibling index
+      return siblingIndex(el);
+    }
   }
   function generateRelativeXPath(el) {
     if (!el || el.nodeType !== 1) return '';
@@ -164,11 +189,11 @@ class Runner:
     
     // Priority 2: id + text + position (most unique)
     if (attrs['id'] && text) {
-      const pos = siblingIndex(el);
+      const pos = getElementPosition(el);
       return `//*[@id="${attrs['id']}" and normalize-space()="${text}"][${pos}]`;
     }
     if (attrs['id']) {
-      const pos = siblingIndex(el);
+      const pos = getElementPosition(el);
       return `//*[@id="${attrs['id']}"][${pos}]`;
     }
     
@@ -287,13 +312,14 @@ class Runner:
     const inViewport = rect.right > 0 && rect.left < vw && rect.bottom > 0 && rect.top < vh;
     const belowFold = rect.top > vh;
     
+    const interactive = isInteractive(el);
     out.push({
       text, tag, role: role || null, attrs,
       xpath: generateRelativeXPath(el),
       bbox: { x: Math.max(0, Math.round(rect.x)), y: Math.max(0, Math.round(rect.y)), width: Math.max(0, Math.round(rect.width)), height: Math.max(0, Math.round(rect.height)), w: Math.max(0, Math.round(rect.width)), h: Math.max(0, Math.round(rect.height)) },
       visible: inViewport,
       below_fold: belowFold,
-      interactive: isInteractive(el)
+      interactive: interactive
     });
   }
   return out;

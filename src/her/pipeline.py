@@ -224,6 +224,12 @@ class HybridPipeline:
             query_matches = sum(1 for word in query_words if word in text_words)
             if query_matches > 0:
                 score += min(0.3, query_matches * 0.1)  # Up to 0.3 for query matches
+            
+            # Special handling for color selection - look for aria-label matches
+            if any(word in query.lower() for word in ['color', 'titanium', 'desert', 'black', 'white', 'natural']):
+                aria_label = meta.get('attributes', {}).get('aria-label', '').lower()
+                if aria_label and any(word in aria_label for word in query_words):
+                    score += 0.4  # High bonus for aria-label matches
         
         # 2. Target matching (what user wants to interact with)
         if target:
@@ -255,6 +261,11 @@ class HybridPipeline:
                     score += 0.2  # High score for clickable elements
                 elif role in ("button", "link", "tab", "menuitem", "option"):
                     score += 0.1  # Medium score for accessible elements
+                
+                # Special bonus for radio buttons when selecting colors
+                if tag == "input" and meta.get('attributes', {}).get('type') == 'radio':
+                    if any(word in query.lower() for word in ['color', 'titanium', 'desert', 'black', 'white', 'natural']):
+                        score += 0.3  # High bonus for radio buttons in color selection
         
         # 4. Href relevance (for links)
         if href and query:
