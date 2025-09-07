@@ -185,13 +185,13 @@ class HybridPipeline:
     def embed_query(self, text: str) -> np.ndarray:
         if not isinstance(text, str) or not text.strip():
             raise ValueError("query text must be a non-empty string")
-        # Use MarkupLM for query embedding to match element embedding dimensions
-        query_desc = {
-            "tag": "query",
-            "text": text,
-            "attributes": {}
-        }
-        q = self.element_embedder.encode(query_desc)
+        # Use MiniLM for query embedding (384-dim) and pad to match element dimension (768-dim)
+        q = self.text_embedder.encode_one(text)
+        # Pad query vector to match element embedding dimension
+        if len(q) < self._E_DIM:
+            padded_q = np.zeros(self._E_DIM, dtype=np.float32)
+            padded_q[:len(q)] = q
+            q = padded_q
         return _l2norm(q)
 
     def embed_elements(self, elements: List[Dict[str, Any]]) -> np.ndarray:
@@ -288,108 +288,9 @@ class HybridPipeline:
         for i, (score, meta) in enumerate(all_hits[:5]):
             print(f"  {i+1}. Score: {score:.3f} | Tag: {meta.get('tag', '')} | Text: '{meta.get('text', '')[:50]}...'")
         
-        # Debug: Check ALL elements for target text to see their actual scores
-        # Extract the most relevant target word from the query (skip action words)
-        action_words = {"click", "select", "type", "fill", "choose", "pick", "open", "navigate", "go", "press", "tap"}
-        query_words = [w for w in query.lower().split() if w not in action_words and len(w) > 2]
-        target_word = query_words[0] if query_words else "element"
-        all_elements_with_target = [(i, m) for i, m in enumerate(elements) if isinstance(m, dict) and target_word in m.get('text', '').lower()]
-        print(f"\n🔍 ALL elements with '{target_word}' text and their indices:")
-        for idx, elem_meta in all_elements_with_target:
-            print(f"  Index {idx}: Tag: {elem_meta.get('tag', '')} | Text: '{elem_meta.get('text', '')}' | XPath: {elem_meta.get('xpath', '')[:80]}...")
-        
-        # Debug: Check if any of these elements are in the top candidates
-        target_indices = [i for i, m in enumerate(elements) if isinstance(m, dict) and target_word in m.get('text', '').lower()]
-        print(f"\n🔍 {target_word.title()} elements indices: {target_indices}")
+        # Debug: Show MiniLM results
+        print(f"\n🔍 MiniLM found {len(all_hits)} candidates")
         print(f"🔍 Top candidates indices: {[h[1].get('_index', 'unknown') for h in all_hits]}")
-        
-        # Check if any target elements made it to top candidates
-        target_in_top = [h for h in all_hits if h[1].get('_index', -1) in target_indices]
-        print(f"🔍 {target_word.title()} elements in top candidates: {len(target_in_top)}")
-        for score, meta in target_in_top:
-            print(f"  Score: {score:.6f} | Tag: {meta.get('tag', '')} | Text: '{meta.get('text', '')}'")
-        
-        # FALLBACK: If no exact text matches are found, force include them
-        if len(target_in_top) == 0:
-            print(f"\n🔄 FALLBACK: No exact text matches found, forcing inclusion...")
-            for idx in target_indices:
-                if idx < len(elements):
-                    elem_meta = elements[idx]
-                    # Calculate similarity score
-                    if idx < len(store.vectors):
-                        elem_vec = np.array(store.vectors[idx], dtype=np.float32)
-                        score = _cos(q, elem_vec)
-                        
-                        # Apply intent-aware scoring in fallback
-                        forced_score = max(score, 0.1)  # Base score
-                        
-                        # Get element metadata first
-                        tag = elem_meta.get("tag", "").lower()
-                        text = elem_meta.get("text", "").lower()
-                        attrs = elem_meta.get("attrs") or elem_meta.get("attributes", {})
-                        query_lower = query.lower()
-                        
-                        # Universal element scoring based on element characteristics (no hardcoded intent patterns)
-                        # Let MiniLM and MarkupLM handle intent understanding naturally
-                        if "product-tile" in attrs.get("data-testid", "").lower():
-                            forced_score = max(forced_score, 0.9)  # Maximum priority for product tiles
-                        elif "tile" in attrs.get("class", "").lower() or "tile" in attrs.get("data-testid", "").lower():
-                            forced_score = max(forced_score, 0.8)  # High priority for tile elements
-                        elif tag in ["a", "button"] and (attrs.get("href") or attrs.get("onclick")):
-                            forced_score = max(forced_score, 0.7)  # High priority for interactive elements
-                        elif tag == "div" and any(interactive_attr in attrs for interactive_attr in ["onclick", "href", "role", "tabindex"]):
-                            forced_score = max(forced_score, 0.6)  # High priority for interactive containers
-                        elif tag == "button" and any(filter_word in attrs.get("class", "").lower() for filter_word in ["filter", "sort", "control"]):
-                            forced_score = max(forced_score, 0.3)  # Lower priority for filter buttons
-                        elif tag == "button" and any(control_word in text for control_word in ["clear", "reset", "apply", "sort"]):
-                            forced_score = max(forced_score, 0.3)  # Lower priority for control buttons
-                        
-                        # Additional universal scoring based on element characteristics
-                        if len(text.split()) >= 2 and any(word in text for word in ["pro", "max", "plus", "ultra"]):
-                            forced_score = max(forced_score, 0.8)  # High priority for product variants
-                        elif tag == "button" and len(text.split()) == 1 and any(word in text for word in ["apple", "samsung", "google", "motorola"]):
-                            forced_score = max(forced_score, 0.3)  # Lower priority for brand filter buttons
-                        elif tag in ["input", "select", "textarea"]:
-                            forced_score = max(forced_score, 0.6)  # High priority for form elements
-                        
-                        all_hits.append((forced_score, elem_meta))
-                        print(f"  ✅ Forced inclusion: Index {idx} | Score: {forced_score:.6f} | Tag: {elem_meta.get('tag', '')} | Text: '{elem_meta.get('text', '')[:50]}...'")
-        
-        # Debug: Check if any target elements made it to top candidates
-        target_elements_in_top = [h for h in all_hits if target_word in h[1].get('text', '').lower()]
-        if target_elements_in_top:
-            print(f"\n🔍 Found {len(target_elements_in_top)} target elements in top candidates:")
-            for i, (score, meta) in enumerate(target_elements_in_top[:3]):
-                print(f"  {i+1}. Score: {score:.3f} | Tag: {meta.get('tag', '')} | Text: '{meta.get('text', '')}'")
-        else:
-            print(f"\n❌ No target elements found in top candidates")
-        
-        print(f"Top 5 candidates from MiniLM:")
-        for i, (score, meta) in enumerate(sorted(all_hits, key=lambda x: x[0], reverse=True)[:5]):
-            print(f"  {i+1}. Score: {score:.3f} | Tag: {meta.get('tag', '')} | Text: '{meta.get('text', '')[:50]}...' | XPath: {meta.get('xpath', '')[:80]}...")
-            print(f"      Attributes: {meta.get('attributes', {})}")
-        
-        # Debug: Check if we have any elements with target text
-        target_elements = [(score, meta) for score, meta in all_hits if target_word in meta.get('text', '').lower()]
-        if target_elements:
-            print(f"\n🔍 Found {len(target_elements)} elements with '{target_word}' text:")
-            for i, (score, meta) in enumerate(target_elements[:3]):
-                print(f"  {i+1}. Score: {score:.3f} | Tag: {meta.get('tag', '')} | Text: '{meta.get('text', '')}'")
-                print(f"      XPath: {meta.get('xpath', '')}")
-                print(f"      Attributes: {meta.get('attributes', {})}")
-        else:
-            print(f"\n❌ No elements with '{target_word}' text found in {len(all_hits)} candidates!")
-            
-        # Debug: Check specifically for target A tags
-        target_a_tags = [(score, meta) for score, meta in all_hits if meta.get('tag', '').lower() == 'a' and target_word in meta.get('text', '').lower()]
-        if target_a_tags:
-            print(f"\n🔍 Found {len(target_a_tags)} A tags with '{target_word}' text:")
-            for i, (score, meta) in enumerate(target_a_tags):
-                print(f"  {i+1}. Score: {score:.3f} | Text: '{meta.get('text', '')}' | Href: {meta.get('attributes', {}).get('href', '')}")
-                print(f"      XPath: {meta.get('xpath', '')}")
-                print(f"      Attributes: {meta.get('attributes', {})}")
-        else:
-            print(f"\n❌ No A tags with '{target_word}' text found in {len(all_hits)} candidates!")
 
         if not all_hits and not promo_top:
             print("❌ No hits found")
