@@ -121,14 +121,13 @@ def merge_dom_ax(
         # Find matching accessibility node
         ax_node = ax_by_id.get(backend_id)
         if ax_node is None:
-            # No matching accessibility node, use DOM node as-is
-            merged_nodes.append(dom_node)
-            continue
+            # No matching accessibility node, use DOM node as-is but still extract text
+            merged_node = dom_node.copy()
+        else:
+            # Merge DOM and accessibility attributes based on mode
+            merged_node = merge_node_attributes(dom_node, ax_node, canonical_mode)
         
-        # Merge DOM and accessibility attributes based on mode
-        merged_node = merge_node_attributes(dom_node, ax_node, canonical_mode)
-        
-        # Extract text content for better MiniLM matching
+        # Extract text content for better MiniLM matching - ALWAYS do this
         text_content = extract_text_content(merged_node)
         merged_node['text'] = text_content  # Always store text content, even if empty
         

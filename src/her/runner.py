@@ -263,8 +263,8 @@ class Runner:
     const op = parseFloat(style.opacity);
     if (!isNaN(op) && op === 0) return false;
     
-    // Include ALL elements - even if they have no size, are below fold, or are interactive
-    // This ensures we capture radio buttons, hidden filters, dynamic content, and validation text
+    // Include ALL elements - MiniLM should see everything
+    // Let heuristics decide what's relevant based on text similarity
     return true;
   }
   
@@ -900,18 +900,13 @@ class Runner:
                 try:
                     element = locators.nth(i)
                     
-                    # Use Playwright's built-in visibility and enabled checks
-                    if not element.is_visible():
-                        print(f"   Element {i+1}: Not visible - trying to scroll into view")
-                        try:
-                            element.scroll_into_view_if_needed()
-                            page.wait_for_timeout(500)  # Wait for scroll to complete
-                            if not element.is_visible():
-                                print(f"   Element {i+1}: Still not visible after scroll - skipping")
-                                continue
-                        except:
-                            print(f"   Element {i+1}: Could not scroll into view - skipping")
-                            continue
+                    # NO FILTERING - Let heuristics decide what's relevant
+                    # Try to scroll into view for better interaction, but don't skip elements
+                    try:
+                        element.scroll_into_view_if_needed()
+                        page.wait_for_timeout(500)  # Wait for scroll to complete
+                    except:
+                        pass  # Continue even if scroll fails
                     
                     # NO FILTERING - MiniLM should see ALL elements
                     # Let MiniLM and MarkupLM decide what's relevant
@@ -919,6 +914,7 @@ class Runner:
                     # Get element properties
                     bbox = element.bounding_box()
                     # NO FILTERING - MiniLM should see ALL elements regardless of size
+                    # Let heuristics decide what's relevant based on text similarity and context
                     
                     # Get element text and attributes for better scoring
                     try:

@@ -352,8 +352,8 @@ class HybridPipeline:
                     bonus += 0.3  # Medium bonus for clickable elements
                     reasons.append("+clickable=0.300")
                 elif tag == "#text":
-                    bonus -= 0.5  # HEAVY penalty for text nodes on click actions
-                    reasons.append("-text_node_click=-0.500")
+                    bonus -= 1.0  # VERY HEAVY penalty for text nodes on click actions
+                    reasons.append("-text_node_click=-1.000")
                 else:
                     bonus -= 0.2  # Penalty for non-interactive elements
                     reasons.append("-non_interactive=-0.200")
