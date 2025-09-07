@@ -197,8 +197,38 @@ class Runner:
     const tag = el.tagName.toUpperCase();
     const role = el.getAttribute('role');
     const attrs = collectAttributes(el);
-    const textRaw = (el.innerText || '').replace(/\s+/g, ' ').trim();
-    const text = textRaw.length > 2048 ? textRaw.slice(0, 2048) : textRaw;
+            // Get text content using a better method
+            let textRaw = '';
+            
+            // For interactive elements, get their text content
+            if (['BUTTON', 'A', 'INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) {
+              textRaw = el.textContent || '';
+            } else {
+              // For other elements, only get direct text nodes (not from children)
+              const textNodes = [];
+              const walker = document.createTreeWalker(
+                el,
+                NodeFilter.SHOW_TEXT,
+                {
+                  acceptNode: function(node) {
+                    // Only include text nodes that are direct children
+                    if (node.parentNode === el) {
+                      return NodeFilter.FILTER_ACCEPT;
+                    }
+                    return NodeFilter.FILTER_REJECT;
+                  }
+                }
+              );
+              
+              let node;
+              while (node = walker.nextNode()) {
+                textNodes.push(node.textContent);
+              }
+              textRaw = textNodes.join(' ');
+            }
+            
+            textRaw = textRaw.replace(/\s+/g, ' ').trim();
+            const text = textRaw.length > 2048 ? textRaw.slice(0, 2048) : textRaw;
     const rect = el.getBoundingClientRect();
     out.push({
       text, tag, role: role || null, attrs,
