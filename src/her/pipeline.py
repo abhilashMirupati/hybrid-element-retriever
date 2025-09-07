@@ -280,13 +280,15 @@ class HybridPipeline:
                 elif is_interactive:
                     score += 0.3  # Medium score for other interactive elements
             elif any(word in intent_lower for word in ["click", "select", "press", "choose", "pick"]):
-                # For click/select intents, prioritize interactive elements
+                # For click/select intents, HEAVILY prioritize interactive elements
                 if is_interactive:
-                    score += 0.5  # Highest score for interactive elements
+                    score += 0.8  # VERY HIGH score for interactive elements
                 elif tag in ("button", "a", "input", "select", "option"):
-                    score += 0.3  # High score for clickable elements
+                    score += 0.6  # High score for clickable elements
                 elif role in ("button", "link", "tab", "menuitem", "option", "radio", "checkbox"):
-                    score += 0.2  # Medium score for accessible elements
+                    score += 0.4  # Medium score for accessible elements
+                elif tag == "#text":
+                    score -= 0.5  # HEAVY penalty for text nodes on click actions
                 
                 # Special bonuses for specific element types
                 if tag == "input":
@@ -340,18 +342,32 @@ class HybridPipeline:
             is_interactive = md.get("interactive", False)
             attrs = md.get("attributes", {})
             
-            # 1. Basic element type scoring (neutral approach)
-            if tag in ("button", "a", "input", "select", "option"):
-                bonus += 0.1
-                reasons.append("+clickable=0.100")
-            elif tag == "#text":
-                # Text nodes are valid for validation steps
-                bonus += 0.0
-                reasons.append("+text_node=0.000")
+            # 1. Element type scoring based on user intent
+            if any(word in user_intent.lower() for word in ["click", "select", "press", "choose", "pick"]):
+                # For click actions, heavily prioritize interactive elements
+                if is_interactive:
+                    bonus += 0.5  # HIGH bonus for interactive elements
+                    reasons.append("+interactive=0.500")
+                elif tag in ("button", "a", "input", "select", "option"):
+                    bonus += 0.3  # Medium bonus for clickable elements
+                    reasons.append("+clickable=0.300")
+                elif tag == "#text":
+                    bonus -= 0.5  # HEAVY penalty for text nodes on click actions
+                    reasons.append("-text_node_click=-0.500")
+                else:
+                    bonus -= 0.2  # Penalty for non-interactive elements
+                    reasons.append("-non_interactive=-0.200")
             else:
-                # Other elements are also valid
-                bonus += 0.0
-                reasons.append("+other_element=0.000")
+                # For other actions (validation, etc.), neutral approach
+                if tag in ("button", "a", "input", "select", "option"):
+                    bonus += 0.1
+                    reasons.append("+clickable=0.100")
+                elif tag == "#text":
+                    bonus += 0.0
+                    reasons.append("+text_node=0.000")
+                else:
+                    bonus += 0.0
+                    reasons.append("+other_element=0.000")
             
             # 2. Visibility penalty (universal)
             if not visible:

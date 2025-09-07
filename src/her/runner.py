@@ -145,13 +145,19 @@ class Runner:
         try:
             from .bridge.cdp_bridge import capture_complete_snapshot
             from .descriptors.merge import merge_dom_ax, enhance_element_descriptor
+            from .config import get_config
+            
+            # Get configuration for canonical descriptor building
+            config = get_config()
+            print(f"🔧 Using canonical mode: {config.get_canonical_mode().value}")
             
             # Capture complete snapshot with accessibility tree
             snapshot = capture_complete_snapshot(self._page, include_frames=True)
             
             if snapshot.dom_nodes and snapshot.ax_nodes:
-                # Merge DOM and accessibility tree
+                # Merge DOM and accessibility tree based on configuration
                 merged_nodes = merge_dom_ax(snapshot.dom_nodes, snapshot.ax_nodes)
+                print(f"✅ CDP Integration: Merged {len(merged_nodes)} nodes using {config.get_canonical_mode().value} mode")
                 
                 # Convert to the expected format
                 elements = []
@@ -178,6 +184,9 @@ class Runner:
                     if not role and 'accessibility' in node:
                         role = node['accessibility'].get('role', '')
                     
+                    # Debug: Print element details
+                    print(f"🔍 Processing element: tag='{tag}', text='{text[:50]}...', attrs={len(attrs)}")
+                    
                     # Generate XPath if not present
                     xpath = node.get('xpath', '')
                     if not xpath:
@@ -196,6 +205,12 @@ class Runner:
                     
                     # Determine if element is interactive
                     interactive = self._is_element_interactive(tag, attrs, role)
+                    
+                    # Skip non-interactive text nodes for click actions (but keep them for validation)
+                    if tag == '#text' and not interactive:
+                        # Only skip if this is clearly a text node without any interactive parent
+                        # For now, keep all elements and let MarkupLM decide
+                        pass
                     
                     # Create element descriptor
                     element = {
