@@ -42,18 +42,18 @@ def _cos(a: np.ndarray, b: np.ndarray) -> float:
 
 
 class HybridPipeline:
-    _Q_DIM = 768   # Query (align with element dim)
-    _E_DIM = 768   # Element
+    _Q_DIM = 384   # Query (MiniLM dimension)
+    _E_DIM = 768   # Element (MarkupLM dimension)
 
     def __init__(self, models_root: Optional[Path] = None) -> None:
         # Fail-fast: require models installed
         preflight_require_models(models_root)
         self._models_root = Path(models_root) if models_root else None
 
-        # Embedders
+        # Embedders - separate for hybrid approach
         model_root = str((self._models_root or Path("src/her/models").resolve()) / "e5-small-onnx")
-        self.text_embedder = TextEmbedder(model_root=model_root)
-        self.element_embedder = self._make_element_embedder()
+        self.text_embedder = TextEmbedder(model_root=model_root)  # 384-d for queries
+        self.element_embedder = self._make_element_embedder()  # 768-d for elements
 
         # Persistent cache
         cache_dir = os.getenv("HER_CACHE_DIR") or str(Path(".her_cache").resolve())
@@ -61,11 +61,13 @@ class HybridPipeline:
         self._db_path = str(Path(cache_dir) / "embeddings.db")
         self.kv = SQLiteKV(self._db_path, max_size_mb=400)
 
-        # Per-frame stores
-        self._stores: Dict[str, InMemoryVectorStore] = {}
+        # Per-frame stores - separate for each stage
+        self._mini_stores: Dict[str, InMemoryVectorStore] = {}  # 384-d for MiniLM shortlist
+        self._markup_stores: Dict[str, InMemoryVectorStore] = {}  # 768-d for MarkupLM rerank
         self._meta: Dict[str, List[Dict[str, Any]]] = {}
 
-        log.info("HybridPipeline ready | cache=%s", self._db_path)
+        log.info("HybridPipeline ready | cache=%s | MiniLM=%dd | MarkupLM=%dd", 
+                self._db_path, self._Q_DIM, self._E_DIM)
 
     def _make_element_embedder(self):
         # Require MarkupLM now that models are preflighted
@@ -86,19 +88,27 @@ class HybridPipeline:
         log.info("Element embedder: MarkupLM @ %s", model_dir)
         return emb
 
-    def _get_store(self, frame_hash: str) -> InMemoryVectorStore:
-        st = self._stores.get(frame_hash)
+    def _get_mini_store(self, frame_hash: str) -> InMemoryVectorStore:
+        st = self._mini_stores.get(frame_hash)
         if st is None:
-            st = InMemoryVectorStore(dim=self._E_DIM)
-            self._stores[frame_hash] = st
-            self._meta[frame_hash] = []
+            st = InMemoryVectorStore(dim=self._Q_DIM)  # 384-d for MiniLM
+            self._mini_stores[frame_hash] = st
         return st
 
-    def _reset_store(self, frame_hash: str) -> None:
-        self._stores.pop(frame_hash, None)
+    def _get_markup_store(self, frame_hash: str) -> InMemoryVectorStore:
+        st = self._markup_stores.get(frame_hash)
+        if st is None:
+            st = InMemoryVectorStore(dim=self._E_DIM)  # 768-d for MarkupLM
+            self._markup_stores[frame_hash] = st
+        return st
+
+    def _reset_stores(self, frame_hash: str) -> None:
+        self._mini_stores.pop(frame_hash, None)
+        self._markup_stores.pop(frame_hash, None)
         self._meta.pop(frame_hash, None)
 
     def _prepare_elements(self, elements: List[Dict[str, Any]]) -> Tuple[np.ndarray, List[Dict[str, Any]]]:
+        """Prepare elements for hybrid search - creates both MiniLM and MarkupLM embeddings."""
         if not isinstance(elements, list):
             raise ValueError("elements must be a list of element descriptors")
 
@@ -110,12 +120,12 @@ class HybridPipeline:
                 raise ValueError("Each element must include meta.frame_hash (wired in Step 3).")
             by_frame.setdefault(fh, []).append((idx, el))
 
-        all_vecs: List[np.ndarray] = []
         all_meta: List[Dict[str, Any]] = []
 
         for fh, batch in by_frame.items():
-            self._reset_store(fh)
-            store = self._get_store(fh)
+            self._reset_stores(fh)
+            mini_store = self._get_mini_store(fh)  # 384-d for MiniLM shortlist
+            markup_store = self._get_markup_store(fh)  # 768-d for MarkupLM rerank
             frame_meta: List[Dict[str, Any]] = []
 
             hashes: List[str] = []
@@ -125,40 +135,62 @@ class HybridPipeline:
                 hashes.append(h)
                 descs.append(el)
 
+            # Check cache for both MiniLM and MarkupLM embeddings
             cached_map = self.kv.batch_get_embeddings(hashes) if hashes else {}
-            missing_pairs: List[Tuple[str, Dict[str, Any]]] = []
-            vecs: List[np.ndarray] = []
+            missing_mini: List[Tuple[str, Dict[str, Any]]] = []
+            missing_markup: List[Tuple[str, Dict[str, Any]]] = []
+            mini_vecs: List[np.ndarray] = []
+            markup_vecs: List[np.ndarray] = []
 
             for h, el in zip(hashes, descs):
                 v = cached_map.get(h)
                 if v is not None:
                     arr = np.array(v, dtype=np.float32)
-                    if arr.shape != (self._E_DIM,):
-                        missing_pairs.append((h, el))
+                    if arr.shape == (self._Q_DIM,):  # MiniLM cached
+                        mini_vecs.append(arr)
+                    elif arr.shape == (self._E_DIM,):  # MarkupLM cached
+                        markup_vecs.append(arr)
                     else:
-                        vecs.append(arr)
+                        missing_mini.append((h, el))
+                        missing_markup.append((h, el))
                 else:
-                    missing_pairs.append((h, el))
+                    missing_mini.append((h, el))
+                    missing_markup.append((h, el))
 
-            if missing_pairs:
-                missing_descs = [el for (_, el) in missing_pairs]
-                # MarkupLM embedder supports batch_encode
-                new_arr: np.ndarray = self.element_embedder.batch_encode(missing_descs)  # type: ignore[attr-defined]
-                if new_arr.ndim == 1:
-                    new_arr = new_arr.reshape(1, -1)
-                if new_arr.shape[1] != self._E_DIM:
-                    fixed = np.zeros((new_arr.shape[0], self._E_DIM), dtype=np.float32)
-                    k = min(self._E_DIM, new_arr.shape[1])
-                    fixed[:, :k] = new_arr[:, :k]
-                    new_arr = fixed
-                to_put = {h: new_arr[i].astype(np.float32).tolist() for i, (h, _) in enumerate(missing_pairs)}
-                self.kv.batch_put_embeddings(to_put, model_name="elements")
-                for i in range(new_arr.shape[0]):
-                    vecs.append(new_arr[i].astype(np.float32, copy=False))
+            # Generate missing MiniLM embeddings (384-d)
+            if missing_mini:
+                missing_descs = [el for (_, el) in missing_mini]
+                # Use text content for MiniLM
+                texts = [el.get("text", "") for el in missing_descs]
+                new_mini_arr: np.ndarray = self.text_embedder.batch_encode_texts(texts)
+                assert new_mini_arr.shape[1] == self._Q_DIM, f"MiniLM should output {self._Q_DIM}d, got {new_mini_arr.shape[1]}d"
+                
+                # Cache MiniLM embeddings
+                mini_to_put = {h: new_mini_arr[i].astype(np.float32).tolist() 
+                              for i, (h, _) in enumerate(missing_mini)}
+                self.kv.batch_put_embeddings(mini_to_put, model_name="minilm")
+                
+                for i in range(new_mini_arr.shape[0]):
+                    mini_vecs.append(new_mini_arr[i].astype(np.float32, copy=False))
 
-            assert len(vecs) == len(descs)
+            # Generate missing MarkupLM embeddings (768-d)
+            if missing_markup:
+                missing_descs = [el for (_, el) in missing_markup]
+                new_markup_arr: np.ndarray = self.element_embedder.batch_encode(missing_descs)
+                if new_markup_arr.ndim == 1:
+                    new_markup_arr = new_markup_arr.reshape(1, -1)
+                assert new_markup_arr.shape[1] == self._E_DIM, f"MarkupLM should output {self._E_DIM}d, got {new_markup_arr.shape[1]}d"
+                
+                # Cache MarkupLM embeddings
+                markup_to_put = {h: new_markup_arr[i].astype(np.float32).tolist() 
+                                for i, (h, _) in enumerate(missing_markup)}
+                self.kv.batch_put_embeddings(markup_to_put, model_name="markuplm")
+                
+                for i in range(new_markup_arr.shape[0]):
+                    markup_vecs.append(new_markup_arr[i].astype(np.float32, copy=False))
 
-            for arr, el, h in zip(vecs, descs, hashes):
+            # Add vectors to respective stores
+            for i, (arr, el, h) in enumerate(zip(mini_vecs, descs, hashes)):
                 # Support both 'attrs' and 'attributes' for compatibility
                 attrs = el.get("attrs") or el.get("attributes") or {}
                 
@@ -171,27 +203,36 @@ class HybridPipeline:
                     "frame_url": el.get("frame_url") or (el.get("meta") or {}).get("frame_url") or "",
                     "frame_hash": (el.get("meta") or {}).get("frame_hash", ""),
                     "text": el.get("text") or "",
-                    "attributes": attrs,  # Use the unified attributes
+                    "attributes": attrs,
                 }
-                idx = store.add_vector(arr.astype(np.float32).tolist(), meta)
+                
+                # Add to MiniLM store (384-d)
+                mini_store.add_vector(arr.astype(np.float32).tolist(), meta)
+                
+                # Add to MarkupLM store (768-d) - use corresponding MarkupLM vector
+                if i < len(markup_vecs):
+                    markup_store.add_vector(markup_vecs[i].astype(np.float32).tolist(), meta)
+                
                 frame_meta.append(meta)
 
             all_meta.extend(frame_meta)
-            all_vecs.extend([np.array(v, dtype=np.float32) for v in store.vectors])
 
-        E = np.vstack(all_vecs).astype(np.float32, copy=False) if all_vecs else np.zeros((0, self._E_DIM), dtype=np.float32)
+        # Return MarkupLM vectors for final ranking (768-d)
+        all_markup_vecs: List[np.ndarray] = []
+        for fh in by_frame.keys():
+            markup_store = self._markup_stores.get(fh)
+            if markup_store:
+                all_markup_vecs.extend([np.array(v, dtype=np.float32) for v in markup_store.vectors])
+        
+        E = np.vstack(all_markup_vecs).astype(np.float32, copy=False) if all_markup_vecs else np.zeros((0, self._E_DIM), dtype=np.float32)
         return E, all_meta
 
     def embed_query(self, text: str) -> np.ndarray:
         if not isinstance(text, str) or not text.strip():
             raise ValueError("query text must be a non-empty string")
-        # Use MiniLM for query embedding (384-dim) and pad to match element dimension (768-dim)
+        # Use MiniLM for query embedding (384-dim) - no padding needed
         q = self.text_embedder.encode_one(text)
-        # Pad query vector to match element embedding dimension
-        if len(q) < self._E_DIM:
-            padded_q = np.zeros(self._E_DIM, dtype=np.float32)
-            padded_q[:len(q)] = q
-            q = padded_q
+        assert q.shape[0] == self._Q_DIM, f"Query should be {self._Q_DIM}d, got {q.shape[0]}d"
         return _l2norm(q)
 
     def embed_elements(self, elements: List[Dict[str, Any]]) -> np.ndarray:
