@@ -199,6 +199,7 @@ class HybridPipeline:
         print(f"   target: '{target}' (type: {type(target)})")
         print(f"   query: '{query}' (type: {type(query)})")
         print(f"   element text: '{meta.get('text', '')[:50]}...'")
+        print(f"   element interactive: {meta.get('interactive', False)}")
         
         if not user_intent and not target:
             print(f"   ❌ No user_intent or target - returning 0.0")
@@ -235,17 +236,22 @@ class HybridPipeline:
         # 3. User intent matching (action user wants to perform)
         if user_intent:
             intent_lower = user_intent.lower()
+            is_interactive = meta.get('interactive', False)
             
             # Context-aware scoring based on intent type
             if "filter" in intent_lower:
                 # For filter intents, prioritize interactive filter elements
-                if tag in ("button", "input", "select") and "filter" in text:
+                if is_interactive and "filter" in text:
+                    score += 0.4  # Highest score for interactive filter elements
+                elif tag in ("button", "input", "select") and "filter" in text:
                     score += 0.3  # High score for filter buttons
-                elif tag in ("button", "input", "select"):
-                    score += 0.1  # Medium score for other interactive elements
+                elif is_interactive:
+                    score += 0.2  # Medium score for other interactive elements
             elif any(word in intent_lower for word in ["click", "select", "press"]):
-                # For click/select intents, prioritize clickable elements
-                if tag in ("button", "a", "input", "select"):
+                # For click/select intents, prioritize interactive elements
+                if is_interactive:
+                    score += 0.4  # Highest score for interactive elements
+                elif tag in ("button", "a", "input", "select"):
                     score += 0.2  # High score for clickable elements
                 elif role in ("button", "link", "tab", "menuitem", "option"):
                     score += 0.1  # Medium score for accessible elements

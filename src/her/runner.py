@@ -104,6 +104,39 @@ class Runner:
     // This ensures we capture hidden elements like Apple filter buttons
     return true;
   }
+  
+  function isInteractive(el) {
+    const tag = el.tagName.toLowerCase();
+    const interactiveTags = ['button', 'a', 'input', 'select', 'textarea', 'option'];
+    const role = el.getAttribute('role');
+    const interactiveRoles = ['button', 'link', 'menuitem', 'tab', 'option', 'radio', 'checkbox'];
+    
+    // Check if it's an interactive tag
+    if (interactiveTags.includes(tag)) return true;
+    
+    // Check if it has an interactive role
+    if (role && interactiveRoles.includes(role)) return true;
+    
+    // Check if it has click handlers or is clickable
+    if (el.onclick || el.getAttribute('onclick')) return true;
+    
+    // Check if it's a clickable element with cursor pointer
+    const style = window.getComputedStyle(el);
+    if (style.cursor === 'pointer') return true;
+    
+    // Check for specific input types that are interactive
+    if (tag === 'input') {
+      const type = el.getAttribute('type');
+      const interactiveTypes = ['button', 'submit', 'reset', 'radio', 'checkbox', 'file', 'image'];
+      if (type && interactiveTypes.includes(type)) return true;
+    }
+    
+    // Check for elements with tabindex (focusable)
+    const tabIndex = el.getAttribute('tabindex');
+    if (tabIndex && parseInt(tabIndex) >= 0) return true;
+    
+    return false;
+  }
   function siblingIndex(el) {
     let i = 1; let s = el.previousElementSibling;
     while (s) { if (s.nodeName === el.nodeName) i++; s = s.previousElementSibling; }
@@ -129,12 +162,14 @@ class Runner:
       return `//*[@data-testid="${attrs['data-testid']}"]`;
     }
     
-    // Priority 2: id + text (most unique)
+    // Priority 2: id + text + position (most unique)
     if (attrs['id'] && text) {
-      return `//*[@id="${attrs['id']}" and normalize-space()="${text}"]`;
+      const pos = siblingIndex(el);
+      return `//*[@id="${attrs['id']}" and normalize-space()="${text}"][${pos}]`;
     }
     if (attrs['id']) {
-      return `//*[@id="${attrs['id']}"]`;
+      const pos = siblingIndex(el);
+      return `//*[@id="${attrs['id']}"][${pos}]`;
     }
     
     // Priority 3: aria-label + text
@@ -257,7 +292,8 @@ class Runner:
       xpath: generateRelativeXPath(el),
       bbox: { x: Math.max(0, Math.round(rect.x)), y: Math.max(0, Math.round(rect.y)), width: Math.max(0, Math.round(rect.width)), height: Math.max(0, Math.round(rect.height)), w: Math.max(0, Math.round(rect.width)), h: Math.max(0, Math.round(rect.height)) },
       visible: inViewport,
-      below_fold: belowFold
+      below_fold: belowFold,
+      interactive: isInteractive(el)
     });
   }
   return out;
