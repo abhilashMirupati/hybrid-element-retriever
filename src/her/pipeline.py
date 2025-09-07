@@ -229,7 +229,12 @@ class HybridPipeline:
             if any(word in query.lower() for word in ['color', 'titanium', 'desert', 'black', 'white', 'natural']):
                 aria_label = meta.get('attributes', {}).get('aria-label', '').lower()
                 if aria_label and any(word in aria_label for word in query_words):
-                    score += 0.4  # High bonus for aria-label matches
+                    score += 0.5  # Very high bonus for aria-label matches
+                
+                # Also check data-testid for color elements
+                data_testid = meta.get('attributes', {}).get('data-testid', '').lower()
+                if data_testid and any(word in data_testid for word in query_words):
+                    score += 0.3  # High bonus for data-testid matches
         
         # 2. Target matching (what user wants to interact with)
         if target:

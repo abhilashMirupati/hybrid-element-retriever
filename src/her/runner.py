@@ -94,14 +94,14 @@ class Runner:
 () => {
   const collapse = (s) => (s || '').replace(/\s+/g, ' ').trim();
   function isVisible(el) {
+    // CAPTURE ALL ELEMENTS - Only filter out completely hidden ones
     const style = window.getComputedStyle(el);
-    // Only filter out truly hidden elements
     if (style.display === 'none' || style.visibility === 'hidden') return false;
     const op = parseFloat(style.opacity);
     if (!isNaN(op) && op === 0) return false;
     
-    // Include ALL elements - even if they have no size or are below fold
-    // This ensures we capture hidden elements like Apple filter buttons
+    // Include ALL elements - even if they have no size, are below fold, or are interactive
+    // This ensures we capture radio buttons, hidden filters, and all interactive elements
     return true;
   }
   
@@ -179,21 +179,33 @@ class Runner:
     
     const text = (el.innerText || '').trim();
     
-    // Priority 1: data-testid + text (most unique)
+    // Priority 1: data-testid + text + type (most unique for inputs)
     if (attrs['data-testid'] && text) {
+      if (attrs['type']) {
+        return `//*[@data-testid="${attrs['data-testid']}" and @type="${attrs['type']}" and normalize-space()="${text}"]`;
+      }
       return `//*[@data-testid="${attrs['data-testid']}" and normalize-space()="${text}"]`;
     }
     if (attrs['data-testid']) {
+      if (attrs['type']) {
+        return `//*[@data-testid="${attrs['data-testid']}" and @type="${attrs['type']}"]`;
+      }
       return `//*[@data-testid="${attrs['data-testid']}"]`;
     }
     
-    // Priority 2: id + text + position (most unique)
+    // Priority 2: id + text + type + position (most unique)
     if (attrs['id'] && text) {
       const pos = getElementPosition(el);
+      if (attrs['type']) {
+        return `//*[@id="${attrs['id']}" and @type="${attrs['type']}" and normalize-space()="${text}"][${pos}]`;
+      }
       return `//*[@id="${attrs['id']}" and normalize-space()="${text}"][${pos}]`;
     }
     if (attrs['id']) {
       const pos = getElementPosition(el);
+      if (attrs['type']) {
+        return `//*[@id="${attrs['id']}" and @type="${attrs['type']}"][${pos}]`;
+      }
       return `//*[@id="${attrs['id']}"][${pos}]`;
     }
     
@@ -254,12 +266,15 @@ class Runner:
     return `//${tag}[${pos}]`;
   }
   function collectAttributes(el) {
+    // CAPTURE ALL ATTRIBUTES - Don't filter out any attributes
     const result = {};
     for (const a of el.attributes) {
       const n = a.name;
+      // Only skip style and event handlers, keep everything else
       if (n === 'style' || n.startsWith('on')) continue;
       const v = String(a.value || '').trim();
-      if (v) result[n] = v;
+      // Include ALL attributes, even empty ones for radio buttons
+      result[n] = v;
     }
     return result;
   }
@@ -267,7 +282,7 @@ class Runner:
   const visited = new Set();
   const nodes = document.querySelectorAll('*');
   for (const el of nodes) {
-    if (!isVisible(el)) continue;
+    // CAPTURE ALL ELEMENTS - Don't filter by visibility
     if (visited.has(el)) continue; visited.add(el);
     const tag = el.tagName.toUpperCase();
     const role = el.getAttribute('role');
