@@ -194,7 +194,14 @@ class HybridPipeline:
 
     def _compute_intent_score(self, user_intent: Optional[str], target: Optional[str], query: str, meta: Dict[str, Any]) -> float:
         """Compute intent score using all three parameters: Intent/Target/Query for MarkupLM reranking."""
+        print(f"\\n🔍 _compute_intent_score called with:")
+        print(f"   user_intent: '{user_intent}' (type: {type(user_intent)})")
+        print(f"   target: '{target}' (type: {type(target)})")
+        print(f"   query: '{query}' (type: {type(query)})")
+        print(f"   element text: '{meta.get('text', '')[:50]}...'")
+        
         if not user_intent and not target:
+            print(f"   ❌ No user_intent or target - returning 0.0")
             return 0.0
         
         # Combine all parameters for comprehensive scoring
@@ -203,6 +210,9 @@ class HybridPipeline:
         tag = (meta.get("tag") or "").lower()
         role = (meta.get("attributes", {}).get("role") or "").lower()
         href = (meta.get("attributes", {}).get("href") or "").lower()
+        
+        print(f"   Combined intent text: '{all_intent_text}'")
+        print(f"   Element text: '{text[:50]}...'")
         
         score = 0.0
         
@@ -258,7 +268,9 @@ class HybridPipeline:
             if any(word in role for word in query_words):
                 score += 0.05
         
-        return min(score, 0.6)  # Cap at 0.6 for multi-parameter scoring
+        final_score = min(score, 0.6)  # Cap at 0.6 for multi-parameter scoring
+        print(f"   Final intent score: {final_score:.3f}")
+        return final_score
 
     def _apply_basic_heuristics(self, markup_scores: List[Tuple[float, Dict[str, Any]]], user_intent: str) -> List[Tuple[float, Dict[str, Any], List[str]]]:
         """Apply basic heuristics only when MarkupLM scores are close"""
@@ -397,10 +409,17 @@ class HybridPipeline:
         
         print(f"🔍 Reranking {len(shortlist)} candidates with MarkupLM")
         print(f"🔍 MarkupLM Processing Details:")
-        print(f"   Query: '{query}'")
-        print(f"   User Intent: '{user_intent}'")
-        print(f"   Target: '{target}'")
+        print(f"   Query: '{query}' (type: {type(query)})")
+        print(f"   User Intent: '{user_intent}' (type: {type(user_intent)})")
+        print(f"   Target: '{target}' (type: {type(target)})")
         print(f"   Shortlist elements: {len(shortlist)}")
+        
+        # Debug: Check if parameters are being passed to intent scoring
+        print(f"\\n🔍 Parameter Validation:")
+        print(f"   Query is None: {query is None}")
+        print(f"   User Intent is None: {user_intent is None}")
+        print(f"   Target is None: {target is None}")
+        print(f"   Will call _compute_intent_score: {bool(user_intent or target)}")
         
         # Re-embed query and shortlist with MarkupLM (limit to top 10 for performance)
         q_markup = self._embed_query_markup(query)  # 768-d query

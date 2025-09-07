@@ -302,7 +302,7 @@ class Runner:
             frame_hash=frame_hash,
             label_key=label_key,
             user_intent=phrase,  # User Intent: full phrase
-            target=parsed.target_phrase,  # Target: parsed target phrase
+            target=f"{parsed.action} {parsed.target_phrase}",  # Target: action + target phrase
         )
         candidates = []
         for item in (result.get("results") or [])[:10]:
