@@ -7,7 +7,7 @@ name = "her"
 version = "0.1.0"
 description = "Hybrid Element Retriever (HER)"
 readme = "README.md"
-requires-python = "==3.12.*"
+requires-python = ">=3.12"
 authors = [{ name = "HER Maintainers", email = "maintainers@example.com" }]
 license = { text = "MIT" }
 keywords = ["hybrid", "retrieval", "automation", "embeddings", "onnx"]
@@ -59,7 +59,7 @@ line-length = 100
 target-version = ["py312"]
 
 [tool.flake8]
-max-line-length = 100https://github.com/abhilashMirupati/hybrid-element-retriever/blob/main/pyproject.toml
+max-line-length = 100
 extend-ignore = ["E203", "W503"]
 exclude = [".git", "__pycache__", "build", "dist"]
 
