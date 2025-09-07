@@ -212,11 +212,8 @@ class Runner:
                     # Determine if element is interactive
                     interactive = self._is_element_interactive(tag, attrs, role)
                     
-                    # Skip non-interactive text nodes for click actions (but keep them for validation)
-                    if tag == '#text' and not interactive:
-                        # Only skip if this is clearly a text node without any interactive parent
-                        # For now, keep all elements and let MarkupLM decide
-                        pass
+                    # NO FILTERING - MiniLM should see ALL elements
+                    # Let MiniLM and MarkupLM decide what's relevant based on text similarity
                     
                     # Create element descriptor
                     element = {
@@ -890,11 +887,9 @@ class Runner:
             print(f"🔍 Found {count} elements with selector: {selector}")
             print(f"🎯 User intent: '{user_intent}'")
             
-            # Determine if we need interactive elements based on action type
-            interactive_actions = ["click", "select", "enter", "type", "sendkeys"]
-            require_interactive = any(action in user_intent.lower() for action in interactive_actions)
-            
-            print(f"   Action type: {user_intent} | Require interactive: {require_interactive}")
+            # NO FILTERING - MiniLM should see ALL elements
+            # Let MiniLM and MarkupLM decide what's relevant based on text similarity
+            print(f"   Action type: {user_intent} | Processing ALL elements for MiniLM")
             
             # Try to find the most visible and clickable element
             best_element = None
@@ -918,16 +913,12 @@ class Runner:
                             print(f"   Element {i+1}: Could not scroll into view - skipping")
                             continue
                     
-                    # Only check if enabled for interactive actions
-                    if require_interactive and not element.is_enabled():
-                        print(f"   Element {i+1}: Not enabled - skipping")
-                        continue
+                    # NO FILTERING - MiniLM should see ALL elements
+                    # Let MiniLM and MarkupLM decide what's relevant
                     
                     # Get element properties
                     bbox = element.bounding_box()
-                    if not bbox or bbox['width'] <= 0 or bbox['height'] <= 0:
-                        print(f"   Element {i+1}: No bounding box or zero size - skipping")
-                        continue
+                    # NO FILTERING - MiniLM should see ALL elements regardless of size
                     
                     # Get element text and attributes for better scoring
                     try:
