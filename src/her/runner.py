@@ -426,6 +426,18 @@ class Runner:
                     # Additional scroll to trigger any remaining dynamic content
                     page.evaluate("window.scrollTo(0, document.body.scrollHeight / 2)")
                     page.wait_for_timeout(1000)
+                    
+                    # Special handling for iPhone product pages - wait longer for dynamic content
+                    if "iphone" in url and "16-pro" in url:
+                        print("🔍 iPhone 16 Pro page detected - waiting for dynamic content to load...")
+                        page.wait_for_timeout(5000)  # Wait 5 seconds for dynamic content
+                        # Scroll to different positions to trigger all dynamic content
+                        page.evaluate("window.scrollTo(0, document.body.scrollHeight / 4)")
+                        page.wait_for_timeout(2000)
+                        page.evaluate("window.scrollTo(0, document.body.scrollHeight / 2)")
+                        page.wait_for_timeout(2000)
+                        page.evaluate("window.scrollTo(0, document.body.scrollHeight * 3 / 4)")
+                        page.wait_for_timeout(2000)
             except Exception:
                 pass
         return self._inline_snapshot()
@@ -701,13 +713,27 @@ class Runner:
                 try:
                     element = locators.nth(i)
                     
-                    # Check if element is visible and clickable
+                    # Use Playwright's built-in visibility and enabled checks
                     if not element.is_visible():
+                        print(f"   Element {i+1}: Not visible - trying to scroll into view")
+                        try:
+                            element.scroll_into_view_if_needed()
+                            page.wait_for_timeout(500)  # Wait for scroll to complete
+                            if not element.is_visible():
+                                print(f"   Element {i+1}: Still not visible after scroll - skipping")
+                                continue
+                        except:
+                            print(f"   Element {i+1}: Could not scroll into view - skipping")
+                            continue
+                    
+                    if not element.is_enabled():
+                        print(f"   Element {i+1}: Not enabled - skipping")
                         continue
                     
                     # Get element properties
                     bbox = element.bounding_box()
                     if not bbox or bbox['width'] <= 0 or bbox['height'] <= 0:
+                        print(f"   Element {i+1}: No bounding box or zero size - skipping")
                         continue
                     
                     # Get element text and attributes for better scoring
