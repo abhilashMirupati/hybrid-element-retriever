@@ -362,6 +362,7 @@ class HybridPipeline:
         print(f"\n🔍 STEP 1: MiniLM Shortlist (384-d)")
         print(f"Query: '{query}'")
         print(f"Total elements available: {len(elements)}")
+        print(f"MiniLM Query Embedding: Using '{query}' for vector search")
         
         if not isinstance(elements, list):
             raise ValueError("elements must be a list")
@@ -370,16 +371,24 @@ class HybridPipeline:
             return {"results": [], "strategy": "hybrid-delta", "confidence": 0.0}
 
         # Prepare elements (creates both MiniLM and MarkupLM embeddings)
+        print(f"\n🔍 CACHING ANALYSIS:")
+        print(f"   Current MiniLM stores: {len(self._mini_stores)}")
+        print(f"   Current MarkupLM stores: {len(self._markup_stores)}")
+        print(f"   Frame hash for this query: {frame_hash}")
+        
         E, meta = self._prepare_elements(elements)
         if E.size == 0:
             print("❌ No elements after preparation")
             return {"results": [], "strategy": "hybrid-delta", "confidence": 0.0}
         
         print(f"✅ Prepared {len(meta)} elements with both MiniLM and MarkupLM embeddings")
+        print(f"   After preparation - MiniLM stores: {len(self._mini_stores)}")
+        print(f"   After preparation - MarkupLM stores: {len(self._markup_stores)}")
         
         # STEP 1: MiniLM shortlist (384-d)
         q_mini = self.embed_query(query)  # 384-d query
         print(f"✅ Query embedded with MiniLM, vector shape: {q_mini.shape}")
+        print(f"🔍 MiniLM Query Vector (first 10 dims): {q_mini[:10]}")
         
         # Search using MiniLM stores for shortlisting
         mini_hits: List[Tuple[float, Dict[str, Any]]] = []
@@ -395,6 +404,7 @@ class HybridPipeline:
         print(f"🔍 Top {min(5, len(mini_hits))} MiniLM candidates:")
         for i, (score, meta) in enumerate(mini_hits[:5]):
             print(f"  {i+1}. Score: {score:.3f} | Tag: {meta.get('tag', '')} | Text: '{meta.get('text', '')[:50]}...'")
+            print(f"      XPath: {meta.get('xpath', '')[:80]}...")
 
         if not mini_hits:
             print("❌ No hits from MiniLM shortlist")
@@ -423,8 +433,13 @@ class HybridPipeline:
         
         # Re-embed query and shortlist with MarkupLM (limit to top 10 for performance)
         q_markup = self._embed_query_markup(query)  # 768-d query
+        print(f"✅ Query embedded with MarkupLM, vector shape: {q_markup.shape}")
+        print(f"🔍 MarkupLM Query Vector (first 10 dims): {q_markup[:10]}")
+        
         shortlist_elements = [meta for (_, meta) in shortlist[:10]]  # Limit to top 10
+        print(f"🔍 MarkupLM Processing {len(shortlist_elements)} shortlisted elements")
         shortlist_embeddings = self.element_embedder.batch_encode(shortlist_elements)  # 768-d
+        print(f"✅ Shortlist elements embedded with MarkupLM, shape: {shortlist_embeddings.shape}")
         
         # Compute cosine similarity in 768-d space with user intent awareness
         markup_scores: List[Tuple[float, Dict[str, Any]]] = []
@@ -593,6 +608,24 @@ class HybridPipeline:
             print(f"   Strategy: {'hybrid-minilm-markuplm+promotion' if promo_top else 'hybrid-minilm-markuplm'}")
             print(f"   Element Text: '{selected['meta'].get('text', '')[:50]}...'")
             print(f"   Element Tag: {selected['meta'].get('tag', '')}")
+            
+            # Special logging for Apple filter case
+            if 'Apple' in query and 'filter' in query.lower():
+                print(f"\n🍎 APPLE FILTER SELECTION ANALYSIS:")
+                print(f"   Query: '{query}'")
+                print(f"   Selected XPath: {selected['selector']}")
+                print(f"   Element ID: {selected['meta'].get('attributes', {}).get('id', 'None')}")
+                print(f"   Element Class: {selected['meta'].get('attributes', {}).get('class', 'None')}")
+                print(f"   Element Role: {selected['meta'].get('role', 'None')}")
+                print(f"   Element Aria Label: {selected['meta'].get('attributes', {}).get('aria-label', 'None')}")
+                
+                # Check if this is the correct Apple filter button
+                if 'Apple_2' in selected['selector']:
+                    print(f"   ✅ CORRECT: Selected Apple filter button (id=Apple_2)")
+                else:
+                    print(f"   ❌ INCORRECT: Did not select Apple filter button")
+                    print(f"   Expected: //*[@id=\"Apple_2\"]")
+                    print(f"   Got: {selected['selector']}")
 
         return {
             "results": results[:top_k],

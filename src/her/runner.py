@@ -294,6 +294,24 @@ class Runner:
         label_key = compute_label_key([w for w in (parsed.target_phrase or phrase).split()])
         # Use parsed target phrase for better MiniLM matching
         target_phrase = parsed.target_phrase or phrase
+        
+        # DETAILED LOGGING: Data Creation
+        print(f"\n🔍 DETAILED DATA CREATION LOGGING:")
+        print(f"   Original Step: '{phrase}'")
+        print(f"   Parsed Action: '{parsed.action}'")
+        print(f"   Parsed Target Phrase: '{parsed.target_phrase}'")
+        print(f"   Label Key: '{label_key}'")
+        print(f"   Page Signature: '{ps}'")
+        print(f"   Frame Hash: '{frame_hash}'")
+        print(f"   Elements Count: {len(elements)}")
+        
+        # DETAILED LOGGING: Parameters being passed
+        print(f"\n🔍 PARAMETERS PASSED TO PIPELINE:")
+        print(f"   Query (full step): '{phrase}'")
+        print(f"   User Intent (action): '{parsed.action}'")
+        print(f"   Target (target phrase): '{parsed.target_phrase}'")
+        print(f"   Top K: 10")
+        
         result = self.pipeline.query(
             phrase,  # Query: full step for MiniLM
             elements,
