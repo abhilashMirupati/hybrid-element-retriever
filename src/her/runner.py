@@ -202,20 +202,46 @@ class Runner:
       return `//*[@data-testid="${attrs['data-testid']}"]`;
     }
     
-    // Priority 2: id + text + type + position (most unique)
+    // Priority 2: id + text + type + position + visibility (most unique)
     if (attrs['id'] && text) {
       const pos = getElementPosition(el);
+      const isVisible = el.offsetWidth > 0 && el.offsetHeight > 0 && 
+                       getComputedStyle(el).display !== 'none' && 
+                       getComputedStyle(el).visibility !== 'hidden' && 
+                       getComputedStyle(el).opacity !== '0';
+      
       if (attrs['type']) {
-        return `//*[@id="${attrs['id']}" and @type="${attrs['type']}" and normalize-space()="${text}"][${pos}]`;
+        if (isVisible) {
+          return `//*[@id="${attrs['id']}" and @type="${attrs['type']}" and normalize-space()="${text}" and not(@style[contains(., "display:none") or contains(., "visibility:hidden") or contains(., "opacity:0")])][${pos}]`;
+        } else {
+          return `//*[@id="${attrs['id']}" and @type="${attrs['type']}" and normalize-space()="${text}"][${pos}]`;
+        }
       }
-      return `//*[@id="${attrs['id']}" and normalize-space()="${text}"][${pos}]`;
+      if (isVisible) {
+        return `//*[@id="${attrs['id']}" and normalize-space()="${text}" and not(@style[contains(., "display:none") or contains(., "visibility:hidden") or contains(., "opacity:0")])][${pos}]`;
+      } else {
+        return `//*[@id="${attrs['id']}" and normalize-space()="${text}"][${pos}]`;
+      }
     }
     if (attrs['id']) {
       const pos = getElementPosition(el);
+      const isVisible = el.offsetWidth > 0 && el.offsetHeight > 0 && 
+                       getComputedStyle(el).display !== 'none' && 
+                       getComputedStyle(el).visibility !== 'hidden' && 
+                       getComputedStyle(el).opacity !== '0';
+      
       if (attrs['type']) {
-        return `//*[@id="${attrs['id']}" and @type="${attrs['type']}"][${pos}]`;
+        if (isVisible) {
+          return `//*[@id="${attrs['id']}" and @type="${attrs['type']}" and not(@style[contains(., "display:none") or contains(., "visibility:hidden") or contains(., "opacity:0")])][${pos}]`;
+        } else {
+          return `//*[@id="${attrs['id']}" and @type="${attrs['type']}"][${pos}]`;
+        }
       }
-      return `//*[@id="${attrs['id']}"][${pos}]`;
+      if (isVisible) {
+        return `//*[@id="${attrs['id']}" and not(@style[contains(., "display:none") or contains(., "visibility:hidden") or contains(., "opacity:0")])][${pos}]`;
+      } else {
+        return `//*[@id="${attrs['id']}"][${pos}]`;
+      }
     }
     
     // Priority 3: aria-label + text + type (for inputs)
@@ -385,17 +411,20 @@ class Runner:
         if url:
             try:
                 page.goto(url, wait_until="networkidle")
-                # Wait a bit for dynamic content to load
-                page.wait_for_timeout(2000)
+                # Wait longer for dynamic content to load
+                page.wait_for_timeout(3000)
                 # Try to dismiss any initial popups/overlays
                 self._dismiss_overlays()
                 # Scroll down to load more products (especially for product listing pages)
-                if "smartphones" in url or "products" in url:
+                if "smartphones" in url or "products" in url or "iphone" in url:
                     # Scroll to load all products
                     page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                    page.wait_for_timeout(2000)
+                    page.wait_for_timeout(3000)
                     # Scroll back up a bit to ensure products are visible
                     page.evaluate("window.scrollTo(0, document.body.scrollHeight / 3)")
+                    page.wait_for_timeout(2000)
+                    # Additional scroll to trigger any remaining dynamic content
+                    page.evaluate("window.scrollTo(0, document.body.scrollHeight / 2)")
                     page.wait_for_timeout(1000)
             except Exception:
                 pass
