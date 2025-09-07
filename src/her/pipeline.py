@@ -185,13 +185,13 @@ class HybridPipeline:
     def embed_query(self, text: str) -> np.ndarray:
         if not isinstance(text, str) or not text.strip():
             raise ValueError("query text must be a non-empty string")
-        q = self.text_embedder.encode_one(text)
-        q = np.array(q, dtype=np.float32).reshape(-1)
-        if q.shape[0] != self._Q_DIM:
-            fix = np.zeros((self._Q_DIM,), dtype=np.float32)
-            k = min(self._Q_DIM, q.shape[0])
-            fix[:k] = q[:k]
-            q = fix
+        # Use MarkupLM for query embedding to match element embedding dimensions
+        query_desc = {
+            "tag": "query",
+            "text": text,
+            "attributes": {}
+        }
+        q = self.element_embedder.encode(query_desc)
         return _l2norm(q)
 
     def embed_elements(self, elements: List[Dict[str, Any]]) -> np.ndarray:
@@ -211,6 +211,7 @@ class HybridPipeline:
         print(f"\n🔍 STEP 1: MiniLM Text Search")
         print(f"Query: '{query}'")
         print(f"Total elements available: {len(elements)}")
+        print(f"🔍 MiniLM Input: Query='{query}' | Elements={len(elements)}")
         
         if not isinstance(elements, list):
             raise ValueError("elements must be a list")
@@ -222,6 +223,15 @@ class HybridPipeline:
         if E.size == 0:
             print("❌ No elements after preparation")
             return {"results": [], "strategy": "hybrid-delta", "confidence": 0.0}
+        
+        print(f"🔍 Canonical Elements: {len(meta)} elements prepared")
+        print(f"🔍 Sample Canonical Element Structure:")
+        if meta:
+            sample = meta[0]
+            print(f"  Tag: {sample.get('tag', '')}")
+            print(f"  Text: '{sample.get('text', '')[:50]}...'")
+            print(f"  Attributes: {sample.get('attributes', {})}")
+            print(f"  XPath: {sample.get('xpath', '')[:80]}...")
         
         # Debug: Check if target elements made it through preparation
         target_word = query.lower().split()[0] if query else "element"  # Use first word of query as target
@@ -274,16 +284,19 @@ class HybridPipeline:
                 all_hits.append((score, md))
 
         print(f"✅ Found {len(all_hits)} candidates from cosine similarity")
+        print(f"🔍 MiniLM Output: Top {min(5, len(all_hits))} candidates:")
+        for i, (score, meta) in enumerate(all_hits[:5]):
+            print(f"  {i+1}. Score: {score:.3f} | Tag: {meta.get('tag', '')} | Text: '{meta.get('text', '')[:50]}...'")
         
         # Debug: Check ALL elements for target text to see their actual scores
         target_word = query.lower().split()[0] if query else "element"  # Use first word of query as target
-        all_elements_with_target = [(i, meta[i]) for i, m in enumerate(meta) if target_word in m.get('text', '').lower()]
+        all_elements_with_target = [(i, m) for i, m in enumerate(meta) if isinstance(m, dict) and target_word in m.get('text', '').lower()]
         print(f"\n🔍 ALL elements with '{target_word}' text and their indices:")
         for idx, elem_meta in all_elements_with_target:
             print(f"  Index {idx}: Tag: {elem_meta.get('tag', '')} | Text: '{elem_meta.get('text', '')}' | XPath: {elem_meta.get('xpath', '')[:80]}...")
         
         # Debug: Check if any of these elements are in the top candidates
-        target_indices = [i for i, m in enumerate(meta) if target_word in m.get('text', '').lower()]
+        target_indices = [i for i, m in enumerate(meta) if isinstance(m, dict) and target_word in m.get('text', '').lower()]
         print(f"\n🔍 {target_word.title()} elements indices: {target_indices}")
         print(f"🔍 Top candidates indices: {[h[1].get('_index', 'unknown') for h in all_hits]}")
         
@@ -339,29 +352,14 @@ class HybridPipeline:
                         all_hits.append((forced_score, elem_meta))
                         print(f"  ✅ Forced inclusion: Index {idx} | Score: {forced_score:.6f} | Tag: {elem_meta.get('tag', '')} | Text: '{elem_meta.get('text', '')[:50]}...'")
         
-        # Debug: Check the actual similarity score for the Phones A tag (index 111)
-        phones_a_tag_index = 111  # We know from the debug output
-        if phones_a_tag_index < len(meta):
-            phones_a_meta = meta[phones_a_tag_index]
-            print(f"\n🔍 Phones A tag (index {phones_a_tag_index}):")
-            print(f"  Tag: {phones_a_meta.get('tag', '')} | Text: '{phones_a_meta.get('text', '')}'")
-            print(f"  XPath: {phones_a_meta.get('xpath', '')}")
-            print(f"  Attributes: {phones_a_meta.get('attributes', {})}")
-            
-            # Calculate the actual similarity score
-            if phones_a_tag_index < len(store.vectors):
-                phones_a_vec = np.array(store.vectors[phones_a_tag_index], dtype=np.float32)
-                actual_score = _cos(q, phones_a_vec)
-                print(f"  Actual cosine similarity: {actual_score:.6f}")
-                
-                # Check if this score would make it to top 10
-                top_10_threshold = sorted(all_hits, key=lambda x: x[0], reverse=True)[9][0] if len(all_hits) >= 10 else 0.0
-                print(f"  Top 10 threshold: {top_10_threshold:.6f}")
-                print(f"  Would make top 10: {actual_score > top_10_threshold}")
-            else:
-                print(f"  ❌ Vector not found at index {phones_a_tag_index}")
+        # Debug: Check if any target elements made it to top candidates
+        target_elements_in_top = [h for h in all_hits if target_word in h[1].get('text', '').lower()]
+        if target_elements_in_top:
+            print(f"\n🔍 Found {len(target_elements_in_top)} target elements in top candidates:")
+            for i, (score, meta) in enumerate(target_elements_in_top[:3]):
+                print(f"  {i+1}. Score: {score:.3f} | Tag: {meta.get('tag', '')} | Text: '{meta.get('text', '')}'")
         else:
-            print(f"  ❌ Index {phones_a_tag_index} out of range (meta length: {len(meta)})")
+            print(f"\n❌ No target elements found in top candidates")
         
         print(f"Top 5 candidates from MiniLM:")
         for i, (score, meta) in enumerate(sorted(all_hits, key=lambda x: x[0], reverse=True)[:5]):
@@ -608,6 +606,7 @@ class HybridPipeline:
         ranked = ranked[:top_k]
 
         print(f"\n🎯 STEP 2: MarkupLM Final Scoring")
+        print(f"🔍 MarkupLM Input: {len(ranked)} candidates from MiniLM")
         print(f"Top {min(3, len(ranked))} final candidates after MarkupLM scoring:")
         for i, (score, md, reasons) in enumerate(ranked[:3]):
             print(f"  {i+1}. Final Score: {score:.3f} | Tag: {md.get('tag', '')} | Text: '{md.get('text', '')[:50]}...'")
