@@ -90,6 +90,76 @@ class Runner:
         self._playwright = None
 
     def _inline_snapshot(self) -> Dict[str, Any]:
+        # First try to get DOM + accessibility tree via CDP
+        try:
+            from .bridge.cdp_bridge import capture_complete_snapshot
+            from .descriptors.merge import merge_dom_ax, enhance_element_descriptor
+            
+            # Capture complete snapshot with accessibility tree
+            snapshot = capture_complete_snapshot(self._page, include_frames=True)
+            
+            if snapshot.dom_nodes and snapshot.ax_nodes:
+                # Merge DOM and accessibility tree
+                merged_nodes = merge_dom_ax(snapshot.dom_nodes, snapshot.ax_nodes)
+                
+                # Convert to the expected format
+                elements = []
+                for node in merged_nodes:
+                    # Extract attributes
+                    attrs = node.get('attributes', {})
+                    if isinstance(attrs, list):
+                        attrs_dict = {}
+                        for i in range(0, len(attrs), 2):
+                            if i + 1 < len(attrs):
+                                attrs_dict[str(attrs[i])] = attrs[i + 1]
+                        attrs = attrs_dict
+                    
+                    # Get text content
+                    text = node.get('text', '').strip()
+                    if not text:
+                        text = node.get('nodeValue', '').strip()
+                    
+                    # Get tag name
+                    tag = (node.get('tagName') or node.get('nodeName') or '').upper()
+                    
+                    # Get role from accessibility tree
+                    role = attrs.get('role', '')
+                    if not role and 'accessibility' in node:
+                        role = node['accessibility'].get('role', '')
+                    
+                    # Create element descriptor
+                    element = {
+                        'text': text,
+                        'tag': tag,
+                        'role': role or None,
+                        'attrs': attrs,
+                        'xpath': node.get('xpath', ''),
+                        'bbox': node.get('bbox', {'x': 0, 'y': 0, 'width': 0, 'height': 0, 'w': 0, 'h': 0}),
+                        'visible': node.get('visible', True),
+                        'below_fold': node.get('below_fold', False),
+                        'interactive': node.get('interactive', False),
+                        'backendNodeId': node.get('backendNodeId'),
+                        'accessibility': node.get('accessibility', {})
+                    }
+                    
+                    # Enhance with accessibility information
+                    element = enhance_element_descriptor(element)
+                    elements.append(element)
+                
+                # Return in expected format
+                frame_url = getattr(self._page, "url", "")
+                fh = compute_frame_hash(frame_url, elements)
+                for it in elements:
+                    (it.setdefault("meta", {}))["frame_hash"] = fh
+                    it["frame_url"] = frame_url
+                frames = [{"frame_url": frame_url, "elements": elements, "frame_hash": fh}]
+                return {"elements": elements, "dom_hash": dom_hash(frames), "url": frame_url}
+                
+        except Exception as e:
+            print(f"⚠️  CDP accessibility integration failed: {e}")
+            print("   Falling back to basic DOM snapshot...")
+        
+        # Fallback to original JavaScript-based snapshot
         js = r"""
 () => {
   const collapse = (s) => (s || '').replace(/\s+/g, ' ').trim();
