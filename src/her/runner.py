@@ -127,13 +127,29 @@ class Runner:
                     if not role and 'accessibility' in node:
                         role = node['accessibility'].get('role', '')
                     
+                    # Generate XPath if not present
+                    xpath = node.get('xpath', '')
+                    if not xpath:
+                        # Generate basic XPath from tag and attributes
+                        if tag and tag != '#text':
+                            if attrs.get('id'):
+                                xpath = f"//*[@id='{attrs['id']}']"
+                            elif attrs.get('data-testid'):
+                                xpath = f"//*[@data-testid='{attrs['data-testid']}']"
+                            elif attrs.get('aria-label'):
+                                xpath = f"//*[@aria-label='{attrs['aria-label']}']"
+                            elif text:
+                                xpath = f"//{tag.lower()}[normalize-space()='{text}']"
+                            else:
+                                xpath = f"//{tag.lower()}"
+                    
                     # Create element descriptor
                     element = {
                         'text': text,
                         'tag': tag,
                         'role': role or None,
                         'attrs': attrs,
-                        'xpath': node.get('xpath', ''),
+                        'xpath': xpath,
                         'bbox': node.get('bbox', {'x': 0, 'y': 0, 'width': 0, 'height': 0, 'w': 0, 'h': 0}),
                         'visible': node.get('visible', True),
                         'below_fold': node.get('below_fold', False),
@@ -158,6 +174,8 @@ class Runner:
         except Exception as e:
             print(f"⚠️  CDP accessibility integration failed: {e}")
             print("   Falling back to basic DOM snapshot...")
+            import traceback
+            traceback.print_exc()
         
         # Fallback to original JavaScript-based snapshot
         js = r"""
