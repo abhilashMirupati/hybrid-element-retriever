@@ -193,7 +193,7 @@ class HybridPipeline:
         return E, all_meta
 
     def _compute_intent_score(self, user_intent: str, meta: Dict[str, Any]) -> float:
-        """Compute user intent score for MarkupLM reranking."""
+        """Compute user intent score for MarkupLM reranking - context-aware scoring."""
         if not user_intent:
             return 0.0
         
@@ -205,29 +205,45 @@ class HybridPipeline:
         
         score = 0.0
         
-        # Exact text match gets highest score
-        if intent_lower in text:
-            score += 0.3
-        
-        # Partial word matches
-        intent_words = intent_lower.split()
-        text_words = text.split()
-        word_matches = sum(1 for word in intent_words if word in text_words)
-        score += word_matches * 0.1
+        # Context-aware scoring based on user intent type
+        if "filter" in intent_lower:
+            # For filter intents, prioritize interactive filter elements
+            if tag in ("button", "input", "select") and "filter" in text:
+                score += 0.5  # Highest score for filter buttons
+            elif tag in ("button", "input", "select") and any(word in text for word in intent_lower.split()):
+                score += 0.4  # High score for interactive elements with matching text
+            elif "filter" in text and tag not in ("button", "input", "select"):
+                score += 0.1  # Low score for non-interactive filter text
+            elif tag in ("button", "input", "select"):
+                score += 0.2  # Medium score for other interactive elements
+        elif "select" in intent_lower or "click" in intent_lower:
+            # For selection intents, prioritize clickable elements
+            if tag in ("button", "a", "input", "select"):
+                score += 0.3  # High score for clickable elements
+            elif role in ("button", "link", "tab", "menuitem", "option"):
+                score += 0.2  # Medium score for accessible elements
+        else:
+            # For general intents, use original logic but with lower weights
+            if intent_lower in text:
+                score += 0.2  # Reduced from 0.3
+            intent_words = intent_lower.split()
+            text_words = text.split()
+            word_matches = sum(1 for word in intent_words if word in text_words)
+            score += word_matches * 0.05  # Reduced from 0.1
         
         # Check href for intent
-        if href and any(word in href for word in intent_words):
-            score += 0.2
+        if href and any(word in href for word in intent_lower.split()):
+            score += 0.1  # Reduced from 0.2
         
         # Check tag relevance
-        if any(word in tag for word in intent_words):
-            score += 0.1
+        if any(word in tag for word in intent_lower.split()):
+            score += 0.05  # Reduced from 0.1
         
         # Check role relevance
-        if any(word in role for word in intent_words):
-            score += 0.1
+        if any(word in role for word in intent_lower.split()):
+            score += 0.05  # Reduced from 0.1
         
-        return score
+        return min(score, 0.5)  # Cap at 0.5
 
     def embed_query(self, text: str) -> np.ndarray:
         if not isinstance(text, str) or not text.strip():
@@ -311,6 +327,10 @@ class HybridPipeline:
         shortlist = mini_hits[:min(20, len(mini_hits))]  # Top 20 for reranking
         
         print(f"🔍 Reranking {len(shortlist)} candidates with MarkupLM")
+        print(f"🔍 MarkupLM Processing Details:")
+        print(f"   Query: '{query}'")
+        print(f"   User Intent: '{user_intent}'")
+        print(f"   Shortlist elements: {len(shortlist)}")
         
         # Re-embed query and shortlist with MarkupLM (limit to top 10 for performance)
         q_markup = self._embed_query_markup(query)  # 768-d query
@@ -325,9 +345,20 @@ class HybridPipeline:
                 markup_score = _cos(q_markup, markup_vec)
                 
                 # Apply user intent scoring to MarkupLM results
+                intent_score = 0.0
                 if user_intent:
                     intent_score = self._compute_intent_score(user_intent, meta)
                     markup_score += intent_score
+                
+                # Debug each element
+                print(f"   Element {i+1}:")
+                print(f"     Text: '{meta.get('text', '')[:50]}...'")
+                print(f"     Tag: {meta.get('tag', '')}")
+                print(f"     XPath: {meta.get('xpath', '')[:80]}...")
+                print(f"     MiniLM Score: {mini_score:.3f}")
+                print(f"     MarkupLM Cosine: {_cos(q_markup, markup_vec):.3f}")
+                print(f"     Intent Score: {intent_score:.3f}")
+                print(f"     Final Score: {markup_score:.3f}")
                 
                 markup_scores.append((markup_score, meta))
         
@@ -404,8 +435,10 @@ class HybridPipeline:
             return score
 
         # Apply heuristics to MarkupLM scores
+        print(f"🎯 STEP 3: Final Heuristic Scoring")
+        print(f"🔍 Applied heuristics to {len(markup_scores)} MarkupLM candidates")
         ranked: List[Tuple[float, Dict[str, Any], List[str]]] = []
-        for base_score, md in markup_scores:
+        for i, (base_score, md) in enumerate(markup_scores):
             reasons: List[str] = [f"markup_cosine={base_score:.3f}"]
             b = _tag_bias(md.get("tag", "")) + _role_bonus(md.get("role", ""))
             
@@ -417,17 +450,29 @@ class HybridPipeline:
             
             if b:
                 reasons.append(f"+bias={b:.3f}")
-            ranked.append((base_score + b, md, reasons))
+            
+            final_score = base_score + b
+            ranked.append((final_score, md, reasons))
+            
+            # Debug each element's heuristic scoring
+            print(f"   Element {i+1}:")
+            print(f"     Text: '{md.get('text', '')[:50]}...'")
+            print(f"     Tag: {md.get('tag', '')}")
+            print(f"     XPath: {md.get('xpath', '')[:80]}...")
+            print(f"     Base Score: {base_score:.3f}")
+            print(f"     Tag Bias: {_tag_bias(md.get('tag', '')):.3f}")
+            print(f"     Role Bonus: {_role_bonus(md.get('role', '')):.3f}")
+            print(f"     Clickable Bonus: {clickable_bonus:.3f}")
+            print(f"     Final Score: {final_score:.3f}")
+            print(f"     Reasons: {reasons}")
 
         ranked.sort(key=lambda t: t[0], reverse=True)
         ranked = ranked[:top_k]
 
-        print(f"\n🎯 STEP 3: Final Heuristic Scoring")
-        print(f"🔍 Applied heuristics to {len(ranked)} MarkupLM candidates")
         print(f"Top {min(3, len(ranked))} final candidates:")
-        for i, (score, md, reasons) in enumerate(ranked[:3]):
-            print(f"  {i+1}. Final Score: {score:.3f} | Tag: {md.get('tag', '')} | Text: '{md.get('text', '')[:50]}...'")
-            print(f"      XPath: {md.get('xpath', '')[:100]}...")
+        for i, (score, meta, reasons) in enumerate(ranked[:3]):
+            print(f"  {i+1}. Final Score: {score:.3f} | Tag: {meta.get('tag', '')} | Text: '{meta.get('text', '')[:50]}...'")
+            print(f"      XPath: {meta.get('xpath', '')[:100]}...")
             print(f"      Reasons: {reasons}")
 
         results = []
@@ -453,6 +498,16 @@ class HybridPipeline:
 
         head_score = 1.0 if promo_top is not None else (ranked[0][0] if ranked else 0.0)
         confidence = max(0.0, min(1.0, float(head_score)))
+
+        # Debug final selection
+        if results:
+            selected = results[0]
+            print(f"\n🎯 FINAL SELECTION:")
+            print(f"   Selected XPath: {selected['selector']}")
+            print(f"   Confidence: {confidence:.3f}")
+            print(f"   Strategy: {'hybrid-minilm-markuplm+promotion' if promo_top else 'hybrid-minilm-markuplm'}")
+            print(f"   Element Text: '{selected['meta'].get('text', '')[:50]}...'")
+            print(f"   Element Tag: {selected['meta'].get('tag', '')}")
 
         return {
             "results": results[:top_k],
