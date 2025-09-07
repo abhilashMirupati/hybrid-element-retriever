@@ -140,8 +140,19 @@ class HybridPipeline:
             mini_embeddings: np.ndarray = self.text_embedder.batch_encode_texts(texts)
             assert mini_embeddings.shape[1] == self._Q_DIM, f"MiniLM should output {self._Q_DIM}d, got {mini_embeddings.shape[1]}d"
             
-            # Generate MarkupLM embeddings for all elements (768-d)
-            markup_embeddings: np.ndarray = self.element_embedder.batch_encode(descs)
+            # Generate MarkupLM embeddings for all elements (768-d) - with chunking for token limits
+            # Process in smaller chunks to respect 512 token limit
+            chunk_size = 50  # Process 50 elements at a time
+            markup_embeddings_list = []
+            
+            for i in range(0, len(descs), chunk_size):
+                chunk = descs[i:i + chunk_size]
+                chunk_embeddings = self.element_embedder.batch_encode(chunk)
+                if chunk_embeddings.ndim == 1:
+                    chunk_embeddings = chunk_embeddings.reshape(1, -1)
+                markup_embeddings_list.append(chunk_embeddings)
+            
+            markup_embeddings = np.vstack(markup_embeddings_list)
             if markup_embeddings.ndim == 1:
                 markup_embeddings = markup_embeddings.reshape(1, -1)
             assert markup_embeddings.shape[1] == self._E_DIM, f"MarkupLM should output {self._E_DIM}d, got {markup_embeddings.shape[1]}d"
@@ -496,7 +507,12 @@ class HybridPipeline:
         
         # Get top candidates from MiniLM shortlist
         mini_hits.sort(key=lambda x: x[0], reverse=True)
-        shortlist = mini_hits[:min(20, len(mini_hits))]  # Top 20 for reranking
+        shortlist = mini_hits[:min(5, len(mini_hits))]  # Top 5 for reranking (respect 512 token limit)
+        
+        # Additional safety check for token limits
+        if len(shortlist) > 5:
+            print(f"⚠️  WARNING: Processing {len(shortlist)} elements may exceed token limits")
+            shortlist = shortlist[:5]  # Force limit to 5
         
         print(f"🔍 Reranking {len(shortlist)} candidates with MarkupLM")
         print(f"🔍 MarkupLM Processing Details:")
