@@ -383,10 +383,7 @@ class Runner:
                     return
                 except Exception:
                     pass
-            if action == "select":
-                # Fallback: click element (menu/option)
-                ex.click(selector, **kw)
-                return
+            # select action is handled later in the method
             ex.click(selector, **kw)
             return
         # Fallback raw Playwright and navigation/waits
@@ -500,7 +497,6 @@ class Runner:
             # Get all matching elements
             locators = self._page.locator(f"xpath={selector}")
             count = locators.count()
-            
             if count == 0:
                 raise Exception(f"No elements found for selector: {selector}")
             elif count == 1:
@@ -827,7 +823,7 @@ class Runner:
                     candidates = resolved.get("candidates", [])
                     if selector:
                         try:
-                            self._do_action(intent.action, selector, intent.args, resolved.get("promo", {}))
+                            self._do_action(intent.action, selector, intent.args, resolved.get("promo", {}), step)
                             last_err = None
                             # Wait after successful action for page to update
                             if intent.action in ["click", "select"]:
