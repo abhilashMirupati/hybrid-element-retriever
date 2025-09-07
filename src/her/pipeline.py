@@ -312,9 +312,9 @@ class HybridPipeline:
         
         print(f"🔍 Reranking {len(shortlist)} candidates with MarkupLM")
         
-        # Re-embed query and shortlist with MarkupLM
+        # Re-embed query and shortlist with MarkupLM (limit to top 10 for performance)
         q_markup = self._embed_query_markup(query)  # 768-d query
-        shortlist_elements = [meta for (_, meta) in shortlist]
+        shortlist_elements = [meta for (_, meta) in shortlist[:10]]  # Limit to top 10
         shortlist_embeddings = self.element_embedder.batch_encode(shortlist_elements)  # 768-d
         
         # Compute cosine similarity in 768-d space with user intent awareness

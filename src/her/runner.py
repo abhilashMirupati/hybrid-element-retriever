@@ -95,18 +95,19 @@ class Runner:
   const collapse = (s) => (s || '').replace(/\s+/g, ' ').trim();
   function isVisible(el) {
     const style = window.getComputedStyle(el);
+    // Only filter out truly hidden elements
     if (style.display === 'none' || style.visibility === 'hidden') return false;
     const op = parseFloat(style.opacity);
     if (!isNaN(op) && op === 0) return false;
+    
+    // For product selection, we want to include elements that might be below the fold
+    // Only filter out elements with no meaningful size
     const rect = el.getBoundingClientRect();
     const w = Math.max(0, Math.round(rect.width));
     const h = Math.max(0, Math.round(rect.height));
     if ((w * h) < 1) return false;
-    const vw = Math.max(document.documentElement.clientWidth, window.innerWidth || 0);
-    const vh = Math.max(document.documentElement.clientHeight, window.innerHeight || 0);
-    const horizontallyVisible = rect.right > 0 && rect.left < vw;
-    const verticallyVisible   = rect.bottom > 0 && rect.top < vh;
-    if (!(horizontallyVisible && verticallyVisible)) return false;
+    
+    // Don't filter based on viewport position - let MiniLM decide what's relevant
     return true;
   }
   function siblingIndex(el) {
@@ -230,11 +231,19 @@ class Runner:
             textRaw = textRaw.replace(/\s+/g, ' ').trim();
             const text = textRaw.length > 2048 ? textRaw.slice(0, 2048) : textRaw;
     const rect = el.getBoundingClientRect();
+    
+    // Check if element is in viewport
+    const vw = Math.max(document.documentElement.clientWidth, window.innerWidth || 0);
+    const vh = Math.max(document.documentElement.clientHeight, window.innerHeight || 0);
+    const inViewport = rect.right > 0 && rect.left < vw && rect.bottom > 0 && rect.top < vh;
+    const belowFold = rect.top > vh;
+    
     out.push({
       text, tag, role: role || null, attrs,
       xpath: generateRelativeXPath(el),
       bbox: { x: Math.max(0, Math.round(rect.x)), y: Math.max(0, Math.round(rect.y)), width: Math.max(0, Math.round(rect.width)), height: Math.max(0, Math.round(rect.height)), w: Math.max(0, Math.round(rect.width)), h: Math.max(0, Math.round(rect.height)) },
-      visible: true
+      visible: inViewport,
+      below_fold: belowFold
     });
   }
   return out;
