@@ -307,6 +307,18 @@ class HybridPipeline:
                         # Apply intent-aware scoring in fallback
                         forced_score = max(score, 0.1)  # Base score
                         
+                        # Apply the same penalties as the main scoring
+                        if any(word in query.lower() for word in ["select", "click", "choose", "pick"]) and not any(word in query.lower() for word in ["filter", "sort", "search"]):
+                            # Item selection intent - penalize filter buttons heavily
+                            if tag == "button" and any(filter_word in attrs.get("class", "").lower() for filter_word in ["filter", "sort", "control"]):
+                                forced_score = 0.01  # Very low priority for filter buttons
+                            elif tag == "button" and "apple" in text and "iphone" not in text:
+                                forced_score = 0.01  # Very low priority for Apple filter button
+                            elif "product-tile" in attrs.get("data-testid", "").lower():
+                                forced_score = max(forced_score, 0.9)  # Maximum priority for product tiles
+                            elif "iphone" in text and "pro" in text:
+                                forced_score = max(forced_score, 0.8)  # High priority for iPhone Pro products
+                        
                         # Apply universal intent-aware logic based on query context
                         tag = elem_meta.get("tag", "").lower()
                         text = elem_meta.get("text", "").lower()
@@ -315,23 +327,23 @@ class HybridPipeline:
                         
                         # Universal scoring based on intent patterns
                         if any(word in query_lower for word in ["select", "click", "choose", "pick"]) and not any(word in query_lower for word in ["filter", "sort", "search"]):
-                            # Item selection intent - prioritize interactive elements with content
-                            if "tile" in attrs.get("class", "").lower() or "tile" in attrs.get("data-testid", "").lower():
-                                forced_score = max(forced_score, 0.8)  # Maximum priority for tile elements
+                            # Item selection intent - prioritize product tiles and interactive elements
+                            if "product-tile" in attrs.get("data-testid", "").lower():
+                                forced_score = max(forced_score, 0.9)  # Maximum priority for product tiles
+                            elif "tile" in attrs.get("class", "").lower() or "tile" in attrs.get("data-testid", "").lower():
+                                forced_score = max(forced_score, 0.8)  # High priority for tile elements
+                            elif "iphone" in text and "pro" in text:
+                                forced_score = max(forced_score, 0.8)  # High priority for iPhone Pro products
                             elif tag in ["a", "button"] and (attrs.get("href") or attrs.get("onclick")):
                                 forced_score = max(forced_score, 0.7)  # High priority for interactive elements
                             elif tag == "div" and any(interactive_attr in attrs for interactive_attr in ["onclick", "href", "role", "tabindex"]):
                                 forced_score = max(forced_score, 0.6)  # High priority for interactive containers
                             elif tag == "button" and any(filter_word in attrs.get("class", "").lower() for filter_word in ["filter", "sort", "control"]):
-                                forced_score = max(forced_score, 0.1)  # Low priority for filter buttons
+                                forced_score = max(forced_score, 0.01)  # Very low priority for filter buttons
                             elif tag == "button" and any(control_word in text for control_word in ["clear", "reset", "apply", "sort"]):
-                                forced_score = max(forced_score, 0.05)  # Very low priority for control buttons
+                                forced_score = max(forced_score, 0.01)  # Very low priority for control buttons
                             elif tag == "button" and "apple" in text and "iphone" not in text:
-                                forced_score = max(forced_score, 0.02)  # Very low priority for Apple filter button
-                            elif "product-tile" in attrs.get("data-testid", "").lower():
-                                forced_score = max(forced_score, 0.9)  # Maximum priority for product tiles
-                            elif "iphone" in text and "pro" in text:
-                                forced_score = max(forced_score, 0.8)  # High priority for iPhone Pro products
+                                forced_score = max(forced_score, 0.01)  # Very low priority for Apple filter button
                         
                         elif any(word in query_lower for word in ["filter", "sort", "search"]) and not any(word in query_lower for word in ["select", "click", "choose", "pick"]):
                             # Filtering intent - prioritize filter/control elements
@@ -617,14 +629,17 @@ class HybridPipeline:
             if any(word in query_lower for word in ["select", "click", "choose", "pick"]) and not any(word in query_lower for word in ["filter", "sort", "search"]):
                 # Penalize filter/control elements when user wants to select items
                 if tag == "button" and any(filter_word in (md.get("attributes", {}).get("class", "") or "").lower() for filter_word in ["filter", "sort", "control"]):
-                    b -= 0.8  # Penalty for filter buttons when selecting items
-                    reasons.append(f"-filter_penalty=0.800")
+                    b -= 2.0  # Strong penalty for filter buttons when selecting items
+                    reasons.append(f"-filter_penalty=2.000")
                 elif "filter" in (md.get("attributes", {}).get("data-testid", "") or "").lower():
-                    b -= 0.6  # Penalty for filter elements when selecting items
-                    reasons.append(f"-filter_element_penalty=0.600")
+                    b -= 1.5  # Strong penalty for filter elements when selecting items
+                    reasons.append(f"-filter_element_penalty=1.500")
                 elif tag == "button" and any(control_word in elem_text.lower() for control_word in ["clear", "reset", "apply", "sort"]):
-                    b -= 0.5  # Penalty for control buttons when selecting items
-                    reasons.append(f"-control_penalty=0.500")
+                    b -= 1.0  # Strong penalty for control buttons when selecting items
+                    reasons.append(f"-control_penalty=1.000")
+                elif tag == "button" and "apple" in elem_text.lower() and "iphone" not in elem_text.lower():
+                    b -= 1.5  # Strong penalty for Apple filter button when selecting iPhone products
+                    reasons.append(f"-apple_filter_penalty=1.500")
             
             # If query suggests filtering/sorting (not item selection)
             elif any(word in query_lower for word in ["filter", "sort", "search"]) and not any(word in query_lower for word in ["select", "click", "choose", "pick"]):
