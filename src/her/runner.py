@@ -72,6 +72,7 @@ class Runner:
     def _is_element_interactive(self, tag: str, attrs: Dict[str, Any], role: str) -> bool:
         """
         Determine if an element is interactive based on tag, attributes, and role.
+        Neutral approach - doesn't penalize text nodes for validation steps.
         
         Args:
             tag: Element tag name
@@ -81,7 +82,7 @@ class Runner:
         Returns:
             True if element is interactive, False otherwise
         """
-        # Skip text nodes
+        # Text nodes are not interactive but are valid for validation
         if tag == '#text' or not tag:
             return False
         
@@ -242,7 +243,7 @@ class Runner:
     if (!isNaN(op) && op === 0) return false;
     
     // Include ALL elements - even if they have no size, are below fold, or are interactive
-    // This ensures we capture radio buttons, hidden filters, and all interactive elements
+    // This ensures we capture radio buttons, hidden filters, dynamic content, and validation text
     return true;
   }
   
@@ -472,11 +473,11 @@ class Runner:
   const visited = new Set();
   const nodes = document.querySelectorAll('*');
   for (const el of nodes) {
-    // CAPTURE ALL ELEMENTS - No filtering, capture everything
+    // CAPTURE ALL ELEMENTS - No filtering, capture everything including text nodes
     if (visited.has(el)) continue; visited.add(el);
     
-    // Skip only completely invalid elements
-    if (!el || el.nodeType !== 1) continue;
+    // Include all element types (including text nodes for validation)
+    if (!el) continue;
     const tag = el.tagName.toUpperCase();
     const role = el.getAttribute('role');
     const attrs = collectAttributes(el);
