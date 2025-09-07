@@ -245,6 +245,59 @@ class HybridPipeline:
         
         return min(score, 0.5)  # Cap at 0.5
 
+    def _apply_basic_heuristics(self, markup_scores: List[Tuple[float, Dict[str, Any]]], user_intent: str) -> List[Tuple[float, Dict[str, Any], List[str]]]:
+        """Apply basic heuristics only when MarkupLM scores are close"""
+        print(f"\\n🔍 Applying Basic Heuristics (only when scores are close)")
+        print(f"   User Intent: '{user_intent}'")
+        
+        ranked: List[Tuple[float, Dict[str, Any], List[str]]] = []
+        for i, (base_score, md) in enumerate(markup_scores):
+            reasons: List[str] = [f"markup_cosine={base_score:.3f}"]
+            bonus = 0.0
+            
+            # Basic heuristics - only essential checks
+            tag = (md.get("tag") or "").lower()
+            text = (md.get("text") or "").lower()
+            visible = md.get("visible", True)
+            below_fold = md.get("below_fold", False)
+            
+            # 1. Must be clickable for click/select actions
+            if any(word in user_intent.lower() for word in ["click", "select", "press"]):
+                if tag in ("button", "a", "input", "select", "option"):
+                    bonus += 0.1
+                    reasons.append("+clickable=0.100")
+                elif tag in ("div", "span") and not any(attr in text for attr in ["click", "button", "link"]):
+                    bonus -= 0.05  # Penalty for non-clickable elements
+                    reasons.append("-non_clickable=-0.050")
+            
+            # 2. Must be visible (not hidden)
+            if not visible:
+                bonus -= 0.2
+                reasons.append("-hidden=-0.200")
+            
+            # 3. Prefer elements above the fold
+            if below_fold:
+                bonus -= 0.05
+                reasons.append("-below_fold=-0.050")
+            
+            # 4. Avoid navigation/header elements (basic check)
+            if any(word in text for word in ["menu", "nav", "header", "footer", "skip"]):
+                bonus -= 0.1
+                reasons.append("-nav_element=-0.100")
+            
+            final_score = base_score + bonus
+            ranked.append((final_score, md, reasons))
+            
+            # Debug each element
+            print(f"   Element {i+1}:")
+            print(f"     Text: '{md.get('text', '')[:50]}...'")
+            print(f"     Tag: {md.get('tag', '')}")
+            print(f"     Visible: {visible}, Below Fold: {below_fold}")
+            print(f"     MarkupLM: {base_score:.3f}, Bonus: {bonus:+.3f}, Final: {final_score:.3f}")
+            print(f"     Reasons: {reasons}")
+        
+        return ranked
+
     def embed_query(self, text: str) -> np.ndarray:
         if not isinstance(text, str) or not text.strip():
             raise ValueError("query text must be a non-empty string")
@@ -434,58 +487,33 @@ class HybridPipeline:
 
             return score
 
-        # Show MarkupLM scores WITHOUT rule-based scoring
-        print(f"🎯 STEP 3: MarkupLM Scores (BEFORE rule-based scoring)")
-        print(f"🔍 Pure MarkupLM ranking for {len(markup_scores)} candidates:")
+        # Show MarkupLM scores and decide whether to trust them
+        print(f"🎯 STEP 3: MarkupLM Analysis & Smart Selection")
+        print(f"🔍 MarkupLM ranking for {len(markup_scores)} candidates:")
         for i, (base_score, md) in enumerate(markup_scores):
             print(f"   {i+1}. MarkupLM Score: {base_score:.3f} | Tag: {md.get('tag', '')} | Text: '{md.get('text', '')[:50]}...'")
             print(f"       XPath: {md.get('xpath', '')[:80]}...")
         
-        # Check if MarkupLM already has the right element on top
-        if markup_scores:
-            top_element = markup_scores[0][1]
-            print(f"\\n🔍 MarkupLM's #1 choice:")
-            print(f"   Text: '{top_element.get('text', '')[:50]}...'")
-            print(f"   Tag: {top_element.get('tag', '')}")
-            print(f"   XPath: {top_element.get('xpath', '')[:80]}...")
-            print(f"   Score: {markup_scores[0][0]:.3f}")
+        # Check if MarkupLM has a clear winner (score gap > threshold)
+        if len(markup_scores) >= 2:
+            top_score = markup_scores[0][0]
+            second_score = markup_scores[1][0]
+            score_gap = top_score - second_score
+            print(f"\\n🔍 MarkupLM Analysis:")
+            print(f"   Top Score: {top_score:.3f}")
+            print(f"   Second Score: {second_score:.3f}")
+            print(f"   Score Gap: {score_gap:.3f}")
             
-            # Check if it's the Apple filter button
-            if 'Apple_2' in top_element.get('xpath', ''):
-                print("   ✅ MarkupLM correctly identified Apple filter button!")
+            # Trust MarkupLM if score gap is significant (>0.1)
+            if score_gap > 0.1:
+                print(f"   ✅ Trusting MarkupLM - clear winner (gap > 0.1)")
+                ranked = [(score, meta, [f"markup_cosine={score:.3f}", "trusted_markup"]) for score, meta in markup_scores]
             else:
-                print("   ❌ MarkupLM did NOT identify Apple filter button")
-        
-        # Apply heuristics to MarkupLM scores
-        print(f"\\n🎯 STEP 4: Applying Rule-Based Scoring (Questionable)")
-        print(f"🔍 Applied heuristics to {len(markup_scores)} MarkupLM candidates")
-        ranked: List[Tuple[float, Dict[str, Any], List[str]]] = []
-        for i, (base_score, md) in enumerate(markup_scores):
-            reasons: List[str] = [f"markup_cosine={base_score:.3f}"]
-            b = _tag_bias(md.get("tag", "")) + _role_bonus(md.get("role", ""))
-            
-            # Add clickable bonus
-            clickable_bonus = _clickable_bonus(md)
-            if clickable_bonus > 0:
-                b += clickable_bonus
-                reasons.append(f"+clickable={clickable_bonus:.3f}")
-            
-            if b:
-                reasons.append(f"+bias={b:.3f}")
-            
-            final_score = base_score + b
-            ranked.append((final_score, md, reasons))
-            
-            # Debug each element's heuristic scoring
-            print(f"   Element {i+1}:")
-            print(f"     Text: '{md.get('text', '')[:50]}...'")
-            print(f"     Tag: {md.get('tag', '')}")
-            print(f"     XPath: {md.get('xpath', '')[:80]}...")
-            print(f"     MarkupLM Score: {base_score:.3f}")
-            print(f"     Rule-Based Bonus: {b:.3f}")
-            print(f"     Final Score: {final_score:.3f}")
-            print(f"     Score Change: {final_score - base_score:+.3f}")
-            print(f"     Reasons: {reasons}")
+                print(f"   ⚠️  Close scores - applying basic heuristics")
+                ranked = self._apply_basic_heuristics(markup_scores, user_intent)
+        else:
+            print(f"   ⚠️  Only {len(markup_scores)} candidates - applying basic heuristics")
+            ranked = self._apply_basic_heuristics(markup_scores, user_intent)
 
         ranked.sort(key=lambda t: t[0], reverse=True)
         ranked = ranked[:top_k]
