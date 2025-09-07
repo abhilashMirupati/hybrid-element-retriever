@@ -144,55 +144,45 @@ class HybridPipeline:
         # This dramatically improves performance by avoiding unnecessary MarkupLM processing
         print(f"🚀 PERFORMANCE OPTIMIZATION: Skipping MarkupLM preparation for all {len(descs)} elements")
         print(f"   MarkupLM will be applied only to top candidates from MiniLM shortlist")
+        print(f"   This reduces MarkupLM processing from {len(descs)} elements to ~5-10 elements")
         
-        # Create placeholder embeddings - will be replaced with actual MarkupLM embeddings for top candidates
-        markup_embeddings = np.zeros((len(descs), self._E_DIM), dtype=np.float32)
-            assert markup_embeddings.shape[1] == self._E_DIM, f"MarkupLM should output {self._E_DIM}d, got {markup_embeddings.shape[1]}d"
-            
-            # Cache both embeddings
-            mini_to_put = {h: mini_embeddings[i].astype(np.float32).tolist() 
-                          for i, (h, _) in enumerate(zip(hashes, descs))}
-            self.kv.batch_put_embeddings(mini_to_put, model_name="minilm")
-            
-            markup_to_put = {h: markup_embeddings[i].astype(np.float32).tolist() 
-                            for i, (h, _) in enumerate(zip(hashes, descs))}
-            self.kv.batch_put_embeddings(markup_to_put, model_name="markuplm")
-
-            # Add vectors to respective stores
-            for i, (el, h) in enumerate(zip(descs, hashes)):
-                # Support both 'attrs' and 'attributes' for compatibility
-                attrs = el.get("attrs") or el.get("attributes") or {}
-                
-                meta = {
-                    "hash": h,
-                    "xpath": el.get("xpath") or "",
-                    "tag": (el.get("tag") or "").lower(),
-                    "role": (attrs.get("role") or "").lower(),
-                    "visible": bool(el.get("visible")),
-                    "frame_url": el.get("frame_url") or (el.get("meta") or {}).get("frame_url") or "",
-                    "frame_hash": (el.get("meta") or {}).get("frame_hash", ""),
-                    "text": el.get("text") or "",
-                    "attributes": attrs,
-                }
-                
-                # Add to MiniLM store (384-d)
-                mini_store.add_vector(mini_embeddings[i].astype(np.float32).tolist(), meta)
-                
-                # Add to MarkupLM store (768-d)
-                markup_store.add_vector(markup_embeddings[i].astype(np.float32).tolist(), meta)
-                
-                frame_meta.append(meta)
-
-            all_meta.extend(frame_meta)
-
-        # Return MarkupLM vectors for final ranking (768-d)
-        all_markup_vecs: List[np.ndarray] = []
-        for fh in by_frame.keys():
-            markup_store = self._markup_stores.get(fh)
-            if markup_store:
-                all_markup_vecs.extend([np.array(v, dtype=np.float32) for v in markup_store.vectors])
+        # Store canonical descriptors for later MarkupLM processing of top candidates
+        # No need to create placeholder embeddings - we'll generate them on-demand
         
-        E = np.vstack(all_markup_vecs).astype(np.float32, copy=False) if all_markup_vecs else np.zeros((0, self._E_DIM), dtype=np.float32)
+        # Cache MiniLM embeddings only
+        mini_to_put = {h: mini_embeddings[i].astype(np.float32).tolist() 
+                      for i, (h, _) in enumerate(zip(hashes, descs))}
+        self.kv.batch_put_embeddings(mini_to_put, model_name="minilm")
+        
+        # Skip MarkupLM caching - we'll generate embeddings on-demand for top candidates only
+
+        # Add vectors to MiniLM store only
+        for i, (el, h) in enumerate(zip(descs, hashes)):
+            # Support both 'attrs' and 'attributes' for compatibility
+            attrs = el.get("attrs") or el.get("attributes") or {}
+            
+            meta = {
+                "hash": h,
+                "xpath": el.get("xpath") or "",
+                "tag": (el.get("tag") or "").lower(),
+                "role": (attrs.get("role") or "").lower(),
+                "visible": bool(el.get("visible")),
+                "frame_url": el.get("frame_url") or (el.get("meta") or {}).get("frame_url") or "",
+                "frame_hash": (el.get("meta") or {}).get("frame_hash", ""),
+                "text": el.get("text") or "",
+                "attributes": attrs,
+            }
+            
+            # Add to MiniLM store (384-d) only
+            mini_store.add_vector(mini_embeddings[i].astype(np.float32).tolist(), meta)
+            
+            frame_meta.append(meta)
+
+        all_meta.extend(frame_meta)
+
+        # Return empty MarkupLM vectors since we'll generate them on-demand for top candidates
+        # This is a major performance optimization - no upfront MarkupLM processing
+        E = np.zeros((0, self._E_DIM), dtype=np.float32)
         return E, all_meta
 
     def _compute_intent_score(self, user_intent: Optional[str], target: Optional[str], query: str, meta: Dict[str, Any]) -> float:
@@ -528,8 +518,10 @@ class HybridPipeline:
         shortlist_elements = [meta for (_, meta) in shortlist[:10]]  # Limit to top 10
         print(f"🔍 MarkupLM Processing {len(shortlist_elements)} shortlisted elements")
         
-        # Generate MarkupLM embeddings only for shortlisted elements (PERFORMANCE OPTIMIZATION)
+        # Generate MarkupLM embeddings only for shortlisted elements using canonical descriptors
+        # This is the key performance optimization - only process top candidates with MarkupLM
         print(f"🚀 PERFORMANCE OPTIMIZATION: Generating MarkupLM embeddings for only {len(shortlist_elements)} top candidates")
+        print(f"   Using canonical descriptors for accurate MarkupLM processing")
         shortlist_embeddings = self.element_embedder.batch_encode(shortlist_elements)  # 768-d
         print(f"✅ Shortlist elements embedded with MarkupLM, shape: {shortlist_embeddings.shape}")
         
