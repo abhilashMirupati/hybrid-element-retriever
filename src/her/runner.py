@@ -295,14 +295,14 @@ class Runner:
         # Use parsed target phrase for better MiniLM matching
         target_phrase = parsed.target_phrase or phrase
         result = self.pipeline.query(
-            target_phrase,  # Query: parsed target phrase for MiniLM
+            phrase,  # Query: full step for MiniLM
             elements,
             top_k=10,
             page_sig=ps,
             frame_hash=frame_hash,
             label_key=label_key,
-            user_intent=phrase,  # User Intent: full phrase
-            target=f"{parsed.action} {parsed.target_phrase}",  # Target: action + target phrase
+            user_intent=parsed.action,  # Intent: action only (e.g., "click", "select")
+            target=parsed.target_phrase,  # Target: target phrase only (e.g., "Apple filter")
         )
         candidates = []
         for item in (result.get("results") or [])[:10]:
