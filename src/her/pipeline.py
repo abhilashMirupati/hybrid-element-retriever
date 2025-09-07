@@ -140,23 +140,64 @@ class HybridPipeline:
             mini_embeddings: np.ndarray = self.text_embedder.batch_encode_texts(texts)
             assert mini_embeddings.shape[1] == self._Q_DIM, f"MiniLM should output {self._Q_DIM}d, got {mini_embeddings.shape[1]}d"
             
-        # Skip MarkupLM preparation for all elements - we'll do it later for top candidates only
-        # This dramatically improves performance by avoiding unnecessary MarkupLM processing
-        print(f"🚀 PERFORMANCE OPTIMIZATION: Skipping MarkupLM preparation for all {len(descs)} elements")
-        print(f"   MarkupLM will be applied only to top candidates from MiniLM shortlist")
-        print(f"   This reduces MarkupLM processing from {len(descs)} elements to ~5-10 elements")
+        # Generate MarkupLM embeddings for all elements (768-d) - with chunking for token limits
+        # Process in smaller chunks to respect 512 token limit, ensuring complete elements
+        chunk_size = 20  # Process 20 complete elements at a time to respect token limits
+        markup_embeddings_list = []
         
-        # Store canonical descriptors for later MarkupLM processing of top candidates
-        # No need to create placeholder embeddings - we'll generate them on-demand
+        print(f"🔍 Processing {len(descs)} elements in chunks of {chunk_size} for MarkupLM")
         
-        # Cache MiniLM embeddings only
+        for i in range(0, len(descs), chunk_size):
+            # Ensure we don't split elements - take complete elements only
+            chunk = descs[i:i + chunk_size]
+            print(f"   Processing chunk {i//chunk_size + 1}: elements {i+1}-{min(i+chunk_size, len(descs))}")
+            
+            try:
+                chunk_embeddings = self.element_embedder.batch_encode(chunk)
+                if chunk_embeddings.ndim == 1:
+                    chunk_embeddings = chunk_embeddings.reshape(1, -1)
+                markup_embeddings_list.append(chunk_embeddings)
+                print(f"   ✅ Chunk {i//chunk_size + 1} processed successfully: {chunk_embeddings.shape}")
+            except Exception as e:
+                print(f"   ❌ Chunk {i//chunk_size + 1} failed: {e}")
+                # If chunk fails, try smaller chunks
+                if chunk_size > 1:
+                    print(f"   🔄 Retrying with smaller chunks...")
+                    for j in range(0, len(chunk), 5):  # Try 5 elements at a time
+                        mini_chunk = chunk[j:j+5]
+                        try:
+                            mini_embeddings = self.element_embedder.batch_encode(mini_chunk)
+                            if mini_embeddings.ndim == 1:
+                                mini_embeddings = mini_embeddings.reshape(1, -1)
+                            markup_embeddings_list.append(mini_embeddings)
+                            print(f"   ✅ Mini-chunk processed: {mini_embeddings.shape}")
+                        except Exception as mini_e:
+                            print(f"   ❌ Mini-chunk failed: {mini_e}")
+                            # Skip this mini-chunk and continue
+                            continue
+                else:
+                    print(f"   ⚠️  Skipping failed chunk")
+                    continue
+        
+        if markup_embeddings_list:
+            markup_embeddings = np.vstack(markup_embeddings_list)
+            print(f"✅ All chunks processed successfully: {markup_embeddings.shape}")
+        else:
+            print(f"❌ No chunks processed successfully, using empty embeddings")
+            markup_embeddings = np.zeros((len(descs), self._E_DIM), dtype=np.float32)
+        if markup_embeddings.ndim == 1:
+            markup_embeddings = markup_embeddings.reshape(1, -1)
+            
+        # Cache both embeddings
         mini_to_put = {h: mini_embeddings[i].astype(np.float32).tolist() 
                       for i, (h, _) in enumerate(zip(hashes, descs))}
         self.kv.batch_put_embeddings(mini_to_put, model_name="minilm")
         
-        # Skip MarkupLM caching - we'll generate embeddings on-demand for top candidates only
+        markup_to_put = {h: markup_embeddings[i].astype(np.float32).tolist() 
+                        for i, (h, _) in enumerate(zip(hashes, descs))}
+        self.kv.batch_put_embeddings(markup_to_put, model_name="markuplm")
 
-        # Add vectors to MiniLM store only
+        # Add vectors to both stores
         for i, (el, h) in enumerate(zip(descs, hashes)):
             # Support both 'attrs' and 'attributes' for compatibility
             attrs = el.get("attrs") or el.get("attributes") or {}
@@ -173,16 +214,24 @@ class HybridPipeline:
                 "attributes": attrs,
             }
             
-            # Add to MiniLM store (384-d) only
+            # Add to MiniLM store (384-d)
             mini_store.add_vector(mini_embeddings[i].astype(np.float32).tolist(), meta)
+            
+            # Add to MarkupLM store (768-d)
+            markup_store.add_vector(markup_embeddings[i].astype(np.float32).tolist(), meta)
             
             frame_meta.append(meta)
 
         all_meta.extend(frame_meta)
 
-        # Return empty MarkupLM vectors since we'll generate them on-demand for top candidates
-        # This is a major performance optimization - no upfront MarkupLM processing
-        E = np.zeros((0, self._E_DIM), dtype=np.float32)
+        # Return MarkupLM vectors for final ranking (768-d)
+        all_markup_vecs: List[np.ndarray] = []
+        for fh in by_frame.keys():
+            markup_store = self._markup_stores.get(fh)
+            if markup_store:
+                all_markup_vecs.extend([np.array(v, dtype=np.float32) for v in markup_store.vectors])
+        
+        E = np.vstack(all_markup_vecs).astype(np.float32, copy=False) if all_markup_vecs else np.zeros((0, self._E_DIM), dtype=np.float32)
         return E, all_meta
 
     def _compute_intent_score(self, user_intent: Optional[str], target: Optional[str], query: str, meta: Dict[str, Any]) -> float:
@@ -518,10 +567,6 @@ class HybridPipeline:
         shortlist_elements = [meta for (_, meta) in shortlist[:10]]  # Limit to top 10
         print(f"🔍 MarkupLM Processing {len(shortlist_elements)} shortlisted elements")
         
-        # Generate MarkupLM embeddings only for shortlisted elements using canonical descriptors
-        # This is the key performance optimization - only process top candidates with MarkupLM
-        print(f"🚀 PERFORMANCE OPTIMIZATION: Generating MarkupLM embeddings for only {len(shortlist_elements)} top candidates")
-        print(f"   Using canonical descriptors for accurate MarkupLM processing")
         shortlist_embeddings = self.element_embedder.batch_encode(shortlist_elements)  # 768-d
         print(f"✅ Shortlist elements embedded with MarkupLM, shape: {shortlist_embeddings.shape}")
         
