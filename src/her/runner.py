@@ -430,7 +430,24 @@ class Runner:
                     # Special handling for iPhone product pages - wait longer for dynamic content
                     if "iphone" in url and "16-pro" in url:
                         print("🔍 iPhone 16 Pro page detected - waiting for dynamic content to load...")
-                        page.wait_for_timeout(5000)  # Wait 5 seconds for dynamic content
+                        
+                        # Wait for DOM to be fully loaded
+                        try:
+                            page.wait_for_load_state("domcontentloaded", timeout=10000)
+                            page.wait_for_load_state("networkidle", timeout=10000)
+                        except:
+                            pass
+                        
+                        # Wait for specific elements to appear (radio buttons for color selection)
+                        try:
+                            page.wait_for_selector('input[type="radio"]', timeout=10000)
+                            print("✅ Radio buttons found!")
+                        except:
+                            print("⚠️  Radio buttons not found, continuing...")
+                        
+                        # Wait additional time for dynamic content
+                        page.wait_for_timeout(5000)
+                        
                         # Scroll to different positions to trigger all dynamic content
                         page.evaluate("window.scrollTo(0, document.body.scrollHeight / 4)")
                         page.wait_for_timeout(2000)
@@ -438,6 +455,9 @@ class Runner:
                         page.wait_for_timeout(2000)
                         page.evaluate("window.scrollTo(0, document.body.scrollHeight * 3 / 4)")
                         page.wait_for_timeout(2000)
+                        
+                        # Final wait for any remaining dynamic content
+                        page.wait_for_timeout(3000)
             except Exception:
                 pass
         return self._inline_snapshot()
