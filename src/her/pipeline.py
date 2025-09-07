@@ -135,62 +135,28 @@ class HybridPipeline:
                 hashes.append(h)
                 descs.append(el)
 
-            # Check cache for both MiniLM and MarkupLM embeddings
-            cached_map = self.kv.batch_get_embeddings(hashes) if hashes else {}
-            missing_mini: List[Tuple[str, Dict[str, Any]]] = []
-            missing_markup: List[Tuple[str, Dict[str, Any]]] = []
-            mini_vecs: List[np.ndarray] = []
-            markup_vecs: List[np.ndarray] = []
-
-            for h, el in zip(hashes, descs):
-                v = cached_map.get(h)
-                if v is not None:
-                    arr = np.array(v, dtype=np.float32)
-                    if arr.shape == (self._Q_DIM,):  # MiniLM cached
-                        mini_vecs.append(arr)
-                    elif arr.shape == (self._E_DIM,):  # MarkupLM cached
-                        markup_vecs.append(arr)
-                    else:
-                        missing_mini.append((h, el))
-                        missing_markup.append((h, el))
-                else:
-                    missing_mini.append((h, el))
-                    missing_markup.append((h, el))
-
-            # Generate missing MiniLM embeddings (384-d)
-            if missing_mini:
-                missing_descs = [el for (_, el) in missing_mini]
-                # Use text content for MiniLM
-                texts = [el.get("text", "") for el in missing_descs]
-                new_mini_arr: np.ndarray = self.text_embedder.batch_encode_texts(texts)
-                assert new_mini_arr.shape[1] == self._Q_DIM, f"MiniLM should output {self._Q_DIM}d, got {new_mini_arr.shape[1]}d"
-                
-                # Cache MiniLM embeddings
-                mini_to_put = {h: new_mini_arr[i].astype(np.float32).tolist() 
-                              for i, (h, _) in enumerate(missing_mini)}
-                self.kv.batch_put_embeddings(mini_to_put, model_name="minilm")
-                
-                for i in range(new_mini_arr.shape[0]):
-                    mini_vecs.append(new_mini_arr[i].astype(np.float32, copy=False))
-
-            # Generate missing MarkupLM embeddings (768-d)
-            if missing_markup:
-                missing_descs = [el for (_, el) in missing_markup]
-                new_markup_arr: np.ndarray = self.element_embedder.batch_encode(missing_descs)
-                if new_markup_arr.ndim == 1:
-                    new_markup_arr = new_markup_arr.reshape(1, -1)
-                assert new_markup_arr.shape[1] == self._E_DIM, f"MarkupLM should output {self._E_DIM}d, got {new_markup_arr.shape[1]}d"
-                
-                # Cache MarkupLM embeddings
-                markup_to_put = {h: new_markup_arr[i].astype(np.float32).tolist() 
-                                for i, (h, _) in enumerate(missing_markup)}
-                self.kv.batch_put_embeddings(markup_to_put, model_name="markuplm")
-                
-                for i in range(new_markup_arr.shape[0]):
-                    markup_vecs.append(new_markup_arr[i].astype(np.float32, copy=False))
+            # Generate MiniLM embeddings for all elements (384-d)
+            texts = [el.get("text", "") for el in descs]
+            mini_embeddings: np.ndarray = self.text_embedder.batch_encode_texts(texts)
+            assert mini_embeddings.shape[1] == self._Q_DIM, f"MiniLM should output {self._Q_DIM}d, got {mini_embeddings.shape[1]}d"
+            
+            # Generate MarkupLM embeddings for all elements (768-d)
+            markup_embeddings: np.ndarray = self.element_embedder.batch_encode(descs)
+            if markup_embeddings.ndim == 1:
+                markup_embeddings = markup_embeddings.reshape(1, -1)
+            assert markup_embeddings.shape[1] == self._E_DIM, f"MarkupLM should output {self._E_DIM}d, got {markup_embeddings.shape[1]}d"
+            
+            # Cache both embeddings
+            mini_to_put = {h: mini_embeddings[i].astype(np.float32).tolist() 
+                          for i, (h, _) in enumerate(zip(hashes, descs))}
+            self.kv.batch_put_embeddings(mini_to_put, model_name="minilm")
+            
+            markup_to_put = {h: markup_embeddings[i].astype(np.float32).tolist() 
+                            for i, (h, _) in enumerate(zip(hashes, descs))}
+            self.kv.batch_put_embeddings(markup_to_put, model_name="markuplm")
 
             # Add vectors to respective stores
-            for i, (arr, el, h) in enumerate(zip(mini_vecs, descs, hashes)):
+            for i, (el, h) in enumerate(zip(descs, hashes)):
                 # Support both 'attrs' and 'attributes' for compatibility
                 attrs = el.get("attrs") or el.get("attributes") or {}
                 
@@ -207,11 +173,10 @@ class HybridPipeline:
                 }
                 
                 # Add to MiniLM store (384-d)
-                mini_store.add_vector(arr.astype(np.float32).tolist(), meta)
+                mini_store.add_vector(mini_embeddings[i].astype(np.float32).tolist(), meta)
                 
-                # Add to MarkupLM store (768-d) - use corresponding MarkupLM vector
-                if i < len(markup_vecs):
-                    markup_store.add_vector(markup_vecs[i].astype(np.float32).tolist(), meta)
+                # Add to MarkupLM store (768-d)
+                markup_store.add_vector(markup_embeddings[i].astype(np.float32).tolist(), meta)
                 
                 frame_meta.append(meta)
 
