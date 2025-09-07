@@ -738,6 +738,13 @@ class HybridPipeline:
             print(f"   Element Text: '{selected['meta'].get('text', '')[:50]}...'")
             print(f"   Element Tag: {selected['meta'].get('tag', '')}")
             
+            # Check how many elements this XPath matches (if we have access to page)
+            try:
+                # This will be checked later in the runner when we actually try to click
+                print(f"   📋 XPath will be validated during click execution")
+            except Exception as e:
+                print(f"   ⚠️  Could not validate XPath: {e}")
+            
             # Special logging for Apple filter case
             if 'Apple' in query and 'filter' in query.lower():
                 print(f"\n🍎 APPLE FILTER SELECTION ANALYSIS:")

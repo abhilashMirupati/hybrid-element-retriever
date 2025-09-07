@@ -867,6 +867,19 @@ class Runner:
             for detail in sorted(element_details, key=lambda x: x['score'], reverse=True)[:5]:
                 print(f"  {detail['index']+1}. Score: {detail['score']:.1f} | {detail['tag']} | '{detail['text']}' | Intent: {detail['intent_score']:.0f} | Pos: ({detail['bbox']['x']:.0f}, {detail['bbox']['y']:.0f})")
             
+            # Show which element will be clicked
+            if best_element:
+                best_index = next(i for i, detail in enumerate(element_details) if detail['element'] == best_element)
+                best_detail = element_details[best_index]
+                print(f"🎯 SELECTED ELEMENT FOR CLICKING:")
+                print(f"   Index: {best_index+1} (out of {count} total elements)")
+                print(f"   Score: {best_detail['score']:.1f}")
+                print(f"   Tag: {best_detail['tag']}")
+                print(f"   Text: '{best_detail['text']}'")
+                print(f"   Position: ({best_detail['bbox']['x']:.0f}, {best_detail['bbox']['y']:.0f})")
+                print(f"   Intent Score: {best_detail['intent_score']:.0f}")
+                print(f"   XPath: {selector}")
+            
             if best_element:
                 best_index = next(i for i, detail in enumerate(element_details) if detail['element'] == best_element)
                 print(f"✅ Clicking best element #{best_index+1} (score: {best_score:.1f})")
