@@ -100,14 +100,8 @@ class Runner:
     const op = parseFloat(style.opacity);
     if (!isNaN(op) && op === 0) return false;
     
-    // For product selection, we want to include elements that might be below the fold
-    // Only filter out elements with no meaningful size
-    const rect = el.getBoundingClientRect();
-    const w = Math.max(0, Math.round(rect.width));
-    const h = Math.max(0, Math.round(rect.height));
-    if ((w * h) < 1) return false;
-    
-    // Don't filter based on viewport position - let MiniLM decide what's relevant
+    // Include ALL elements - even if they have no size or are below fold
+    // This ensures we capture hidden elements like Apple filter buttons
     return true;
   }
   function siblingIndex(el) {
@@ -125,59 +119,79 @@ class Runner:
       attrs[a.name] = a.value;
     }
     
-    // Priority 1: data-testid
+    const text = (el.innerText || '').trim();
+    
+    // Priority 1: data-testid + text (most unique)
+    if (attrs['data-testid'] && text) {
+      return `//*[@data-testid="${attrs['data-testid']}" and normalize-space()="${text}"]`;
+    }
     if (attrs['data-testid']) {
       return `//*[@data-testid="${attrs['data-testid']}"]`;
     }
     
-    // Priority 2: id
+    // Priority 2: id + text (most unique)
+    if (attrs['id'] && text) {
+      return `//*[@id="${attrs['id']}" and normalize-space()="${text}"]`;
+    }
     if (attrs['id']) {
       return `//*[@id="${attrs['id']}"]`;
     }
     
-    // Priority 3: aria-label
+    // Priority 3: aria-label + text
+    if (attrs['aria-label'] && text) {
+      return `//*[@aria-label="${attrs['aria-label']}" and normalize-space()="${text}"]`;
+    }
     if (attrs['aria-label']) {
       return `//*[@aria-label="${attrs['aria-label']}"]`;
     }
     
-    // Priority 4: href + text for links
+    // Priority 4: href + text + class for links
     if (tag === 'a' && attrs['href']) {
-      const text = (el.innerText || '').trim();
+      if (text && attrs['class']) {
+        const firstClass = attrs['class'].split(' ')[0];
+        return `//a[@href="${attrs['href']}" and contains(@class, "${firstClass}") and normalize-space()="${text}"]`;
+      }
       if (text) {
         return `//a[@href="${attrs['href']}" and normalize-space()="${text}"]`;
       }
       return `//a[@href="${attrs['href']}"]`;
     }
     
-    // Priority 5: role + text
+    // Priority 5: role + text + class
     if (attrs['role'] && attrs['role'] !== 'presentation') {
-      const text = (el.innerText || '').trim();
+      if (text && attrs['class']) {
+        const firstClass = attrs['class'].split(' ')[0];
+        return `//*[@role="${attrs['role']}" and contains(@class, "${firstClass}") and normalize-space()="${text}"]`;
+      }
       if (text) {
         return `//*[@role="${attrs['role']}" and normalize-space()="${text}"]`;
       }
       return `//*[@role="${attrs['role']}"]`;
     }
     
-    // Priority 6: class + text
-    if (attrs['class']) {
-      const text = (el.innerText || '').trim();
+    // Priority 6: class + text + position
+    if (attrs['class'] && text) {
       const firstClass = attrs['class'].split(' ')[0];
-      if (text && firstClass) {
-        return `//${tag}[contains(@class, "${firstClass}") and normalize-space()="${text}"]`;
-      }
-      if (firstClass) {
-        return `//${tag}[contains(@class, "${firstClass}")]`;
-      }
+      const pos = siblingIndex(el);
+      return `//${tag}[contains(@class, "${firstClass}") and normalize-space()="${text}"][${pos}]`;
     }
     
-    // Priority 7: text only
-    const text = (el.innerText || '').trim();
+    // Priority 7: text + position
     if (text) {
-      return `//${tag}[normalize-space()="${text}"]`;
+      const pos = siblingIndex(el);
+      return `//${tag}[normalize-space()="${text}"][${pos}]`;
     }
     
-    // Fallback: tag only
-    return `//${tag}`;
+    // Priority 8: class + position
+    if (attrs['class']) {
+      const firstClass = attrs['class'].split(' ')[0];
+      const pos = siblingIndex(el);
+      return `//${tag}[contains(@class, "${firstClass}")][${pos}]`;
+    }
+    
+    // Fallback: tag + position
+    const pos = siblingIndex(el);
+    return `//${tag}[${pos}]`;
   }
   function collectAttributes(el) {
     const result = {};
