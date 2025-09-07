@@ -114,15 +114,69 @@ class Runner:
     while (s) { if (s.nodeName === el.nodeName) i++; s = s.previousElementSibling; }
     return i;
   }
-  function absoluteXPath(el) {
+  function generateRelativeXPath(el) {
     if (!el || el.nodeType !== 1) return '';
-    const parts = [];
-    while (el && el.nodeType === 1 && el !== document) {
-      const ix = siblingIndex(el);
-      parts.unshift(el.tagName.toUpperCase() + '[' + ix + ']');
-      el = el.parentElement;
+    
+    // Try to generate a relative XPath based on stable attributes
+    const tag = el.tagName.toLowerCase();
+    const attrs = {};
+    for (const a of el.attributes) {
+      attrs[a.name] = a.value;
     }
-    return '/' + parts.join('/');
+    
+    // Priority 1: data-testid
+    if (attrs['data-testid']) {
+      return `//*[@data-testid="${attrs['data-testid']}"]`;
+    }
+    
+    // Priority 2: id
+    if (attrs['id']) {
+      return `//*[@id="${attrs['id']}"]`;
+    }
+    
+    // Priority 3: aria-label
+    if (attrs['aria-label']) {
+      return `//*[@aria-label="${attrs['aria-label']}"]`;
+    }
+    
+    // Priority 4: href + text for links
+    if (tag === 'a' && attrs['href']) {
+      const text = (el.innerText || '').trim();
+      if (text) {
+        return `//a[@href="${attrs['href']}" and normalize-space()="${text}"]`;
+      }
+      return `//a[@href="${attrs['href']}"]`;
+    }
+    
+    // Priority 5: role + text
+    if (attrs['role'] && attrs['role'] !== 'presentation') {
+      const text = (el.innerText || '').trim();
+      if (text) {
+        return `//*[@role="${attrs['role']}" and normalize-space()="${text}"]`;
+      }
+      return `//*[@role="${attrs['role']}"]`;
+    }
+    
+    // Priority 6: class + text
+    if (attrs['class']) {
+      const text = (el.innerText || '').trim();
+      const firstClass = attrs['class'].split(' ')[0];
+      if (text && firstClass) {
+        return `//${tag}[contains(@class, "${firstClass}") and normalize-space()="${text}"]`;
+      }
+      if (firstClass) {
+        return `//${tag}[contains(@class, "${firstClass}")]`;
+      }
+    }
+    
+    // Priority 7: text only
+    const text = (el.innerText || '').trim();
+    if (text) {
+      return `//${tag}[normalize-space()="${text}"]`;
+    }
+    
+    // Fallback: tag only
+    return `//${tag}`;
   }
   function collectAttributes(el) {
     const result = {};
@@ -143,12 +197,42 @@ class Runner:
     const tag = el.tagName.toUpperCase();
     const role = el.getAttribute('role');
     const attrs = collectAttributes(el);
-    const textRaw = (el.innerText || '').replace(/\s+/g, ' ').trim();
-    const text = textRaw.length > 2048 ? textRaw.slice(0, 2048) : textRaw;
+            // Get text content using a better method
+            let textRaw = '';
+            
+            // For interactive elements, get their text content
+            if (['BUTTON', 'A', 'INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) {
+              textRaw = el.textContent || '';
+            } else {
+              // For other elements, only get direct text nodes (not from children)
+              const textNodes = [];
+              const walker = document.createTreeWalker(
+                el,
+                NodeFilter.SHOW_TEXT,
+                {
+                  acceptNode: function(node) {
+                    // Only include text nodes that are direct children
+                    if (node.parentNode === el) {
+                      return NodeFilter.FILTER_ACCEPT;
+                    }
+                    return NodeFilter.FILTER_REJECT;
+                  }
+                }
+              );
+              
+              let node;
+              while (node = walker.nextNode()) {
+                textNodes.push(node.textContent);
+              }
+              textRaw = textNodes.join(' ');
+            }
+            
+            textRaw = textRaw.replace(/\s+/g, ' ').trim();
+            const text = textRaw.length > 2048 ? textRaw.slice(0, 2048) : textRaw;
     const rect = el.getBoundingClientRect();
     out.push({
       text, tag, role: role || null, attrs,
-      xpath: absoluteXPath(el),
+      xpath: generateRelativeXPath(el),
       bbox: { x: Math.max(0, Math.round(rect.x)), y: Math.max(0, Math.round(rect.y)), width: Math.max(0, Math.round(rect.width)), height: Math.max(0, Math.round(rect.height)), w: Math.max(0, Math.round(rect.width)), h: Math.max(0, Math.round(rect.height)) },
       visible: true
     });
@@ -423,6 +507,18 @@ class Runner:
                 except Exception:
                     return False
             return False
+        if "validate it landed on" in low:
+            # Validate URL navigation
+            parts = step.lower().split("validate it landed on", 1)
+            if len(parts) > 1:
+                expected_url = parts[1].strip().strip('"').strip("'")
+                try:
+                    current_url = self._page.url
+                    # Check if current URL contains the expected URL or vice versa
+                    return expected_url in current_url or current_url in expected_url
+                except Exception:
+                    return False
+            return False
         return False
 
     def run(self, steps: List[str]) -> List[StepResult]:
@@ -446,6 +542,16 @@ class Runner:
                         break
                     continue
                 intent = self.intent.parse(step)
+                
+                # Debug: Print step JSON
+                print(f"\n📋 STEP JSON:")
+                print(f"  Raw Step: '{step}'")
+                print(f"  Action: '{intent.action}'")
+                print(f"  Target: '{intent.target_phrase}'")
+                print(f"  Args: '{intent.args}'")
+                print(f"  Constraints: {intent.constraints}")
+                print(f"  Confidence: {intent.confidence}")
+                
                 attempts = 3
                 selector = ""
                 conf = 0.0
