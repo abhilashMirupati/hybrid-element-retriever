@@ -32,6 +32,10 @@ def synthesize_xpath(desc: Dict) -> List[Tuple[str, str]]:
     href = attrs.get("href")
     if href and text and tag == "a":
         add("href+text", f'//a[@href="{href}" and normalize-space()="{text}"]')
+        # Add more specific combinations for uniqueness
+        class_name = attrs.get("class", "")
+        if class_name:
+            add("href+text+class", f'//a[@href="{href}" and normalize-space()="{text}" and contains(@class, "{class_name.split()[0]}")]')
         # Also add with position for uniqueness
         add("href+text+pos", f'(//a[@href="{href}" and normalize-space()="{text}"])[1]')
 
@@ -56,6 +60,10 @@ def synthesize_xpath(desc: Dict) -> List[Tuple[str, str]]:
         add("id+tag", f'//{tag}[@id="{elid}"]')
         # Add position-based for uniqueness
         add("id+tag+pos", f'(//{tag}[@id="{elid}"])[1]')
+        # Add with text for even more specificity
+        if text:
+            add("id+tag+text", f'//{tag}[@id="{elid}" and normalize-space()="{text}"]')
+            add("id+tag+text+pos", f'(//{tag}[@id="{elid}" and normalize-space()="{text}"])[1]')
 
     # Medium priority: class + text (more robust than absolute paths)
     class_name = attrs.get("class")

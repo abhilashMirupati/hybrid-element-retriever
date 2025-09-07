@@ -351,7 +351,7 @@ class Runner:
         except Exception:
             pass
 
-    def _do_action(self, action: str, selector: str, value: Optional[str], promo: Dict[str, Any]) -> None:
+    def _do_action(self, action: str, selector: str, value: Optional[str], promo: Dict[str, Any], user_intent: str = "") -> None:
         if not _PLAYWRIGHT or not self._page:
             raise RuntimeError("Playwright unavailable for action execution")
         # Try scroll + overlay dismiss before attempting action
@@ -416,7 +416,7 @@ class Runner:
                 return
         if action == "select":
             # For select actions, try to find the most visible/clickable element
-            self._click_best_element(selector)
+            self._click_best_element(selector, phrase)
             return
         if action == "back":
             try:
@@ -438,7 +438,7 @@ class Runner:
             self._page.wait_for_timeout(int(secs * 1000))
             return
         # For click actions, try to find the best element
-        self._click_best_element(selector)
+        self._click_best_element(selector, phrase)
 
     def _scroll_into_view(self, element) -> None:
         """Scroll element into view if it's not visible."""
@@ -483,8 +483,8 @@ class Runner:
         except Exception as e:
             print(f"⚠️  Could not scroll element into view: {e}")
 
-    def _click_best_element(self, selector: str) -> None:
-        """Click the best element when there are multiple matches."""
+    def _click_best_element(self, selector: str, user_intent: str = "") -> None:
+        """Click the best element when there are multiple matches, using user intent."""
         if not _PLAYWRIGHT or not self._page:
             return
         
@@ -502,8 +502,9 @@ class Runner:
                 element.click()
                 return
             
-            # Multiple elements - find the best one
+            # Multiple elements - find the best one using user intent
             print(f"🔍 Found {count} elements with selector: {selector}")
+            print(f"🎯 User intent: '{user_intent}'")
             
             # Try to find the most visible and clickable element
             best_element = None
@@ -528,17 +529,56 @@ class Runner:
                         text = element.text_content() or ""
                         tag_name = element.evaluate("el => el.tagName.toLowerCase()") or ""
                         role = element.get_attribute("role") or ""
+                        href = element.get_attribute("href") or ""
+                        class_name = element.get_attribute("class") or ""
+                        id_attr = element.get_attribute("id") or ""
                     except:
                         text = ""
                         tag_name = ""
                         role = ""
+                        href = ""
+                        class_name = ""
+                        id_attr = ""
                     
                     # Calculate score based on multiple factors
                     score = bbox['width'] * bbox['height']  # Area as base score
                     
-                    # Bonus for being in viewport center
+                    # HEURISTIC 1: Filter out hidden/background elements
+                    if bbox['y'] < 0 or bbox['x'] < 0:  # Off-screen elements
+                        continue
+                    
+                    # HEURISTIC 2: Filter out very small elements (likely decorative)
+                    if bbox['width'] < 10 or bbox['height'] < 10:
+                        continue
+                    
+                    # HEURISTIC 3: Filter out elements with no meaningful content
+                    if not text.strip() and not href and not role:
+                        continue
+                    
+                    # HEURISTIC 4: User intent matching
+                    intent_score = 0
+                    if user_intent:
+                        intent_lower = user_intent.lower()
+                        text_lower = text.lower()
+                        
+                        # Exact text match gets highest score
+                        if intent_lower in text_lower:
+                            intent_score += 1000
+                        
+                        # Partial word matches
+                        intent_words = intent_lower.split()
+                        text_words = text_lower.split()
+                        word_matches = sum(1 for word in intent_words if word in text_words)
+                        intent_score += word_matches * 200
+                        
+                        # Check href for intent
+                        if href and any(word in href.lower() for word in intent_words):
+                            intent_score += 300
+                    
+                    # HEURISTIC 5: Position-based scoring
                     viewport = self._page.viewport_size
                     if viewport:
+                        # Bonus for being in viewport center
                         center_x = bbox['x'] + bbox['width'] / 2
                         center_y = bbox['y'] + bbox['height'] / 2
                         viewport_center_x = viewport['width'] / 2
@@ -548,18 +588,29 @@ class Runner:
                         distance = ((center_x - viewport_center_x) ** 2 + (center_y - viewport_center_y) ** 2) ** 0.5
                         center_bonus = max(0, 1000 - distance)  # Bonus decreases with distance
                         score += center_bonus
+                        
+                        # Bonus for being higher on the page (top elements are usually more important)
+                        top_bonus = max(0, 1000 - bbox['y'])  # Higher elements get more bonus
+                        score += top_bonus
                     
-                    # Bonus for being higher on the page (top elements are usually more important)
-                    top_bonus = max(0, 1000 - bbox['y'])  # Higher elements get more bonus
-                    score += top_bonus
-                    
-                    # Bonus for interactive elements
+                    # HEURISTIC 6: Interactive element bonus
                     if tag_name in ['a', 'button'] or role in ['button', 'link']:
                         score += 500
                     
-                    # Bonus for having meaningful text
+                    # HEURISTIC 7: Meaningful content bonus
                     if text and len(text.strip()) > 0:
                         score += 100
+                    
+                    # HEURISTIC 8: Accessibility attributes bonus
+                    if id_attr or role or href:
+                        score += 200
+                    
+                    # HEURISTIC 9: Avoid elements that look like navigation/header
+                    if any(nav_word in class_name.lower() for nav_word in ['nav', 'header', 'menu', 'footer']):
+                        score -= 100  # Slight penalty for navigation elements
+                    
+                    # Add intent score
+                    score += intent_score
                     
                     element_details.append({
                         'index': i,
@@ -567,7 +618,9 @@ class Runner:
                         'score': score,
                         'text': text[:50],
                         'tag': tag_name,
-                        'bbox': bbox
+                        'bbox': bbox,
+                        'href': href[:50] if href else '',
+                        'intent_score': intent_score
                     })
                     
                     if score > best_score:
@@ -579,9 +632,9 @@ class Runner:
                     continue
             
             # Log all elements for debugging
-            print(f"📋 Element analysis:")
+            print(f"📋 Element analysis (sorted by score):")
             for detail in sorted(element_details, key=lambda x: x['score'], reverse=True)[:5]:
-                print(f"  {detail['index']+1}. Score: {detail['score']:.1f} | {detail['tag']} | '{detail['text']}' | Pos: ({detail['bbox']['x']:.0f}, {detail['bbox']['y']:.0f})")
+                print(f"  {detail['index']+1}. Score: {detail['score']:.1f} | {detail['tag']} | '{detail['text']}' | Intent: {detail['intent_score']:.0f} | Pos: ({detail['bbox']['x']:.0f}, {detail['bbox']['y']:.0f})")
             
             if best_element:
                 best_index = next(i for i, detail in enumerate(element_details) if detail['element'] == best_element)
