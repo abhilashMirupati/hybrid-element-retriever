@@ -12,7 +12,39 @@ import os
 import subprocess
 import time
 import json
+import re
 from datetime import datetime
+
+def extract_xpaths_from_output(stdout):
+    """Extract XPaths from test output"""
+    xpaths = []
+    
+    # Look for XPath patterns in the output
+    xpath_patterns = [
+        r'selector=([^\s]+)',  # selector=XPath
+        r'XPath: ([^\s]+)',    # XPath: path
+        r'xpath=([^\s]+)',     # xpath=path
+    ]
+    
+    for pattern in xpath_patterns:
+        matches = re.findall(pattern, stdout)
+        xpaths.extend(matches)
+    
+    # Also look for step-specific XPaths
+    step_pattern = r'Step \d+: (.+?)\n.*?selector=([^\s]+)'
+    step_matches = re.findall(step_pattern, stdout, re.DOTALL)
+    
+    step_xpaths = []
+    for step_desc, xpath in step_matches:
+        step_xpaths.append({
+            'step': step_desc.strip(),
+            'xpath': xpath
+        })
+    
+    return {
+        'all_xpaths': list(set(xpaths)),  # Remove duplicates
+        'step_xpaths': step_xpaths
+    }
 
 def run_test_with_mode(mode, test_name="test_verizon_flow.py"):
     """Run the test with a specific canonical mode"""
@@ -36,13 +68,17 @@ def run_test_with_mode(mode, test_name="test_verizon_flow.py"):
         end_time = time.time()
         duration = end_time - start_time
         
+        # Extract XPaths from the output
+        xpaths = extract_xpaths_from_output(result.stdout)
+        
         return {
             'mode': mode,
             'success': result.returncode == 0,
             'duration': duration,
             'stdout': result.stdout,
             'stderr': result.stderr,
-            'returncode': result.returncode
+            'returncode': result.returncode,
+            'xpaths': xpaths
         }
         
     except subprocess.TimeoutExpired:
@@ -130,6 +166,24 @@ def analyze_test_results(results):
                 print("   Key errors:")
                 for line in error_lines[:3]:  # Show first 3 errors
                     print(f"     {line.strip()}")
+        
+        # Display XPaths for this mode
+        if 'xpaths' in result and result['xpaths']:
+            print(f"\n   📍 XPaths used in {result['mode']}:")
+            
+            # Show step-by-step XPaths
+            if result['xpaths'].get('step_xpaths'):
+                for i, step_xpath in enumerate(result['xpaths']['step_xpaths'], 1):
+                    print(f"     Step {i}: {step_xpath['step']}")
+                    print(f"       XPath: {step_xpath['xpath']}")
+            
+            # Show all unique XPaths
+            if result['xpaths'].get('all_xpaths'):
+                print(f"   📋 All XPaths found ({len(result['xpaths']['all_xpaths'])}):")
+                for xpath in result['xpaths']['all_xpaths'][:10]:  # Show first 10
+                    print(f"       {xpath}")
+                if len(result['xpaths']['all_xpaths']) > 10:
+                    print(f"       ... and {len(result['xpaths']['all_xpaths']) - 10} more")
     
     return results
 
