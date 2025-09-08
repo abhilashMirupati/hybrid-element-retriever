@@ -173,7 +173,7 @@ def get_full_ax_tree(
         include_frames: Whether to include iframe AX trees
 
     Returns:
-        List of accessibility tree nodes
+        List of accessibility tree nodes with backend node IDs
     """
     if not page or not PLAYWRIGHT_AVAILABLE:
         return []
@@ -185,8 +185,11 @@ def get_full_ax_tree(
         # Enable Accessibility domain
         client.send("Accessibility.enable")
 
-        # Get full AX tree
-        response = client.send("Accessibility.getFullAXTree", {})
+        # Get full AX tree with backend node IDs
+        response = client.send("Accessibility.getFullAXTree", {
+            "max_depth": 100,  # Increase depth to capture all nodes
+            "fetch_relatives": True  # Include parent/child relationships
+        })
 
         # Handle response format variations
         if isinstance(response, dict):
@@ -216,8 +219,89 @@ def get_full_ax_tree(
 
         return nodes
 
-    except Exception:
-        # Swallow errors for mocks
+    except Exception as e:
+        logger.debug(f"Could not get accessibility tree: {e}")
+        # Fallback to basic accessibility attributes from DOM
+        return get_basic_accessibility_attributes(page)
+
+
+def get_basic_accessibility_attributes(page: Optional[Page]) -> List[Dict[str, Any]]:
+    """Fallback method to get basic accessibility attributes from DOM.
+    
+    Args:
+        page: Playwright page instance
+        
+    Returns:
+        List of basic accessibility nodes
+    """
+    if not page or not PLAYWRIGHT_AVAILABLE:
+        return []
+    
+    try:
+        # Get basic accessibility attributes from DOM
+        ax_data = page.evaluate("""
+            () => {
+                const nodes = [];
+                const walker = document.createTreeWalker(
+                    document.body,
+                    NodeFilter.SHOW_ELEMENT,
+                    null,
+                    false
+                );
+                
+                let nodeId = 0;
+                let node = walker.nextNode();
+                while (node) {
+                    const axNode = {
+                        nodeId: nodeId++,
+                        backendNodeId: nodeId,  // Use nodeId as backend ID for fallback
+                        role: node.getAttribute('role') || '',
+                        name: node.getAttribute('aria-label') || node.innerText || '',
+                        value: node.value || '',
+                        description: node.getAttribute('aria-description') || '',
+                        checked: node.getAttribute('aria-checked') || '',
+                        selected: node.getAttribute('aria-selected') || '',
+                        expanded: node.getAttribute('aria-expanded') || '',
+                        disabled: node.getAttribute('aria-disabled') || '',
+                        focused: node.getAttribute('aria-focused') || '',
+                        modal: node.getAttribute('aria-modal') || '',
+                        multiline: node.getAttribute('aria-multiline') || '',
+                        multiselectable: node.getAttribute('aria-multiselectable') || '',
+                        readonly: node.getAttribute('aria-readonly') || '',
+                        required: node.getAttribute('aria-required') || '',
+                        autocomplete: node.getAttribute('aria-autocomplete') || '',
+                        haspopup: node.getAttribute('aria-haspopup') || '',
+                        level: node.getAttribute('aria-level') || '',
+                        valuemin: node.getAttribute('aria-valuemin') || '',
+                        valuemax: node.getAttribute('aria-valuemax') || '',
+                        valuetext: node.getAttribute('aria-valuetext') || '',
+                        orientation: node.getAttribute('aria-orientation') || '',
+                        setsize: node.getAttribute('aria-setsize') || '',
+                        posinset: node.getAttribute('aria-posinset') || '',
+                        activedescendant: node.getAttribute('aria-activedescendant') || '',
+                        controls: node.getAttribute('aria-controls') || '',
+                        describedby: node.getAttribute('aria-describedby') || '',
+                        flowto: node.getAttribute('aria-flowto') || '',
+                        labelledby: node.getAttribute('aria-labelledby') || '',
+                        owns: node.getAttribute('aria-owns') || '',
+                        live: node.getAttribute('aria-live') || '',
+                        atomic: node.getAttribute('aria-atomic') || '',
+                        relevant: node.getAttribute('aria-relevant') || '',
+                        busy: node.getAttribute('aria-busy') || '',
+                        current: node.getAttribute('aria-current') || '',
+                        invalid: node.getAttribute('aria-invalid') || '',
+                        keyshortcuts: node.getAttribute('aria-keyshortcuts') || '',
+                        roledescription: node.getAttribute('aria-roledescription') || ''
+                    };
+                    nodes.push(axNode);
+                    node = walker.nextNode();
+                }
+                return nodes;
+            }
+        """)
+        return ax_data or []
+    except Exception as e:
+        logger.debug(f"Could not get basic accessibility attributes: {e}")
         return []
 
 
@@ -234,7 +318,7 @@ def get_full_ax_tree_for_frame(frame: Frame) -> List[Dict[str, Any]]:
         return []
 
     try:
-        # Execute in frame context
+        # Execute in frame context with enhanced accessibility attributes
         ax_data = frame.evaluate(
             """
             () => {
@@ -247,14 +331,49 @@ def get_full_ax_tree_for_frame(frame: Frame) -> List[Dict[str, Any]]:
                         false
                     );
 
+                    let nodeId = 0;
                     let node = walker.nextNode();
                     while (node) {
                         const axNode = {
+                            nodeId: nodeId++,
+                            backendNodeId: nodeId,  // Use nodeId as backend ID
                             role: node.getAttribute('role') || '',
                             name: node.getAttribute('aria-label') || node.innerText || '',
                             value: node.value || '',
                             description: node.getAttribute('aria-description') || '',
-                            nodeId: nodes.length
+                            checked: node.getAttribute('aria-checked') || '',
+                            selected: node.getAttribute('aria-selected') || '',
+                            expanded: node.getAttribute('aria-expanded') || '',
+                            disabled: node.getAttribute('aria-disabled') || '',
+                            focused: node.getAttribute('aria-focused') || '',
+                            modal: node.getAttribute('aria-modal') || '',
+                            multiline: node.getAttribute('aria-multiline') || '',
+                            multiselectable: node.getAttribute('aria-multiselectable') || '',
+                            readonly: node.getAttribute('aria-readonly') || '',
+                            required: node.getAttribute('aria-required') || '',
+                            autocomplete: node.getAttribute('aria-autocomplete') || '',
+                            haspopup: node.getAttribute('aria-haspopup') || '',
+                            level: node.getAttribute('aria-level') || '',
+                            valuemin: node.getAttribute('aria-valuemin') || '',
+                            valuemax: node.getAttribute('aria-valuemax') || '',
+                            valuetext: node.getAttribute('aria-valuetext') || '',
+                            orientation: node.getAttribute('aria-orientation') || '',
+                            setsize: node.getAttribute('aria-setsize') || '',
+                            posinset: node.getAttribute('aria-posinset') || '',
+                            activedescendant: node.getAttribute('aria-activedescendant') || '',
+                            controls: node.getAttribute('aria-controls') || '',
+                            describedby: node.getAttribute('aria-describedby') || '',
+                            flowto: node.getAttribute('aria-flowto') || '',
+                            labelledby: node.getAttribute('aria-labelledby') || '',
+                            owns: node.getAttribute('aria-owns') || '',
+                            live: node.getAttribute('aria-live') || '',
+                            atomic: node.getAttribute('aria-atomic') || '',
+                            relevant: node.getAttribute('aria-relevant') || '',
+                            busy: node.getAttribute('aria-busy') || '',
+                            current: node.getAttribute('aria-current') || '',
+                            invalid: node.getAttribute('aria-invalid') || '',
+                            keyshortcuts: node.getAttribute('aria-keyshortcuts') || '',
+                            roledescription: node.getAttribute('aria-roledescription') || ''
                         };
                         nodes.push(axNode);
                         node = walker.nextNode();

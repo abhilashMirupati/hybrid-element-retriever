@@ -69,6 +69,57 @@ class Runner:
             self._page.set_default_timeout(15000)
         return self._page
 
+    def _is_element_interactive(self, tag: str, attrs: Dict[str, Any], role: str) -> bool:
+        """
+        Determine if an element is interactive based on tag, attributes, and role.
+        Neutral approach - doesn't penalize text nodes for validation steps.
+        
+        Args:
+            tag: Element tag name
+            attrs: Element attributes
+            role: Accessibility role
+            
+        Returns:
+            True if element is interactive, False otherwise
+        """
+        # Text nodes are not interactive but are valid for validation
+        if tag == '#text' or not tag:
+            return False
+        
+        # Check interactive tags
+        interactive_tags = ['button', 'a', 'input', 'select', 'textarea', 'option', 'label', 'form', 'fieldset']
+        if tag.lower() in interactive_tags:
+            return True
+        
+        # Check interactive roles
+        interactive_roles = ['button', 'link', 'menuitem', 'tab', 'option', 'radio', 'checkbox', 'switch', 'textbox', 'combobox', 'listbox', 'menu', 'menubar', 'toolbar', 'slider', 'progressbar', 'scrollbar', 'tablist', 'tree', 'grid', 'cell', 'row', 'columnheader', 'rowheader', 'dialog', 'alertdialog', 'log', 'marquee', 'status', 'timer', 'tooltip']
+        if role and role.lower() in interactive_roles:
+            return True
+        
+        # Check for click handlers
+        if attrs.get('onclick') or attrs.get('onmousedown') or attrs.get('onmouseup'):
+            return True
+        
+        # Check for tabindex (focusable)
+        tabindex = attrs.get('tabindex')
+        if tabindex and str(tabindex).isdigit() and int(tabindex) >= 0:
+            return True
+        
+        # Check for specific input types
+        if tag.lower() == 'input':
+            input_type = attrs.get('type', '').lower()
+            interactive_types = ['button', 'submit', 'reset', 'radio', 'checkbox', 'file', 'image', 'range', 'color', 'date', 'datetime-local', 'email', 'month', 'number', 'password', 'search', 'tel', 'text', 'time', 'url', 'week']
+            if input_type in interactive_types:
+                return True
+        
+        # Check for data attributes indicating interactivity
+        data_attrs = ['data-testid', 'data-id', 'data-value', 'data-action', 'data-click', 'data-toggle']
+        for attr in data_attrs:
+            if attrs.get(attr):
+                return True
+        
+        return False
+
     def _close(self) -> None:
         try:
             if self._page:
@@ -90,6 +141,118 @@ class Runner:
         self._playwright = None
 
     def _inline_snapshot(self) -> Dict[str, Any]:
+        # First try to get DOM + accessibility tree via CDP
+        try:
+            from .bridge.cdp_bridge import capture_complete_snapshot
+            from .descriptors.merge import merge_dom_ax, enhance_element_descriptor
+            from .config import get_config
+            
+            # Get configuration for canonical descriptor building
+            config = get_config()
+            print(f"🔧 Using canonical mode: {config.get_canonical_mode().value}")
+            
+            # Capture complete snapshot with accessibility tree
+            snapshot = capture_complete_snapshot(self._page, include_frames=True)
+            
+            if snapshot.dom_nodes and snapshot.ax_nodes:
+                # Merge DOM and accessibility tree based on configuration
+                merged_nodes = merge_dom_ax(snapshot.dom_nodes, snapshot.ax_nodes)
+                print(f"✅ CDP Integration: Merged {len(merged_nodes)} nodes using {config.get_canonical_mode().value} mode")
+                
+                # Convert to the expected format
+                elements = []
+                for node in merged_nodes:
+                    # Extract attributes
+                    attrs = node.get('attributes', {})
+                    if isinstance(attrs, list):
+                        attrs_dict = {}
+                        for i in range(0, len(attrs), 2):
+                            if i + 1 < len(attrs):
+                                attrs_dict[str(attrs[i])] = attrs[i + 1]
+                        attrs = attrs_dict
+                    
+                    # Get text content - prioritize the text extracted by merge function
+                    text = node.get('text', '').strip()
+                    if not text:
+                        text = node.get('nodeValue', '').strip()
+                    
+                    # For interactive elements, try to get text from accessibility tree
+                    if not text and node.get('accessibility'):
+                        text = node['accessibility'].get('name', '').strip()
+                        if not text:
+                            text = node['accessibility'].get('value', '').strip()
+                    
+                    # Get tag name
+                    tag = (node.get('tagName') or node.get('nodeName') or '').upper()
+                    
+                    # Get role from accessibility tree
+                    role = attrs.get('role', '')
+                    if not role and 'accessibility' in node:
+                        role = node['accessibility'].get('role', '')
+                    
+                    # Debug: Print element details
+                    print(f"🔍 Processing element: tag='{tag}', text='{text[:50]}{'...' if len(text) > 50 else ''}', attrs={len(attrs)}")
+                    
+                    # Generate XPath if not present
+                    xpath = node.get('xpath', '')
+                    if not xpath:
+                        # Generate basic XPath from tag and attributes
+                        if tag and tag != '#text':
+                            if attrs.get('id'):
+                                xpath = f"//*[@id='{attrs['id']}']"
+                            elif attrs.get('data-testid'):
+                                xpath = f"//*[@data-testid='{attrs['data-testid']}']"
+                            elif attrs.get('aria-label'):
+                                xpath = f"//*[@aria-label='{attrs['aria-label']}']"
+                            elif text:
+                                xpath = f"//{tag.lower()}[normalize-space()='{text}']"
+                            else:
+                                xpath = f"//{tag.lower()}"
+                    
+                    # Determine if element is interactive
+                    interactive = self._is_element_interactive(tag, attrs, role)
+                    
+                    # NO FILTERING - MiniLM should see ALL elements
+                    # Let MiniLM and MarkupLM decide what's relevant based on text similarity
+                    
+                    # Create element descriptor
+                    element = {
+                        'text': text,
+                        'tag': tag,
+                        'role': role or None,
+                        'attrs': attrs,
+                        'xpath': xpath,
+                        'bbox': node.get('bbox', {'x': 0, 'y': 0, 'width': 0, 'height': 0, 'w': 0, 'h': 0}),
+                        'visible': node.get('visible', True),
+                        'below_fold': node.get('below_fold', False),
+                        'interactive': interactive,
+                        'backendNodeId': node.get('backendNodeId'),
+                        'accessibility': node.get('accessibility', {})
+                    }
+                    
+                    # Enhance with accessibility information
+                    element = enhance_element_descriptor(element)
+                    elements.append(element)
+                
+                # Return in expected format
+                frame_url = getattr(self._page, "url", "")
+                fh = compute_frame_hash(frame_url, elements)
+                for it in elements:
+                    (it.setdefault("meta", {}))["frame_hash"] = fh
+                    it["frame_url"] = frame_url
+                frames = [{"frame_url": frame_url, "elements": elements, "frame_hash": fh}]
+                return {"elements": elements, "dom_hash": dom_hash(frames), "url": frame_url}
+                
+        except Exception as e:
+            print(f"⚠️  CDP accessibility integration failed: {e}")
+            print("   Falling back to basic DOM snapshot...")
+            import traceback
+            traceback.print_exc()
+            
+            # Force fallback to JavaScript approach
+            pass
+        
+        # Fallback to original JavaScript-based snapshot
         js = r"""
 () => {
   const collapse = (s) => (s || '').replace(/\s+/g, ' ').trim();
@@ -100,8 +263,8 @@ class Runner:
     const op = parseFloat(style.opacity);
     if (!isNaN(op) && op === 0) return false;
     
-    // Include ALL elements - even if they have no size, are below fold, or are interactive
-    // This ensures we capture radio buttons, hidden filters, and all interactive elements
+    // Include ALL elements - MiniLM should see everything
+    // Let heuristics decide what's relevant based on text similarity
     return true;
   }
   
@@ -331,11 +494,11 @@ class Runner:
   const visited = new Set();
   const nodes = document.querySelectorAll('*');
   for (const el of nodes) {
-    // CAPTURE ALL ELEMENTS - No filtering, capture everything
+    // CAPTURE ALL ELEMENTS - No filtering, capture everything including text nodes
     if (visited.has(el)) continue; visited.add(el);
     
-    // Skip only completely invalid elements
-    if (!el || el.nodeType !== 1) continue;
+    // Include all element types (including text nodes for validation)
+    if (!el) continue;
     const tag = el.tagName.toUpperCase();
     const role = el.getAttribute('role');
     const attrs = collectAttributes(el);
@@ -724,11 +887,9 @@ class Runner:
             print(f"🔍 Found {count} elements with selector: {selector}")
             print(f"🎯 User intent: '{user_intent}'")
             
-            # Determine if we need interactive elements based on action type
-            interactive_actions = ["click", "select", "enter", "type", "sendkeys"]
-            require_interactive = any(action in user_intent.lower() for action in interactive_actions)
-            
-            print(f"   Action type: {user_intent} | Require interactive: {require_interactive}")
+            # NO FILTERING - MiniLM should see ALL elements
+            # Let MiniLM and MarkupLM decide what's relevant based on text similarity
+            print(f"   Action type: {user_intent} | Processing ALL elements for MiniLM")
             
             # Try to find the most visible and clickable element
             best_element = None
@@ -739,29 +900,21 @@ class Runner:
                 try:
                     element = locators.nth(i)
                     
-                    # Use Playwright's built-in visibility and enabled checks
-                    if not element.is_visible():
-                        print(f"   Element {i+1}: Not visible - trying to scroll into view")
-                        try:
-                            element.scroll_into_view_if_needed()
-                            page.wait_for_timeout(500)  # Wait for scroll to complete
-                            if not element.is_visible():
-                                print(f"   Element {i+1}: Still not visible after scroll - skipping")
-                                continue
-                        except:
-                            print(f"   Element {i+1}: Could not scroll into view - skipping")
-                            continue
+                    # NO FILTERING - Let heuristics decide what's relevant
+                    # Try to scroll into view for better interaction, but don't skip elements
+                    try:
+                        element.scroll_into_view_if_needed()
+                        page.wait_for_timeout(500)  # Wait for scroll to complete
+                    except:
+                        pass  # Continue even if scroll fails
                     
-                    # Only check if enabled for interactive actions
-                    if require_interactive and not element.is_enabled():
-                        print(f"   Element {i+1}: Not enabled - skipping")
-                        continue
+                    # NO FILTERING - MiniLM should see ALL elements
+                    # Let MiniLM and MarkupLM decide what's relevant
                     
                     # Get element properties
                     bbox = element.bounding_box()
-                    if not bbox or bbox['width'] <= 0 or bbox['height'] <= 0:
-                        print(f"   Element {i+1}: No bounding box or zero size - skipping")
-                        continue
+                    # NO FILTERING - MiniLM should see ALL elements regardless of size
+                    # Let heuristics decide what's relevant based on text similarity and context
                     
                     # Get element text and attributes for better scoring
                     try:

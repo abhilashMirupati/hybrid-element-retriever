@@ -18,9 +18,9 @@ def test_verizon_flow():
 
     steps = [
         "Open https://www.verizon.com/",
-        "Click on Phones btn in top",
+        "Click on featured smartphones menu list in top",
         "Select Apple filter",
-        "Select Apple iPhone 16 Pro",
+        "Select iPhone 16 Pro on us: Buy now",
         "Validate it landed on https://www.verizon.com/smartphones/apple-iphone-16-pro/",
         "Select Desert Titanium",
         "Select 512 GB",

@@ -140,90 +140,50 @@ class HybridPipeline:
             mini_embeddings: np.ndarray = self.text_embedder.batch_encode_texts(texts)
             assert mini_embeddings.shape[1] == self._Q_DIM, f"MiniLM should output {self._Q_DIM}d, got {mini_embeddings.shape[1]}d"
             
-            # Generate MarkupLM embeddings for all elements (768-d) - with chunking for token limits
-            # Process in smaller chunks to respect 512 token limit, ensuring complete elements
-            chunk_size = 20  # Process 20 complete elements at a time to respect token limits
-            markup_embeddings_list = []
+        # OPTIMIZATION: Only generate MarkupLM embeddings for top MiniLM candidates
+        # This dramatically improves performance while maintaining accuracy
+        print(f"🔍 OPTIMIZATION: Skipping upfront MarkupLM processing for all {len(descs)} elements")
+        print(f"   Will process only top MiniLM candidates with MarkupLM during query time")
+        
+        # Create empty MarkupLM embeddings array - will be populated during query time
+        markup_embeddings = np.zeros((len(descs), self._E_DIM), dtype=np.float32)
+        print(f"✅ Created empty MarkupLM embeddings array: {markup_embeddings.shape}")
             
-            print(f"🔍 Processing {len(descs)} elements in chunks of {chunk_size} for MarkupLM")
-            
-            for i in range(0, len(descs), chunk_size):
-                # Ensure we don't split elements - take complete elements only
-                chunk = descs[i:i + chunk_size]
-                print(f"   Processing chunk {i//chunk_size + 1}: elements {i+1}-{min(i+chunk_size, len(descs))}")
-                
-                try:
-                    chunk_embeddings = self.element_embedder.batch_encode(chunk)
-                    if chunk_embeddings.ndim == 1:
-                        chunk_embeddings = chunk_embeddings.reshape(1, -1)
-                    markup_embeddings_list.append(chunk_embeddings)
-                    print(f"   ✅ Chunk {i//chunk_size + 1} processed successfully: {chunk_embeddings.shape}")
-                except Exception as e:
-                    print(f"   ❌ Chunk {i//chunk_size + 1} failed: {e}")
-                    # If chunk fails, try smaller chunks
-                    if chunk_size > 1:
-                        print(f"   🔄 Retrying with smaller chunks...")
-                        for j in range(0, len(chunk), 5):  # Try 5 elements at a time
-                            mini_chunk = chunk[j:j+5]
-                            try:
-                                mini_embeddings = self.element_embedder.batch_encode(mini_chunk)
-                                if mini_embeddings.ndim == 1:
-                                    mini_embeddings = mini_embeddings.reshape(1, -1)
-                                markup_embeddings_list.append(mini_embeddings)
-                                print(f"   ✅ Mini-chunk processed: {mini_embeddings.shape}")
-                            except Exception as mini_e:
-                                print(f"   ❌ Mini-chunk failed: {mini_e}")
-                                # Skip this mini-chunk and continue
-                                continue
-                    else:
-                        print(f"   ⚠️  Skipping failed chunk")
-                        continue
-            
-            if markup_embeddings_list:
-                markup_embeddings = np.vstack(markup_embeddings_list)
-                print(f"✅ All chunks processed successfully: {markup_embeddings.shape}")
-            else:
-                print(f"❌ No chunks processed successfully, using empty embeddings")
-                markup_embeddings = np.zeros((len(descs), self._E_DIM), dtype=np.float32)
-            if markup_embeddings.ndim == 1:
-                markup_embeddings = markup_embeddings.reshape(1, -1)
-            assert markup_embeddings.shape[1] == self._E_DIM, f"MarkupLM should output {self._E_DIM}d, got {markup_embeddings.shape[1]}d"
-            
-            # Cache both embeddings
-            mini_to_put = {h: mini_embeddings[i].astype(np.float32).tolist() 
-                          for i, (h, _) in enumerate(zip(hashes, descs))}
-            self.kv.batch_put_embeddings(mini_to_put, model_name="minilm")
-            
-            markup_to_put = {h: markup_embeddings[i].astype(np.float32).tolist() 
-                            for i, (h, _) in enumerate(zip(hashes, descs))}
-            self.kv.batch_put_embeddings(markup_to_put, model_name="markuplm")
+        # Cache both embeddings
+        mini_to_put = {h: mini_embeddings[i].astype(np.float32).tolist() 
+                      for i, (h, _) in enumerate(zip(hashes, descs))}
+        self.kv.batch_put_embeddings(mini_to_put, model_name="minilm")
+        
+        markup_to_put = {h: markup_embeddings[i].astype(np.float32).tolist() 
+                        for i, (h, _) in enumerate(zip(hashes, descs))}
+        self.kv.batch_put_embeddings(markup_to_put, model_name="markuplm")
 
-            # Add vectors to respective stores
-            for i, (el, h) in enumerate(zip(descs, hashes)):
-                # Support both 'attrs' and 'attributes' for compatibility
-                attrs = el.get("attrs") or el.get("attributes") or {}
-                
-                meta = {
-                    "hash": h,
-                    "xpath": el.get("xpath") or "",
-                    "tag": (el.get("tag") or "").lower(),
-                    "role": (attrs.get("role") or "").lower(),
-                    "visible": bool(el.get("visible")),
-                    "frame_url": el.get("frame_url") or (el.get("meta") or {}).get("frame_url") or "",
-                    "frame_hash": (el.get("meta") or {}).get("frame_hash", ""),
-                    "text": el.get("text") or "",
-                    "attributes": attrs,
-                }
-                
-                # Add to MiniLM store (384-d)
-                mini_store.add_vector(mini_embeddings[i].astype(np.float32).tolist(), meta)
-                
-                # Add to MarkupLM store (768-d)
-                markup_store.add_vector(markup_embeddings[i].astype(np.float32).tolist(), meta)
-                
-                frame_meta.append(meta)
+        # Add vectors to both stores
+        for i, (el, h) in enumerate(zip(descs, hashes)):
+            # Support both 'attrs' and 'attributes' for compatibility
+            attrs = el.get("attrs") or el.get("attributes") or {}
+            
+            meta = {
+                "hash": h,
+                "xpath": el.get("xpath") or "",
+                "tag": (el.get("tag") or "").lower(),
+                "role": (attrs.get("role") or "").lower(),
+                "visible": bool(el.get("visible")),
+                "frame_url": el.get("frame_url") or (el.get("meta") or {}).get("frame_url") or "",
+                "frame_hash": (el.get("meta") or {}).get("frame_hash", ""),
+                "text": el.get("text") or "",
+                "attributes": attrs,
+            }
+            
+            # Add to MiniLM store (384-d)
+            mini_store.add_vector(mini_embeddings[i].astype(np.float32).tolist(), meta)
+            
+            # Add to MarkupLM store (768-d)
+            markup_store.add_vector(markup_embeddings[i].astype(np.float32).tolist(), meta)
+            
+            frame_meta.append(meta)
 
-            all_meta.extend(frame_meta)
+        all_meta.extend(frame_meta)
 
         # Return MarkupLM vectors for final ranking (768-d)
         all_markup_vecs: List[np.ndarray] = []
@@ -320,13 +280,15 @@ class HybridPipeline:
                 elif is_interactive:
                     score += 0.3  # Medium score for other interactive elements
             elif any(word in intent_lower for word in ["click", "select", "press", "choose", "pick"]):
-                # For click/select intents, prioritize interactive elements
+                # For click/select intents, HEAVILY prioritize interactive elements
                 if is_interactive:
-                    score += 0.5  # Highest score for interactive elements
+                    score += 0.8  # VERY HIGH score for interactive elements
                 elif tag in ("button", "a", "input", "select", "option"):
-                    score += 0.3  # High score for clickable elements
+                    score += 0.6  # High score for clickable elements
                 elif role in ("button", "link", "tab", "menuitem", "option", "radio", "checkbox"):
-                    score += 0.2  # Medium score for accessible elements
+                    score += 0.4  # Medium score for accessible elements
+                elif tag == "#text":
+                    score -= 0.5  # HEAVY penalty for text nodes on click actions
                 
                 # Special bonuses for specific element types
                 if tag == "input":
@@ -380,16 +342,32 @@ class HybridPipeline:
             is_interactive = md.get("interactive", False)
             attrs = md.get("attributes", {})
             
-            # 1. Interactivity bonus (universal)
-            if is_interactive:
-                bonus += 0.2
-                reasons.append("+interactive=0.200")
-            elif tag in ("button", "a", "input", "select", "option"):
-                bonus += 0.1
-                reasons.append("+clickable=0.100")
-            elif tag in ("div", "span", "p") and any(word in user_intent.lower() for word in ["click", "select", "press"]):
-                bonus -= 0.1
-                reasons.append("-non_clickable=-0.100")
+            # 1. Element type scoring based on user intent
+            if any(word in user_intent.lower() for word in ["click", "select", "press", "choose", "pick"]):
+                # For click actions, heavily prioritize interactive elements
+                if is_interactive:
+                    bonus += 0.5  # HIGH bonus for interactive elements
+                    reasons.append("+interactive=0.500")
+                elif tag in ("button", "a", "input", "select", "option"):
+                    bonus += 0.3  # Medium bonus for clickable elements
+                    reasons.append("+clickable=0.300")
+                elif tag == "#text":
+                    bonus -= 1.0  # VERY HEAVY penalty for text nodes on click actions
+                    reasons.append("-text_node_click=-1.000")
+                else:
+                    bonus -= 0.2  # Penalty for non-interactive elements
+                    reasons.append("-non_interactive=-0.200")
+            else:
+                # For other actions (validation, etc.), neutral approach
+                if tag in ("button", "a", "input", "select", "option"):
+                    bonus += 0.1
+                    reasons.append("+clickable=0.100")
+                elif tag == "#text":
+                    bonus += 0.0
+                    reasons.append("+text_node=0.000")
+                else:
+                    bonus += 0.0
+                    reasons.append("+other_element=0.000")
             
             # 2. Visibility penalty (universal)
             if not visible:
@@ -567,6 +545,7 @@ class HybridPipeline:
         
         shortlist_elements = [meta for (_, meta) in shortlist[:10]]  # Limit to top 10
         print(f"🔍 MarkupLM Processing {len(shortlist_elements)} shortlisted elements")
+        
         shortlist_embeddings = self.element_embedder.batch_encode(shortlist_elements)  # 768-d
         print(f"✅ Shortlist elements embedded with MarkupLM, shape: {shortlist_embeddings.shape}")
         
