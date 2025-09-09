@@ -182,12 +182,14 @@ class Runner:
                         text = node['accessibility'].get('value', '').strip()
                 
                 # Get tag name
-                tag = (node.get('tagName') or node.get('nodeName') or '').upper()
+                tag = (node.get('tagName') or node.get('nodeName') or node.get('tag') or '').upper()
                 
                 # Get role from accessibility tree
                 role = attrs.get('role', '')
                 if not role and 'accessibility' in node:
                     role = node['accessibility'].get('role', '')
+                if not role:
+                    role = node.get('type', '')
                 
                 # Debug: Print element details
                 print(f"🔍 Processing element: tag='{tag}', text='{text[:50]}{'...' if len(text) > 50 else ''}', attrs={len(attrs)}")

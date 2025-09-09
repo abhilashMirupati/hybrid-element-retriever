@@ -300,8 +300,13 @@ def extract_clean_text(text_value: Any) -> str:
     """
     if isinstance(text_value, str):
         return text_value
-    elif isinstance(text_value, dict) and 'value' in text_value:
-        return str(text_value['value'])
+    elif isinstance(text_value, dict):
+        if 'value' in text_value:
+            return str(text_value['value'])
+        elif 'type' in text_value and 'value' in text_value:
+            return str(text_value['value'])
+        else:
+            return str(text_value)
     else:
         return str(text_value) if text_value else ''
 
@@ -320,9 +325,14 @@ def convert_accessibility_to_element(ax_node: Dict[str, Any]) -> Dict[str, Any]:
     
     # Get role and determine if interactive
     role = ax_node.get('role', '')
-    # Handle case where role might be a dict or other type
+    # Handle case where role might be a complex object
     if isinstance(role, dict):
-        role = role.get('value', '') if 'value' in role else str(role)
+        if 'value' in role:
+            role = role['value']
+        elif 'type' in role and 'value' in role:
+            role = role['value']
+        else:
+            role = str(role)
     elif not isinstance(role, str):
         role = str(role) if role else ''
     
