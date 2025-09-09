@@ -547,12 +547,14 @@ def is_accessibility_role_interactive(role: str) -> bool:
     return role.lower() in interactive_roles
 
 
-def enhance_element_descriptor(element: Dict[str, Any]) -> Dict[str, Any]:
+def enhance_element_descriptor(element: Dict[str, Any], use_hierarchy: bool = False, hierarchy_builder=None) -> Dict[str, Any]:
     """
-    Enhance element descriptor with accessibility information.
+    Enhance element descriptor with accessibility information and optional hierarchy context.
     
     Args:
         element: Element descriptor from DOM
+        use_hierarchy: Whether to add hierarchical context
+        hierarchy_builder: HierarchyContextBuilder instance
         
     Returns:
         Enhanced element descriptor
@@ -571,5 +573,31 @@ def enhance_element_descriptor(element: Dict[str, Any]) -> Dict[str, Any]:
     element['accessibility_role'] = accessibility.get('role', '')
     element['accessibility_name'] = accessibility.get('name', '')
     element['accessibility_description'] = accessibility.get('description', '')
+    
+    # Add hierarchical context if requested
+    if use_hierarchy and hierarchy_builder:
+        try:
+            # This will be called for individual elements, so we need to handle it differently
+            # For now, we'll add a placeholder that will be filled by the hierarchy builder
+            element['context'] = {
+                'parent': None,
+                'siblings': [],
+                'ancestors': [],
+                'hierarchy_path': 'PENDING',
+                'depth': 0,
+                'has_children': False,
+                'children_count': 0
+            }
+        except Exception as e:
+            logger.warning(f"Failed to add hierarchy context: {e}")
+            element['context'] = {
+                'parent': None,
+                'siblings': [],
+                'ancestors': [],
+                'hierarchy_path': 'ERROR',
+                'depth': 0,
+                'has_children': False,
+                'children_count': 0
+            }
     
     return element

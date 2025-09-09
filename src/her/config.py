@@ -30,6 +30,11 @@ class HERConfig:
         
         # Debug settings
         self.debug_canonical_building = os.getenv("HER_DEBUG_CANONICAL", "0") == "1"
+        
+        # Hierarchy settings
+        self.use_hierarchy = os.getenv("HER_USE_HIERARCHY", "false").lower() == "true"
+        self.use_two_stage = os.getenv("HER_USE_TWO_STAGE", "false").lower() == "true"
+        self.debug_hierarchy = os.getenv("HER_DEBUG_HIERARCHY", "false").lower() == "true"
     
     def _get_canonical_mode(self) -> CanonicalMode:
         """Get canonical descriptor building mode from environment."""
@@ -76,6 +81,18 @@ class HERConfig:
     def should_select_all_elements(self) -> bool:
         """Check if all elements should be selected for MiniLM."""
         return self.select_all_elements_for_minilm
+    
+    def should_use_hierarchy(self) -> bool:
+        """Check if hierarchical context should be used."""
+        return self.use_hierarchy
+    
+    def should_use_two_stage(self) -> bool:
+        """Check if two-stage MarkupLM processing should be used."""
+        return self.use_two_stage
+    
+    def is_hierarchy_debug_enabled(self) -> bool:
+        """Check if hierarchy debugging is enabled."""
+        return self.debug_hierarchy
 
 
 # Global configuration instance
@@ -102,3 +119,6 @@ def print_config() -> None:
     print(f"   Accessibility Mandatory: {config.is_accessibility_mandatory()}")
     print(f"   Select All Elements: {config.should_select_all_elements()}")
     print(f"   Debug Canonical: {config.debug_canonical_building}")
+    print(f"   Use Hierarchy: {config.should_use_hierarchy()}")
+    print(f"   Use Two-Stage: {config.should_use_two_stage()}")
+    print(f"   Debug Hierarchy: {config.is_hierarchy_debug_enabled()}")

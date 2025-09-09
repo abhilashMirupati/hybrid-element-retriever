@@ -14,6 +14,8 @@ from her.embeddings.element_embedder import \
 from her.hashing import element_dom_hash
 from her.vectordb.faiss_store import InMemoryVectorStore
 from her.vectordb.sqlite_cache import SQLiteKV
+from her.config import get_config
+from her.descriptors.hierarchy import HierarchyContextBuilder
 
 # Optional heavy embedder (if present locally)
 try:
@@ -50,6 +52,14 @@ class HybridPipeline:
         preflight_require_models(models_root)
         self._models_root = Path(models_root) if models_root else None
 
+        # Get configuration
+        self.config = get_config()
+        
+        # Hierarchy support
+        self.use_hierarchy = self.config.should_use_hierarchy()
+        self.use_two_stage = self.config.should_use_two_stage()
+        self.hierarchy_builder = HierarchyContextBuilder() if self.use_hierarchy else None
+
         # Embedders - separate for hybrid approach
         model_root = str((self._models_root or Path("src/her/models").resolve()) / "e5-small-onnx")
         self.text_embedder = TextEmbedder(model_root=model_root)  # 384-d for queries
@@ -66,8 +76,8 @@ class HybridPipeline:
         self._markup_stores: Dict[str, InMemoryVectorStore] = {}  # 768-d for MarkupLM rerank
         self._meta: Dict[str, List[Dict[str, Any]]] = {}
 
-        log.info("HybridPipeline ready | cache=%s | MiniLM=%dd | MarkupLM=%dd", 
-                self._db_path, self._Q_DIM, self._E_DIM)
+        log.info("HybridPipeline ready | cache=%s | MiniLM=%dd | MarkupLM=%dd | Hierarchy=%s | TwoStage=%s", 
+                self._db_path, self._Q_DIM, self._E_DIM, self.use_hierarchy, self.use_two_stage)
 
     def _make_element_embedder(self):
         # Require MarkupLM now that models are preflighted
@@ -112,6 +122,16 @@ class HybridPipeline:
         if not isinstance(elements, list):
             raise ValueError("elements must be a list of element descriptors")
 
+        # Add hierarchical context if enabled (check dynamically)
+        current_config = get_config()
+        if current_config.should_use_hierarchy() and self.hierarchy_builder:
+            try:
+                elements = self.hierarchy_builder.add_context_to_elements(elements)
+                log.info(f"Added hierarchical context to {len(elements)} elements")
+            except Exception as e:
+                log.warning(f"Failed to add hierarchical context: {e}")
+                # Continue without hierarchy context
+
         by_frame: Dict[str, List[Tuple[int, Dict[str, Any]]]] = {}
         for idx, el in enumerate(elements):
             meta = el.get("meta") or {}
@@ -136,7 +156,18 @@ class HybridPipeline:
                 descs.append(el)
 
             # Generate MiniLM embeddings for all elements (384-d)
-            texts = [el.get("text", "") for el in descs]
+            # Include hierarchical context in text if available
+            texts = []
+            for el in descs:
+                text = el.get("text", "")
+                if current_config.should_use_hierarchy() and "context" in el:
+                    context = el["context"]
+                    hierarchy_path = context.get("hierarchy_path", "")
+                    if hierarchy_path and hierarchy_path != "PENDING" and hierarchy_path != "ERROR":
+                        # Prepend hierarchy context to text for better semantic matching
+                        text = f"{hierarchy_path} | {text}" if text else hierarchy_path
+                texts.append(text)
+            
             mini_embeddings: np.ndarray = self.text_embedder.batch_encode_texts(texts)
             assert mini_embeddings.shape[1] == self._Q_DIM, f"MiniLM should output {self._Q_DIM}d, got {mini_embeddings.shape[1]}d"
             
@@ -461,10 +492,11 @@ class HybridPipeline:
         user_intent: Optional[str] = None,
         target: Optional[str] = None,
     ) -> Dict[str, Any]:
-        print(f"\n🔍 STEP 1: MiniLM Shortlist (384-d)")
+        print(f"\n🔍 PHASE 3: Enhanced Pipeline Query")
         print(f"Query: '{query}'")
         print(f"Total elements available: {len(elements)}")
-        print(f"MiniLM Query Embedding: Using '{query}' for vector search")
+        print(f"Hierarchy enabled: {self.use_hierarchy}")
+        print(f"Two-stage enabled: {self.use_two_stage}")
         
         if not isinstance(elements, list):
             raise ValueError("elements must be a list")
@@ -486,6 +518,38 @@ class HybridPipeline:
         print(f"✅ Prepared {len(meta)} elements with both MiniLM and MarkupLM embeddings")
         print(f"   After preparation - MiniLM stores: {len(self._mini_stores)}")
         print(f"   After preparation - MarkupLM stores: {len(self._markup_stores)}")
+        
+        # Choose strategy based on hierarchy and two-stage settings
+        # Check configuration dynamically to handle environment variable changes
+        current_config = get_config()
+        use_hierarchy = current_config.should_use_hierarchy()
+        use_two_stage = current_config.should_use_two_stage()
+        
+        print(f"🔍 DYNAMIC CONFIG CHECK:")
+        print(f"   Current hierarchy setting: {use_hierarchy}")
+        print(f"   Current two-stage setting: {use_two_stage}")
+        
+        if use_hierarchy and use_two_stage:
+            print("🎯 Using TWO-STAGE MarkupLM strategy")
+            return self._query_two_stage(query, meta, top_k, page_sig, frame_hash, label_key, user_intent, target)
+        else:
+            print("🎯 Using STANDARD strategy")
+            return self._query_standard(query, meta, top_k, page_sig, frame_hash, label_key, user_intent, target)
+
+    def _query_standard(
+        self,
+        query: str,
+        meta: List[Dict[str, Any]],
+        top_k: int,
+        page_sig: Optional[str],
+        frame_hash: Optional[str],
+        label_key: Optional[str],
+        user_intent: Optional[str],
+        target: Optional[str],
+    ) -> Dict[str, Any]:
+        """Standard query processing (backward compatible)."""
+        print(f"\n🔍 STEP 1: MiniLM Shortlist (384-d) - Standard Mode")
+        print(f"MiniLM Query Embedding: Using '{query}' for vector search")
         
         # STEP 1: MiniLM shortlist (384-d)
         q_mini = self.embed_query(query)  # 384-d query
@@ -513,7 +577,7 @@ class HybridPipeline:
             return {"results": [], "strategy": "hybrid-delta", "confidence": 0.0}
 
         # STEP 2: MarkupLM rerank (768-d)
-        print(f"\n🎯 STEP 2: MarkupLM Rerank (768-d)")
+        print(f"\n🎯 STEP 2: MarkupLM Rerank (768-d) - Standard Mode")
         
         # Get top candidates from MiniLM shortlist
         mini_hits.sort(key=lambda x: x[0], reverse=True)
@@ -745,5 +809,244 @@ class HybridPipeline:
         return {
             "results": results[:top_k],
             "strategy": "hybrid-minilm-markuplm+promotion" if promo_top else "hybrid-minilm-markuplm",
+            "confidence": confidence,
+        }
+
+    def _query_two_stage(
+        self,
+        query: str,
+        meta: List[Dict[str, Any]],
+        top_k: int,
+        page_sig: Optional[str],
+        frame_hash: Optional[str],
+        label_key: Optional[str],
+        user_intent: Optional[str],
+        target: Optional[str],
+    ) -> Dict[str, Any]:
+        """Two-stage MarkupLM query processing with hierarchy support."""
+        print(f"\n🔍 PHASE 3: Two-Stage MarkupLM Query Processing")
+        print(f"Query: '{query}'")
+        print(f"Total elements: {len(meta)}")
+        
+        # Stage 1: Process containers (divs, sections, etc.) with hierarchy context
+        print(f"\n🎯 STAGE 1: Container Processing")
+        container_elements = []
+        interactive_elements = []
+        
+        for element in meta:
+            tag = element.get('tag', '').lower()
+            context = element.get('context', {})
+            
+            # Separate containers from interactive elements
+            if tag in ['div', 'section', 'main', 'article', 'aside', 'nav', 'header', 'footer']:
+                container_elements.append(element)
+            elif tag in ['button', 'a', 'input', 'textarea', 'select', 'option', 'li']:
+                interactive_elements.append(element)
+        
+        print(f"   Found {len(container_elements)} containers")
+        print(f"   Found {len(interactive_elements)} interactive elements")
+        
+        # Process containers with hierarchy context
+        container_scores = []
+        if container_elements:
+            print(f"   Processing containers with hierarchy context...")
+            q_markup = self._embed_query_markup(query)
+            
+            for container in container_elements:
+                # Use hierarchy context for container scoring
+                context = container.get('context', {})
+                hierarchy_path = context.get('hierarchy_path', '')
+                
+                # Create enhanced text with hierarchy context
+                enhanced_text = container.get('text', '')
+                if hierarchy_path and hierarchy_path != 'PENDING' and hierarchy_path != 'ERROR':
+                    enhanced_text = f"{hierarchy_path} | {enhanced_text}" if enhanced_text else hierarchy_path
+                
+                # Create temporary element for embedding
+                temp_element = container.copy()
+                temp_element['text'] = enhanced_text
+                
+                # Get embedding
+                container_embedding = self.element_embedder.batch_encode([temp_element])
+                if container_embedding.size > 0:
+                    score = _cos(q_markup, container_embedding[0])
+                    container_scores.append((score, container))
+        
+        # Stage 2: Process interactive elements within top containers
+        print(f"\n🎯 STAGE 2: Interactive Element Processing")
+        
+        # Get top containers
+        container_scores.sort(key=lambda x: x[0], reverse=True)
+        top_containers = container_scores[:3]  # Top 3 containers
+        
+        print(f"   Top {len(top_containers)} containers selected for element processing")
+        for i, (score, container) in enumerate(top_containers):
+            context = container.get('context', {})
+            hierarchy_path = context.get('hierarchy_path', '')
+            print(f"     {i+1}. Score: {score:.3f} | Path: {hierarchy_path} | Text: '{container.get('text', '')[:50]}...'")
+        
+        # Process interactive elements within top containers
+        interactive_scores = []
+        if interactive_elements:
+            print(f"   Processing {len(interactive_elements)} interactive elements...")
+            q_markup = self._embed_query_markup(query)
+            
+            for element in interactive_elements:
+                # Use hierarchy context for element scoring
+                context = element.get('context', {})
+                hierarchy_path = context.get('hierarchy_path', '')
+                
+                # Create enhanced text with hierarchy context
+                enhanced_text = element.get('text', '')
+                if hierarchy_path and hierarchy_path != 'PENDING' and hierarchy_path != 'ERROR':
+                    enhanced_text = f"{hierarchy_path} | {enhanced_text}" if enhanced_text else hierarchy_path
+                
+                # Create temporary element for embedding
+                temp_element = element.copy()
+                temp_element['text'] = enhanced_text
+                
+                # Get embedding
+                element_embedding = self.element_embedder.batch_encode([temp_element])
+                if element_embedding.size > 0:
+                    score = _cos(q_markup, element_embedding[0])
+                    
+                    # Apply multi-parameter scoring
+                    intent_score = 0.0
+                    if user_intent or target:
+                        intent_score = self._compute_intent_score(user_intent, target, query, element)
+                        score += intent_score
+                    
+                    interactive_scores.append((score, element))
+        
+        # Combine and rank results
+        print(f"\n🎯 FINAL RANKING")
+        all_scores = container_scores + interactive_scores
+        all_scores.sort(key=lambda x: x[0], reverse=True)
+        
+        print(f"   Total candidates: {len(all_scores)}")
+        print(f"   Top {min(5, len(all_scores))} candidates:")
+        for i, (score, element) in enumerate(all_scores[:5]):
+            context = element.get('context', {})
+            hierarchy_path = context.get('hierarchy_path', '')
+            print(f"     {i+1}. Score: {score:.3f} | Tag: {element.get('tag', '')} | Path: {hierarchy_path} | Text: '{element.get('text', '')[:50]}...'")
+        
+        if not all_scores:
+            print("❌ No hits from two-stage processing")
+            return {"results": [], "strategy": "two-stage-markuplm", "confidence": 0.0}
+        
+        # Check for promotions
+        promo_top: Optional[Dict[str, Any]] = None
+        if page_sig and frame_hash and label_key:
+            sel = lookup_promotion(self.kv, page_sig=page_sig, frame_hash=frame_hash, label_key=label_key)
+            if sel:
+                promo_top = {
+                    "selector": sel,
+                    "score": 1.0,
+                    "reasons": ["promotion-hit"],
+                    "meta": {"frame_hash": frame_hash, "promoted": True},
+                }
+        
+        if not all_scores and not promo_top:
+            print("❌ No hits after two-stage processing")
+            return {"results": [], "strategy": "two-stage-markuplm", "confidence": 0.0}
+        
+        # Apply universal UI automation heuristics
+        def _tag_bias(tag: str) -> float:
+            """Minimal tag bias - only for essential UI automation elements"""
+            tag = (tag or "").lower()
+            if tag in ("input", "textarea", "select"):
+                return 0.005
+            if tag in ("button", "a"):
+                return 0.003
+            return 0.0
+
+        def _role_bonus(role: str) -> float:
+            """Minimal role bonus - only for essential accessibility roles"""
+            role = (role or "").lower()
+            if role in ("button", "link", "tab", "menuitem", "option"):
+                return 0.002
+            return 0.0
+        
+        def _clickable_bonus(meta: Dict[str, Any]) -> float:
+            """Universal clickable bonus - works for all websites and use cases"""
+            tag = (meta.get("tag") or "").lower()
+            attrs = meta.get("attributes", {})
+            text = (meta.get("text") or "").strip()
+
+            clickable_indicators = [
+                "onclick", "href", "data-href", "data-link", "data-click",
+                "data-action", "data-testid", "data-test-id", "role", "tabindex",
+                "aria-label", "aria-labelledby", "title", "alt"
+            ]
+            
+            has_clickable_attr = any(attr in attrs for attr in clickable_indicators)
+            has_clickable_text = any(word in text.lower() for word in ["click", "tap", "press", "select", "choose", "go", "open", "view", "show", "hide"])
+            
+            if has_clickable_attr or has_clickable_text:
+                return 0.01
+            return 0.0
+
+        # Apply heuristics to final scores
+        ranked = []
+        for score, meta in all_scores:
+            tag = meta.get("tag", "")
+            attrs = meta.get("attributes", {})
+            role = attrs.get("role", "")
+            
+            # Apply minimal heuristics
+            final_score = score
+            final_score += _tag_bias(tag)
+            final_score += _role_bonus(role)
+            final_score += _clickable_bonus(meta)
+            
+            reasons = []
+            if _tag_bias(tag) > 0:
+                reasons.append(f"tag-{tag}")
+            if _role_bonus(role) > 0:
+                reasons.append(f"role-{role}")
+            if _clickable_bonus(meta) > 0:
+                reasons.append("clickable")
+            
+            ranked.append((final_score, meta, reasons))
+        
+        # Sort by final score
+        ranked.sort(key=lambda x: x[0], reverse=True)
+        
+        # Build results
+        results = []
+        if promo_top:
+            results.append(promo_top)
+        
+        for score, md, reasons in ranked:
+            sel = md.get("xpath") or ""
+            results.append({
+                "selector": sel,
+                "score": float(score),
+                "reasons": reasons,
+                "meta": md,
+            })
+
+        head_score = 1.0 if promo_top is not None else (ranked[0][0] if ranked else 0.0)
+        confidence = max(0.0, min(1.0, float(head_score)))
+
+        # Debug final selection
+        if results:
+            selected = results[0]
+            print(f"\n🎯 FINAL SELECTION (Two-Stage):")
+            print(f"   Selected XPath: {selected['selector']}")
+            print(f"   Confidence: {confidence:.3f}")
+            print(f"   Strategy: {'two-stage-markuplm+promotion' if promo_top else 'two-stage-markuplm'}")
+            print(f"   Element Text: '{selected['meta'].get('text', '')[:50]}...'")
+            print(f"   Element Tag: {selected['meta'].get('tag', '')}")
+            
+            # Show hierarchy context if available
+            context = selected['meta'].get('context', {})
+            if context:
+                hierarchy_path = context.get('hierarchy_path', '')
+                print(f"   Hierarchy Path: {hierarchy_path}")
+
+        return {
+            "results": results[:top_k],
+            "strategy": "two-stage-markuplm+promotion" if promo_top else "two-stage-markuplm",
             "confidence": confidence,
         }

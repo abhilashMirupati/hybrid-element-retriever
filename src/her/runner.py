@@ -254,6 +254,19 @@ class Runner:
                 element = enhance_element_descriptor(element)
                 elements.append(element)
             
+            # Add hierarchical context if enabled
+            from .config import get_config
+            config = get_config()
+            if config.should_use_hierarchy():
+                try:
+                    from .descriptors.hierarchy import HierarchyContextBuilder
+                    hierarchy_builder = HierarchyContextBuilder()
+                    elements = hierarchy_builder.add_context_to_elements(elements)
+                    print(f"✅ Added hierarchical context to {len(elements)} elements")
+                except Exception as e:
+                    print(f"⚠️  Failed to add hierarchical context: {e}")
+                    # Continue without hierarchy context
+            
             # Return in expected format
             frame_url = getattr(self._page, "url", "")
             fh = compute_frame_hash(frame_url, elements)
@@ -696,7 +709,7 @@ class Runner:
             print(f"[HER DEBUG] candidates: {' | '.join(top3)}")
         best = candidates[:1]
         if not best:
-            return {"selector": "", "confidence": 0.0, "reason": "no-results", "candidates": candidates, "promo": {"page_sig": ps, "frame_hash": frame_hash, "label_key": label_key}}
+            return {"selector": "", "confidence": 0.0, "reason": "no-results", "candidates": candidates, "promo": {"page_sig": ps, "frame_hash": frame_hash, "label_key": label_key}, "strategy": result.get("strategy", "unknown")}
         return {
             "selector": best[0].get("selector", ""),
             "confidence": float(result.get("confidence", 0.0)),
@@ -704,6 +717,7 @@ class Runner:
             "reasons": best[0].get("reasons", []),
             "candidates": candidates,
             "promo": {"page_sig": ps, "frame_hash": frame_hash, "label_key": label_key},
+            "strategy": result.get("strategy", "unknown"),
         }
 
     def _dismiss_overlays(self) -> None:
