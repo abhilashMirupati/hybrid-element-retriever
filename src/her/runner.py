@@ -38,10 +38,27 @@ class StepResult:
 
 
 class Runner:
+    _shared_pipeline = None
+    _pipeline_lock = None
+    
     def __init__(self, headless: bool = True) -> None:
         self.headless = headless
         self.intent = IntentParser()
-        self.pipeline = HybridPipeline()
+        
+        # Use shared pipeline to avoid reloading models
+        if Runner._shared_pipeline is None:
+            import threading
+            if Runner._pipeline_lock is None:
+                Runner._pipeline_lock = threading.Lock()
+            
+            with Runner._pipeline_lock:
+                if Runner._shared_pipeline is None:
+                    print("📦 Loading models (one-time cost for all runners)...")
+                    start_time = time.time()
+                    Runner._shared_pipeline = HybridPipeline()
+                    print(f"   ✅ Models loaded in {time.time() - start_time:.3f}s")
+        
+        self.pipeline = Runner._shared_pipeline
         self._page = None
         self._browser = None
         self._playwright = None
@@ -139,6 +156,15 @@ class Runner:
         self._page = None
         self._browser = None
         self._playwright = None
+    
+    @classmethod
+    def cleanup_models(cls) -> None:
+        """Cleanup shared models (call at end of test suite)"""
+        if cls._shared_pipeline is not None:
+            print("🧹 Cleaning up shared models...")
+            del cls._shared_pipeline
+            cls._shared_pipeline = None
+            print("✅ Models cleaned up")
 
     def _inline_snapshot(self) -> Dict[str, Any]:
         # First try to get DOM + accessibility tree via CDP
