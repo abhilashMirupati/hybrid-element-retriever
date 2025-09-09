@@ -278,12 +278,16 @@ def get_enhanced_text_content(dom_node: Dict[str, Any], ax_node: Dict[str, Any])
     ax_name_raw = ax_node.get('name', '')
     ax_name = extract_clean_text(ax_name_raw) if ax_name_raw else ''
     
+    # Avoid duplication - if both are the same, just return one
+    if ax_name and dom_text and ax_name == dom_text:
+        return ax_name
+    
     # Prioritize accessibility name if available and meaningful
     if ax_name and len(ax_name) > 0:
         # If accessibility name is more descriptive, use it
         if len(ax_name) > len(dom_text) or not dom_text:
             return ax_name
-        # If both are available, combine them
+        # If both are available and different, combine them
         elif dom_text and ax_name != dom_text:
             return f"{ax_name} {dom_text}".strip()
     
