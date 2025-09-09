@@ -47,7 +47,8 @@ class HERConfig:
     
     def get_canonical_mode(self) -> CanonicalMode:
         """Get current canonical descriptor building mode."""
-        return self.canonical_mode
+        # Read environment variable dynamically each time
+        return self._get_canonical_mode()
     
     def set_canonical_mode(self, mode: CanonicalMode) -> None:
         """Set canonical descriptor building mode."""
@@ -56,11 +57,13 @@ class HERConfig:
     
     def should_use_dom(self) -> bool:
         """Check if DOM attributes should be included."""
-        return self.canonical_mode in [CanonicalMode.DOM_ONLY, CanonicalMode.BOTH]
+        mode = self.get_canonical_mode()
+        return mode in [CanonicalMode.DOM_ONLY, CanonicalMode.BOTH]
     
     def should_use_accessibility(self) -> bool:
         """Check if accessibility tree should be included."""
-        return self.canonical_mode in [CanonicalMode.ACCESSIBILITY_ONLY, CanonicalMode.BOTH]
+        mode = self.get_canonical_mode()
+        return mode in [CanonicalMode.ACCESSIBILITY_ONLY, CanonicalMode.BOTH]
     
     def is_performance_optimized(self) -> bool:
         """Check if performance optimization is enabled."""
