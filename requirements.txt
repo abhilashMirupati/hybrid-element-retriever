@@ -1,20 +1,24 @@
-# Core
-playwright>=1.45
-numpy>=1.24
-pydantic==1.10.12
+# Core dependencies
+playwright>=1.45.0
+numpy>=1.24.0
+pydantic>=1.10.0,<2.0.0
 beautifulsoup4>=4.13.5
 
 # Machine Learning / ONNX
-torch>=1.11
-onnxruntime>=1.17
+torch>=1.11.0
+onnxruntime>=1.17.0
 faiss-cpu>=1.8.0
 
 # Hugging Face stack
-transformers>=4.38
-tokenizers>=0.15.2
+transformers>=4.38.0
+tokenizers>=0.15.0
 huggingface_hub>=0.20.0
 optimum[onnxruntime]>=1.16.0
 
-# Optional
-py4j==0.10.9.7
-types-requests==2.31.0.4
+# Optional dependencies
+py4j>=0.10.9
+types-requests>=2.31.0
+
+# Development dependencies (optional)
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
