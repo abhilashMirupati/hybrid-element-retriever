@@ -675,13 +675,13 @@ class Runner:
         
         # DETAILED LOGGING: Parameters being passed
         print(f"\n🔍 PARAMETERS PASSED TO PIPELINE:")
-        print(f"   Query (full step): '{phrase}'")
+        print(f"   Query (target only for MiniLM): '{target_phrase}'")
         print(f"   User Intent (action): '{parsed.action}'")
         print(f"   Target (target phrase): '{parsed.target_phrase}'")
         print(f"   Top K: 10")
         
         result = self.pipeline.query(
-            phrase,  # Query: full step for MiniLM
+            target_phrase,  # Query: target phrase only for MiniLM semantic matching
             elements,
             top_k=10,
             page_sig=ps,
