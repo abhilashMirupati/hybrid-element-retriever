@@ -88,8 +88,16 @@ def merge_dom_ax(
         return dom_nodes
     
     if canonical_mode == CanonicalMode.ACCESSIBILITY_ONLY:
-        logger.debug("ACCESSIBILITY_ONLY mode: Using accessibility nodes as-is")
-        return ax_nodes
+        logger.debug("ACCESSIBILITY_ONLY mode: Converting accessibility nodes to element descriptors")
+        # Convert accessibility nodes to element descriptors
+        processed_nodes = []
+        for ax_node in ax_nodes:
+            # Convert accessibility node to element descriptor format
+            element_descriptor = convert_accessibility_to_element(ax_node)
+            if element_descriptor:
+                processed_nodes.append(element_descriptor)
+        logger.debug(f"ACCESSIBILITY_ONLY mode: Processed {len(processed_nodes)} accessibility nodes")
+        return processed_nodes
     
     # BOTH mode - merge DOM and accessibility tree
     if not ax_nodes:
@@ -266,6 +274,64 @@ def get_enhanced_text_content(dom_node: Dict[str, Any], ax_node: Dict[str, Any])
     
     # Fall back to DOM text
     return dom_text
+
+
+def convert_accessibility_to_element(ax_node: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Convert accessibility tree node to element descriptor format.
+    
+    Args:
+        ax_node: Raw accessibility tree node
+        
+    Returns:
+        Element descriptor in standard format
+    """
+    if not ax_node:
+        return None
+    
+    # Extract basic information from accessibility node
+    element = {
+        'backendNodeId': ax_node.get('nodeId'),
+        'framePath': ax_node.get('frameId', 'main'),
+        'tag': str(ax_node.get('role', '')).upper() if ax_node.get('role') else '',
+        'type': ax_node.get('role', ''),
+        'id': ax_node.get('id', ''),
+        'classes': [],
+        'placeholder': ax_node.get('name', ''),
+        'aria': {
+            'label': ax_node.get('name', ''),
+            'description': ax_node.get('description', ''),
+            'role': ax_node.get('role', ''),
+            'hidden': ax_node.get('ignored', False),
+            'disabled': ax_node.get('disabled', False)
+        },
+        'labels': [ax_node.get('name', '')] if ax_node.get('name') else [],
+        'ax_role': ax_node.get('role', ''),
+        'ax_name': ax_node.get('name', ''),
+        'ax_hidden': ax_node.get('ignored', False),
+        'ax_disabled': ax_node.get('disabled', False),
+        'visible': not ax_node.get('ignored', False),
+        'bbox': ax_node.get('boundingRect', {}),
+        'neighbors': [],
+        'dom_hash': '',
+        'shadowPath': '',
+        'text': ax_node.get('name', ''),
+        'attributes': {}
+    }
+    
+    # Add accessibility-specific attributes
+    if ax_node.get('value'):
+        element['attributes']['value'] = ax_node['value']
+    if ax_node.get('description'):
+        element['attributes']['aria-describedby'] = ax_node['description']
+    if ax_node.get('checked') is not None:
+        element['attributes']['aria-checked'] = str(ax_node['checked']).lower()
+    if ax_node.get('expanded') is not None:
+        element['attributes']['aria-expanded'] = str(ax_node['expanded']).lower()
+    if ax_node.get('selected') is not None:
+        element['attributes']['aria-selected'] = str(ax_node['selected']).lower()
+    
+    return element
 
 
 def enhance_element_descriptor(element: Dict[str, Any]) -> Dict[str, Any]:

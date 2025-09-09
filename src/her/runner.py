@@ -154,94 +154,93 @@ class Runner:
             # Capture complete snapshot with accessibility tree
             snapshot = capture_complete_snapshot(self._page, include_frames=True)
             
-            if snapshot.dom_nodes and snapshot.ax_nodes:
-                # Merge DOM and accessibility tree based on configuration
-                merged_nodes = merge_dom_ax(snapshot.dom_nodes, snapshot.ax_nodes)
-                print(f"✅ CDP Integration: Merged {len(merged_nodes)} nodes using {config.get_canonical_mode().value} mode")
+            # Merge DOM and accessibility tree based on configuration
+            merged_nodes = merge_dom_ax(snapshot.dom_nodes, snapshot.ax_nodes)
+            print(f"✅ CDP Integration: Merged {len(merged_nodes)} nodes using {config.get_canonical_mode().value} mode")
+            
+            # Convert to the expected format
+            elements = []
+            for node in merged_nodes:
+                # Extract attributes
+                attrs = node.get('attributes', {})
+                if isinstance(attrs, list):
+                    attrs_dict = {}
+                    for i in range(0, len(attrs), 2):
+                        if i + 1 < len(attrs):
+                            attrs_dict[str(attrs[i])] = attrs[i + 1]
+                    attrs = attrs_dict
                 
-                # Convert to the expected format
-                elements = []
-                for node in merged_nodes:
-                    # Extract attributes
-                    attrs = node.get('attributes', {})
-                    if isinstance(attrs, list):
-                        attrs_dict = {}
-                        for i in range(0, len(attrs), 2):
-                            if i + 1 < len(attrs):
-                                attrs_dict[str(attrs[i])] = attrs[i + 1]
-                        attrs = attrs_dict
-                    
-                    # Get text content - prioritize the text extracted by merge function
-                    text = node.get('text', '').strip()
+                # Get text content - prioritize the text extracted by merge function
+                text = str(node.get('text', '')).strip()
+                if not text:
+                    text = str(node.get('nodeValue', '')).strip()
+                
+                # For interactive elements, try to get text from accessibility tree
+                if not text and node.get('accessibility'):
+                    text = node['accessibility'].get('name', '').strip()
                     if not text:
-                        text = node.get('nodeValue', '').strip()
-                    
-                    # For interactive elements, try to get text from accessibility tree
-                    if not text and node.get('accessibility'):
-                        text = node['accessibility'].get('name', '').strip()
-                        if not text:
-                            text = node['accessibility'].get('value', '').strip()
-                    
-                    # Get tag name
-                    tag = (node.get('tagName') or node.get('nodeName') or '').upper()
-                    
-                    # Get role from accessibility tree
-                    role = attrs.get('role', '')
-                    if not role and 'accessibility' in node:
-                        role = node['accessibility'].get('role', '')
-                    
-                    # Debug: Print element details
-                    print(f"🔍 Processing element: tag='{tag}', text='{text[:50]}{'...' if len(text) > 50 else ''}', attrs={len(attrs)}")
-                    
-                    # Generate XPath if not present
-                    xpath = node.get('xpath', '')
-                    if not xpath:
-                        # Generate basic XPath from tag and attributes
-                        if tag and tag != '#text':
-                            if attrs.get('id'):
-                                xpath = f"//*[@id='{attrs['id']}']"
-                            elif attrs.get('data-testid'):
-                                xpath = f"//*[@data-testid='{attrs['data-testid']}']"
-                            elif attrs.get('aria-label'):
-                                xpath = f"//*[@aria-label='{attrs['aria-label']}']"
-                            elif text:
-                                xpath = f"//{tag.lower()}[normalize-space()='{text}']"
-                            else:
-                                xpath = f"//{tag.lower()}"
-                    
-                    # Determine if element is interactive
-                    interactive = self._is_element_interactive(tag, attrs, role)
-                    
-                    # NO FILTERING - MiniLM should see ALL elements
-                    # Let MiniLM and MarkupLM decide what's relevant based on text similarity
-                    
-                    # Create element descriptor
-                    element = {
-                        'text': text,
-                        'tag': tag,
-                        'role': role or None,
-                        'attrs': attrs,
-                        'xpath': xpath,
-                        'bbox': node.get('bbox', {'x': 0, 'y': 0, 'width': 0, 'height': 0, 'w': 0, 'h': 0}),
-                        'visible': node.get('visible', True),
-                        'below_fold': node.get('below_fold', False),
-                        'interactive': interactive,
-                        'backendNodeId': node.get('backendNodeId'),
-                        'accessibility': node.get('accessibility', {})
-                    }
-                    
-                    # Enhance with accessibility information
-                    element = enhance_element_descriptor(element)
-                    elements.append(element)
+                        text = node['accessibility'].get('value', '').strip()
                 
-                # Return in expected format
-                frame_url = getattr(self._page, "url", "")
-                fh = compute_frame_hash(frame_url, elements)
-                for it in elements:
-                    (it.setdefault("meta", {}))["frame_hash"] = fh
-                    it["frame_url"] = frame_url
-                frames = [{"frame_url": frame_url, "elements": elements, "frame_hash": fh}]
-                return {"elements": elements, "dom_hash": dom_hash(frames), "url": frame_url}
+                # Get tag name
+                tag = (node.get('tagName') or node.get('nodeName') or '').upper()
+                
+                # Get role from accessibility tree
+                role = attrs.get('role', '')
+                if not role and 'accessibility' in node:
+                    role = node['accessibility'].get('role', '')
+                
+                # Debug: Print element details
+                print(f"🔍 Processing element: tag='{tag}', text='{text[:50]}{'...' if len(text) > 50 else ''}', attrs={len(attrs)}")
+                
+                # Generate XPath if not present
+                xpath = node.get('xpath', '')
+                if not xpath:
+                    # Generate basic XPath from tag and attributes
+                    if tag and tag != '#text':
+                        if attrs.get('id'):
+                            xpath = f"//*[@id='{attrs['id']}']"
+                        elif attrs.get('data-testid'):
+                            xpath = f"//*[@data-testid='{attrs['data-testid']}']"
+                        elif attrs.get('aria-label'):
+                            xpath = f"//*[@aria-label='{attrs['aria-label']}']"
+                        elif text:
+                            xpath = f"//{tag.lower()}[normalize-space()='{text}']"
+                        else:
+                            xpath = f"//{tag.lower()}"
+                
+                # Determine if element is interactive
+                interactive = self._is_element_interactive(tag, attrs, role)
+                
+                # NO FILTERING - MiniLM should see ALL elements
+                # Let MiniLM and MarkupLM decide what's relevant based on text similarity
+                
+                # Create element descriptor
+                element = {
+                    'text': text,
+                    'tag': tag,
+                    'role': role or None,
+                    'attrs': attrs,
+                    'xpath': xpath,
+                    'bbox': node.get('bbox', {'x': 0, 'y': 0, 'width': 0, 'height': 0, 'w': 0, 'h': 0}),
+                    'visible': node.get('visible', True),
+                    'below_fold': node.get('below_fold', False),
+                    'interactive': interactive,
+                    'backendNodeId': node.get('backendNodeId'),
+                    'accessibility': node.get('accessibility', {})
+                }
+                
+                # Enhance with accessibility information
+                element = enhance_element_descriptor(element)
+                elements.append(element)
+            
+            # Return in expected format
+            frame_url = getattr(self._page, "url", "")
+            fh = compute_frame_hash(frame_url, elements)
+            for it in elements:
+                (it.setdefault("meta", {}))["frame_hash"] = fh
+                it["frame_url"] = frame_url
+            frames = [{"frame_url": frame_url, "elements": elements, "frame_hash": fh}]
+            return {"elements": elements, "dom_hash": dom_hash(frames), "url": frame_url}
                 
         except Exception as e:
             print(f"⚠️  CDP accessibility integration failed: {e}")
@@ -250,7 +249,7 @@ class Runner:
             traceback.print_exc()
             
             # Force fallback to JavaScript approach
-            pass
+            # This will be handled by the fallback code below
         
         # Fallback to original JavaScript-based snapshot
         js = r"""

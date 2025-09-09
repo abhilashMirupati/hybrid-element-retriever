@@ -44,14 +44,14 @@ def test_mode_with_detailed_timing(mode, mode_name):
         print(f"✅ {mode_name} completed in {duration:.2f}s")
         
         # Analyze the result
-        if result and hasattr(result, 'elements'):
-            elements = result.elements
+        if result and isinstance(result, dict) and 'elements' in result:
+            elements = result['elements']
             print(f"📊 Elements extracted: {len(elements)}")
             
             # Analyze element types
-            dom_elements = sum(1 for e in elements if hasattr(e, 'tag') and e.tag)
-            ax_elements = sum(1 for e in elements if hasattr(e, 'ax_role') and e.ax_role)
-            interactive_elements = sum(1 for e in elements if hasattr(e, 'ax_role') and e.ax_role in ['button', 'textbox', 'link', 'checkbox', 'radio', 'combobox'])
+            dom_elements = sum(1 for e in elements if e.get('tag'))
+            ax_elements = sum(1 for e in elements if e.get('ax_role'))
+            interactive_elements = sum(1 for e in elements if e.get('ax_role') in ['button', 'textbox', 'link', 'checkbox', 'radio', 'combobox'])
             
             print(f"   DOM elements: {dom_elements}")
             print(f"   Accessibility elements: {ax_elements}")
@@ -60,12 +60,15 @@ def test_mode_with_detailed_timing(mode, mode_name):
             # Sample some elements
             print(f"\n📋 Sample elements:")
             for i, elem in enumerate(elements[:5]):
-                tag = getattr(elem, 'tag', 'N/A')
-                ax_role = getattr(elem, 'ax_role', 'N/A')
-                text = getattr(elem, 'text', 'N/A')[:50] if hasattr(elem, 'text') else 'N/A'
+                tag = elem.get('tag', 'N/A')
+                ax_role = elem.get('ax_role', 'N/A')
+                text = elem.get('text', 'N/A')[:50] if elem.get('text') else 'N/A'
                 print(f"   {i+1}. tag='{tag}', ax_role='{ax_role}', text='{text}'")
+        else:
+            elements = []
+            print(f"📊 No elements found in result")
         
-        return duration, len(elements) if result and hasattr(result, 'elements') else 0
+        return duration, len(elements)
         
     except Exception as e:
         end_time = time.time()
