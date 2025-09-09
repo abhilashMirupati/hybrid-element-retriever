@@ -607,8 +607,27 @@ class HybridPipeline:
         print(f"✅ Query embedded with MarkupLM, vector shape: {q_markup.shape}")
         print(f"🔍 MarkupLM Query Vector (first 10 dims): {q_markup[:10]}")
         
-        shortlist_elements = [meta for (_, meta) in shortlist[:10]]  # Limit to top 10
+        # Create enhanced elements with hierarchy context for MarkupLM
+        shortlist_elements = []
+        for (_, meta) in shortlist[:10]:  # Limit to top 10
+            # Create enhanced element with hierarchy context for MarkupLM
+            enhanced_meta = meta.copy()
+            # Get current config dynamically
+            current_config = get_config()
+            if current_config.should_use_hierarchy() and "context" in meta:
+                context = meta["context"]
+                hierarchy_path = context.get("hierarchy_path", "")
+                if hierarchy_path and hierarchy_path != "PENDING" and hierarchy_path != "ERROR":
+                    # Prepend hierarchy context to text for MarkupLM
+                    enhanced_meta["text"] = f"{hierarchy_path} | {meta.get('text', '')}" if meta.get('text') else hierarchy_path
+            shortlist_elements.append(enhanced_meta)
+        
         print(f"🔍 MarkupLM Processing {len(shortlist_elements)} shortlisted elements")
+        print(f"🔍 Enhanced elements with hierarchy context:")
+        for i, el in enumerate(shortlist_elements[:3]):
+            print(f"   {i+1}. Text: '{el.get('text', '')[:80]}...'")
+            print(f"      Tag: {el.get('tag', '')}")
+            print(f"      Context: {el.get('context', {}).get('hierarchy_path', 'N/A')}")
         
         shortlist_embeddings = self.element_embedder.batch_encode(shortlist_elements)  # 768-d
         print(f"✅ Shortlist elements embedded with MarkupLM, shape: {shortlist_embeddings.shape}")
