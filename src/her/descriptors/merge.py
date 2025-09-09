@@ -343,13 +343,13 @@ def extract_comprehensive_text(node: Dict[str, Any]) -> str:
         ax_name = node['accessibility'].get('name', '')
         if ax_name:
             clean_name = extract_clean_text(ax_name)
-            if clean_name:
+            if clean_name and clean_name != node_value:  # Avoid duplication
                 text_parts.append(clean_name)
         
         ax_value = node['accessibility'].get('value', '')
         if ax_value:
             clean_value = extract_clean_text(ax_value)
-            if clean_value:
+            if clean_value and clean_value != node_value and clean_value != clean_name:  # Avoid duplication
                 text_parts.append(clean_value)
     
     # 3. Text from attributes
@@ -378,10 +378,10 @@ def extract_comprehensive_text(node: Dict[str, Any]) -> str:
                 if child_text:
                     text_parts.append(child_text)
     
-    # 5. Text from computed properties
-    computed_text = node.get('text', '').strip()
-    if computed_text:
-        text_parts.append(computed_text)
+    # 5. Text from computed properties (skip to avoid circular reference)
+    # computed_text = node.get('text', '').strip()
+    # if computed_text:
+    #     text_parts.append(computed_text)
     
     # Return the longest meaningful text
     meaningful_texts = [t for t in text_parts if t and len(t) > 1]
