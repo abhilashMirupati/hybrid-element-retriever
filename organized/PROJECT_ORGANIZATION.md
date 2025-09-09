@@ -21,15 +21,20 @@
 ## 🗂️ File Naming Conventions
 
 ### Debug Scripts (`organized/debug/`)
-- `debug_<feature>_<purpose>.py` - Feature-specific debugging
-- `debug_<component>_integration.py` - Integration testing
-- `debug_<issue>_fix.py` - Issue-specific fixes
+- `debug_comprehensive_testing.py` - **MAIN DEBUG SCRIPT** - Tests all 3 CDP modes with detailed analysis
 
 ### Test Scripts (`organized/tests/`)
-- `test_<mode>_<purpose>.py` - Mode-specific testing
-- `test_<feature>_validation.py` - Feature validation
-- `test_<component>_regression.py` - Regression testing
-- `test_<scenario>_comprehensive.py` - Comprehensive testing
+- `test_essential_validation.py` - **MAIN TEST** - Essential functionality validation
+- `test_final_comprehensive_validation.py` - Comprehensive validation with subprocess isolation
+- `test_all_modes_comprehensive.py` - All 3 CDP modes testing
+- `test_cdp_modes_individual.py` - Individual CDP mode testing
+- `test_verizon_regression_comprehensive.py` - Verizon.com regression testing
+- `test_google_regression_comprehensive.py` - Google.com regression testing
+- `test_model_loading_performance.py` - Model loading performance testing
+- `test_runner_optimization.py` - Runner optimization testing
+- `test_production_ready_comprehensive.py` - Production readiness testing
+- `test_production_ready_optimized.py` - Optimized production testing
+- `optimized_test_runner.py` - TestSuiteRunner for large test suites
 
 ### Reports (`organized/reports/`)
 - `report_<analysis>_<date>.md` - Analysis reports

@@ -2,13 +2,16 @@
 
 ## 🚀 Quick Start
 
-### Run All Tests
+### Run Essential Tests
 ```bash
-# Run comprehensive project-level tests
-python run_all_tests.py
+# Run main essential validation (recommended)
+python organized/tests/test_essential_validation.py
 
-# Run specific comprehensive test
+# Run comprehensive validation with subprocess isolation
 python organized/tests/test_final_comprehensive_validation.py
+
+# Run all project tests
+python run_all_tests.py
 ```
 
 ### Run Individual CDP Modes
@@ -31,31 +34,23 @@ python organized/tests/test_google_regression_comprehensive.py
 
 ## 🔧 Debug Commands
 
-### Debug CDP Issues
+### Debug Issues
 ```bash
-# Debug accessibility tree
-python organized/debug/debug_accessibility_tree_structure.py
-
-# Debug CDP integration
-python organized/debug/debug_cdp_integration_test.py
-
-# Debug element extraction
-python organized/debug/debug_element_extraction.py
+# Run comprehensive debug test (main debug script)
+python organized/debug/debug_comprehensive_testing.py
 ```
 
 ### Debug Performance
 ```bash
-# Debug timing analysis
-python organized/debug/debug_performance_timing_analysis.py
-
-# Debug model loading
-python organized/debug/debug_pipeline_optimization.py
+# Run comprehensive debug test (includes performance analysis)
+python organized/debug/debug_comprehensive_testing.py
 ```
 
 ## 📊 Test Categories
 
-### 1. Core Tests
-- `test_final_comprehensive_validation.py` - **MAIN TEST** - Run this first
+### 1. Essential Tests
+- `test_essential_validation.py` - **MAIN TEST** - Essential functionality validation
+- `test_final_comprehensive_validation.py` - Comprehensive validation with subprocess isolation
 - `test_all_modes_comprehensive.py` - All 3 CDP modes
 - `test_cdp_modes_individual.py` - Individual mode testing
 
