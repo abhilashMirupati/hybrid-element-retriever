@@ -276,6 +276,23 @@ def get_enhanced_text_content(dom_node: Dict[str, Any], ax_node: Dict[str, Any])
     return dom_text
 
 
+def extract_clean_text(text_value: Any) -> str:
+    """
+    Extract clean text from accessibility tree text values.
+    
+    Args:
+        text_value: Text value from accessibility tree (can be string or computed object)
+        
+    Returns:
+        Clean text string
+    """
+    if isinstance(text_value, str):
+        return text_value
+    elif isinstance(text_value, dict) and 'value' in text_value:
+        return str(text_value['value'])
+    else:
+        return str(text_value) if text_value else ''
+
 def convert_accessibility_to_element(ax_node: Dict[str, Any]) -> Dict[str, Any]:
     """
     Convert accessibility tree node to element descriptor format.
@@ -297,17 +314,17 @@ def convert_accessibility_to_element(ax_node: Dict[str, Any]) -> Dict[str, Any]:
         'type': ax_node.get('role', ''),
         'id': ax_node.get('id', ''),
         'classes': [],
-        'placeholder': ax_node.get('name', ''),
+        'placeholder': extract_clean_text(ax_node.get('name', '')),
         'aria': {
-            'label': ax_node.get('name', ''),
-            'description': ax_node.get('description', ''),
+            'label': extract_clean_text(ax_node.get('name', '')),
+            'description': extract_clean_text(ax_node.get('description', '')),
             'role': ax_node.get('role', ''),
             'hidden': ax_node.get('ignored', False),
             'disabled': ax_node.get('disabled', False)
         },
-        'labels': [ax_node.get('name', '')] if ax_node.get('name') else [],
+        'labels': [extract_clean_text(ax_node.get('name', ''))] if ax_node.get('name') else [],
         'ax_role': ax_node.get('role', ''),
-        'ax_name': ax_node.get('name', ''),
+        'ax_name': extract_clean_text(ax_node.get('name', '')),
         'ax_hidden': ax_node.get('ignored', False),
         'ax_disabled': ax_node.get('disabled', False),
         'visible': not ax_node.get('ignored', False),
@@ -315,7 +332,7 @@ def convert_accessibility_to_element(ax_node: Dict[str, Any]) -> Dict[str, Any]:
         'neighbors': [],
         'dom_hash': '',
         'shadowPath': '',
-        'text': ax_node.get('name', ''),
+        'text': extract_clean_text(ax_node.get('name', '')),
         'attributes': {}
     }
     

@@ -37,24 +37,36 @@ def test_mode_with_snapshot(mode, mode_name):
                 elements = snapshot['elements']
                 print(f"📊 Elements extracted: {len(elements)}")
                 
-                # Analyze element types
-                dom_elements = sum(1 for e in elements if hasattr(e, 'tag') and e.tag)
-                ax_elements = sum(1 for e in elements if hasattr(e, 'ax_role') and e.ax_role)
-                interactive_elements = sum(1 for e in elements if hasattr(e, 'ax_role') and e.ax_role in ['button', 'textbox', 'link', 'checkbox', 'radio', 'combobox'])
+            # Analyze element types
+            dom_elements = sum(1 for e in elements if isinstance(e, dict) and e.get('tag') and e['tag'] not in ['', '#TEXT'])
+            ax_elements = sum(1 for e in elements if isinstance(e, dict) and e.get('accessibility_role') and e['accessibility_role'])
+            interactive_elements = sum(1 for e in elements if isinstance(e, dict) and (
+                e.get('accessibility_role') in ['button', 'textbox', 'link', 'checkbox', 'radio', 'combobox'] or
+                e.get('tag') in ['button', 'input', 'a', 'select', 'textarea'] or
+                e.get('interactive', False)
+            ))
                 
                 print(f"   DOM elements: {dom_elements}")
                 print(f"   Accessibility elements: {ax_elements}")
                 print(f"   Interactive elements: {interactive_elements}")
                 
-                # Sample some elements
-                print(f"\n📋 Sample elements:")
-                for i, elem in enumerate(elements[:5]):
-                    if hasattr(elem, 'tag') and elem.tag:
-                        print(f"   {i+1}. {elem.tag}: {getattr(elem, 'text', '')[:50]}...")
-                    elif hasattr(elem, 'ax_role') and elem.ax_role:
-                        print(f"   {i+1}. {elem.ax_role}: {getattr(elem, 'ax_name', '')[:50]}...")
+            # Sample some elements
+            print(f"\n📋 Sample elements:")
+            for i, elem in enumerate(elements[:5]):
+                if isinstance(elem, dict):
+                    tag = elem.get('tag', '')
+                    text = elem.get('text', '')
+                    ax_role = elem.get('accessibility_role', '')
+                    ax_name = elem.get('accessibility_name', '')
+                    
+                    if tag and tag not in ['', '#TEXT']:
+                        print(f"   {i+1}. {tag}: {text[:50]}...")
+                    elif ax_role:
+                        print(f"   {i+1}. {ax_role}: {ax_name[:50]}...")
                     else:
                         print(f"   {i+1}. Unknown element: {elem}")
+                else:
+                    print(f"   {i+1}. Unknown element: {elem}")
             else:
                 print("❌ No elements found in snapshot")
         else:
