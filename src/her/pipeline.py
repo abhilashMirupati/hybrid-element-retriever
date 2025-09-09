@@ -559,12 +559,32 @@ class HybridPipeline:
         # Search using MiniLM stores for shortlisting
         mini_hits: List[Tuple[float, Dict[str, Any]]] = []
         for fh, mini_store in self._mini_stores.items():
-            k = max(10, int(top_k * 2))  # Get more candidates for reranking
+            k = max(20, int(top_k * 3))  # Get more candidates for filtering
             raw = mini_store.search(q_mini.tolist(), k=k)
             for idx, _dist, md in raw:
                 vec = np.array(mini_store.vectors[idx], dtype=np.float32)
                 score = _cos(q_mini, vec)
                 mini_hits.append((score, md))
+        
+        # For click actions, prioritize interactive elements in MiniLM shortlist
+        if user_intent and any(word in user_intent.lower() for word in ["click", "select", "press", "choose", "pick"]):
+            print(f"🔍 Filtering MiniLM results for click action - prioritizing interactive elements")
+            interactive_hits = []
+            non_interactive_hits = []
+            
+            for score, md in mini_hits:
+                is_interactive = md.get('interactive', False)
+                tag = (md.get('tag') or '').lower()
+                
+                if is_interactive or tag in ('button', 'a', 'input', 'select', 'option'):
+                    interactive_hits.append((score, md))
+                else:
+                    non_interactive_hits.append((score, md))
+            
+            # Prioritize interactive elements, but keep some non-interactive for fallback
+            mini_hits = interactive_hits + non_interactive_hits[:5]
+            print(f"   Found {len(interactive_hits)} interactive elements, {len(non_interactive_hits)} non-interactive")
+            print(f"   Using {len(mini_hits)} total candidates for MarkupLM reranking")
 
         print(f"🔍 MiniLM found {len(mini_hits)} candidates")
         print(f"🔍 Top {min(5, len(mini_hits))} MiniLM candidates:")
@@ -579,8 +599,8 @@ class HybridPipeline:
         # STEP 2: MarkupLM rerank (768-d)
         print(f"\n🎯 STEP 2: MarkupLM Rerank (768-d) - Standard Mode")
         
-        # Get top candidates from MiniLM shortlist
-        mini_hits.sort(key=lambda x: x[0], reverse=True)
+        # Get top candidates from MiniLM shortlist (already sorted by interactive priority)
+        # Don't re-sort here as we already prioritized interactive elements
         shortlist = mini_hits[:min(5, len(mini_hits))]  # Top 5 for reranking (respect 512 token limit)
         
         # Additional safety check for token limits
