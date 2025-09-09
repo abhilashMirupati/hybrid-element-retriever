@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-from .parser.intent import IntentParser
+from .parser.enhanced_intent import EnhancedIntentParser
 from .promotion_adapter import compute_label_key
 from .hashing import page_signature, dom_hash, frame_hash as compute_frame_hash
 from .pipeline import HybridPipeline
@@ -43,7 +43,7 @@ class Runner:
     
     def __init__(self, headless: bool = True) -> None:
         self.headless = headless
-        self.intent = IntentParser()
+        self.intent = EnhancedIntentParser()
         
         # Use shared pipeline to avoid reloading models
         if Runner._shared_pipeline is None:
@@ -1251,7 +1251,9 @@ class Runner:
                     candidates = resolved.get("candidates", [])
                     if selector:
                         try:
-                            self._do_action(intent.action, selector, intent.args, resolved.get("promo", {}), step)
+                            # Use extracted value if available, otherwise use args
+                            value = getattr(intent, 'value', None) or intent.args
+                            self._do_action(intent.action, selector, value, resolved.get("promo", {}), step)
                             last_err = None
                             # Wait after successful action for page to update
                             if intent.action in ["click", "select"]:
