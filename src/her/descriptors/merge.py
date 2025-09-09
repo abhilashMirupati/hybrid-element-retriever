@@ -28,9 +28,11 @@ def extract_text_content(node: Dict[str, Any]) -> str:
     
     # Get text from accessibility tree
     if 'accessibility' in node:
-        ax_name = node['accessibility'].get('name', '').strip()
+        ax_name = node['accessibility'].get('name', '')
         if ax_name:
-            text_parts.append(ax_name)
+            clean_name = extract_clean_text(ax_name)
+            if clean_name:
+                text_parts.append(clean_name)
     
     # For interactive elements, get text from attributes
     attrs = node.get('attributes', {})
@@ -108,14 +110,14 @@ def merge_dom_ax(
             logger.debug("No accessibility tree nodes available, returning DOM nodes as-is")
         return dom_nodes
     
-    # Create a mapping from accessibility nodeId to accessibility data
-    ax_by_id = {}
+    # Create a mapping from accessibility backendDOMNodeId to accessibility data
+    ax_by_backend_id = {}
     for ax_node in ax_nodes:
-        node_id = ax_node.get('nodeId')
-        if node_id is not None:
-            ax_by_id[node_id] = ax_node
+        backend_id = ax_node.get('backendDOMNodeId')
+        if backend_id is not None:
+            ax_by_backend_id[backend_id] = ax_node
     
-    logger.debug(f"Merging {len(dom_nodes)} DOM nodes with {len(ax_by_id)} accessibility nodes")
+    logger.debug(f"Merging {len(dom_nodes)} DOM nodes with {len(ax_by_backend_id)} accessibility nodes")
     
     # Use list comprehension for better performance
     merged_nodes = []
@@ -127,7 +129,7 @@ def merge_dom_ax(
             merged_node = dom_node.copy()
         else:
             # Find matching accessibility node
-            ax_node = ax_by_id.get(backend_id)
+            ax_node = ax_by_backend_id.get(backend_id)
             if ax_node is None:
                 # No matching accessibility node, use DOM node as-is but still extract text
                 merged_node = dom_node.copy()
@@ -145,8 +147,8 @@ def merge_dom_ax(
     # This ensures we don't lose accessibility-only elements
     dom_backend_ids = {node.get('backendNodeId') for node in dom_nodes if node.get('backendNodeId') is not None}
     for ax_node in ax_nodes:
-        node_id = ax_node.get('nodeId')
-        if node_id is not None and node_id not in dom_backend_ids:
+        backend_id = ax_node.get('backendDOMNodeId')
+        if backend_id is not None and backend_id not in dom_backend_ids:
             # This accessibility node doesn't have a corresponding DOM node
             # Convert it to element descriptor format and add it
             element_descriptor = convert_accessibility_to_element(ax_node)
@@ -273,7 +275,8 @@ def get_enhanced_text_content(dom_node: Dict[str, Any], ax_node: Dict[str, Any])
     dom_text = dom_node.get('text', '').strip()
     
     # Get name from accessibility tree
-    ax_name = ax_node.get('name', '').strip()
+    ax_name_raw = ax_node.get('name', '')
+    ax_name = extract_clean_text(ax_name_raw) if ax_name_raw else ''
     
     # Prioritize accessibility name if available and meaningful
     if ax_name and len(ax_name) > 0:
@@ -299,16 +302,90 @@ def extract_clean_text(text_value: Any) -> str:
         Clean text string
     """
     if isinstance(text_value, str):
-        return text_value
+        return text_value.strip()
     elif isinstance(text_value, dict):
         if 'value' in text_value:
-            return str(text_value['value'])
+            return str(text_value['value']).strip()
         elif 'type' in text_value and 'value' in text_value:
-            return str(text_value['value'])
+            return str(text_value['value']).strip()
         else:
-            return str(text_value)
+            # Try to extract any string value from the dict
+            for key, value in text_value.items():
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
     else:
-        return str(text_value) if text_value else ''
+        return str(text_value).strip() if text_value else ''
+
+
+def extract_comprehensive_text(node: Dict[str, Any]) -> str:
+    """
+    Extract comprehensive text content from a node, trying multiple sources.
+    
+    Args:
+        node: DOM or accessibility node
+        
+    Returns:
+        Best available text content
+    """
+    text_parts = []
+    
+    # 1. Direct text content
+    node_value = node.get('nodeValue', '').strip()
+    if node_value:
+        text_parts.append(node_value)
+    
+    # 2. Text from accessibility tree
+    if 'accessibility' in node:
+        ax_name = node['accessibility'].get('name', '')
+        if ax_name:
+            clean_name = extract_clean_text(ax_name)
+            if clean_name:
+                text_parts.append(clean_name)
+        
+        ax_value = node['accessibility'].get('value', '')
+        if ax_value:
+            clean_value = extract_clean_text(ax_value)
+            if clean_value:
+                text_parts.append(clean_value)
+    
+    # 3. Text from attributes
+    attrs = node.get('attributes', {})
+    if isinstance(attrs, list):
+        # Convert list format ['key1', 'value1', 'key2', 'value2'] to dict
+        attrs_dict = {}
+        for i in range(0, len(attrs), 2):
+            if i + 1 < len(attrs):
+                attrs_dict[attrs[i]] = attrs[i + 1]
+        attrs = attrs_dict
+    
+    if isinstance(attrs, dict):
+        # Priority order for text content in attributes
+        text_attrs = ['aria-label', 'data-placeholder-text', 'title', 'value', 'alt', 'placeholder']
+        for attr in text_attrs:
+            if attr in attrs and attrs[attr]:
+                text_parts.append(str(attrs[attr]).strip())
+    
+    # 4. Text from children (if available)
+    children = node.get('children', [])
+    if children:
+        for child in children:
+            if isinstance(child, dict):
+                child_text = child.get('nodeValue', '').strip()
+                if child_text:
+                    text_parts.append(child_text)
+    
+    # 5. Text from computed properties
+    computed_text = node.get('text', '').strip()
+    if computed_text:
+        text_parts.append(computed_text)
+    
+    # Return the longest meaningful text
+    meaningful_texts = [t for t in text_parts if t and len(t) > 1]
+    if meaningful_texts:
+        # Return the longest text, or the first one if they're similar length
+        return max(meaningful_texts, key=len)
+    
+    return ' '.join(text_parts).strip()
 
 def convert_accessibility_to_element(ax_node: Dict[str, Any]) -> Dict[str, Any]:
     """

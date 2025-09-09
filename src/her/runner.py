@@ -196,16 +196,9 @@ class Runner:
                             attrs_dict[str(attrs[i])] = attrs[i + 1]
                     attrs = attrs_dict
                 
-                # Get text content - prioritize the text extracted by merge function
-                text = str(node.get('text', '')).strip()
-                if not text:
-                    text = str(node.get('nodeValue', '')).strip()
-                
-                # For interactive elements, try to get text from accessibility tree
-                if not text and node.get('accessibility'):
-                    text = node['accessibility'].get('name', '').strip()
-                    if not text:
-                        text = node['accessibility'].get('value', '').strip()
+                # Get text content using comprehensive extraction
+                from .descriptors.merge import extract_comprehensive_text
+                text = extract_comprehensive_text(node)
                 
                 # Get tag name
                 tag = (node.get('tagName') or node.get('nodeName') or node.get('tag') or '').upper()
