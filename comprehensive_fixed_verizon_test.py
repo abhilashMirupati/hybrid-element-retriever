@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Verizon Website Comprehensive Regression Test
-Deep validation of all 3 CDP modes on Verizon.com with detailed analysis and self-critique
+Comprehensive Fixed Verizon Test
+Tests all 3 CDP modes with all fixes applied and provides detailed self-critique
 """
 
 import os
@@ -14,7 +14,7 @@ from typing import Dict, List, Any
 def run_mode_test(mode, mode_name, test_url="https://www.verizon.com/"):
     """Run a comprehensive test for a specific mode on Verizon website"""
     
-    print(f"\n🔬 DEEP REGRESSION TEST: {mode_name}")
+    print(f"\n🔬 COMPREHENSIVE FIXED TEST: {mode_name}")
     print("=" * 80)
     print(f"🌐 Testing on: {test_url}")
     
@@ -83,7 +83,12 @@ if isinstance(snapshot, dict) and 'elements' in snapshot:
         'navigation_elements': 0,
         'media_elements': 0,
         'script_elements': 0,
-        'style_elements': 0
+        'style_elements': 0,
+        'button_elements': 0,
+        'link_elements': 0,
+        'input_elements': 0,
+        'list_elements': 0,
+        'heading_elements': 0
     }}
     
     for elem in elements:
@@ -105,6 +110,16 @@ if isinstance(snapshot, dict) and 'elements' in snapshot:
                     element_analysis['script_elements'] += 1
                 elif tag == 'STYLE':
                     element_analysis['style_elements'] += 1
+                elif tag == 'BUTTON':
+                    element_analysis['button_elements'] += 1
+                elif tag == 'A':
+                    element_analysis['link_elements'] += 1
+                elif tag == 'INPUT':
+                    element_analysis['input_elements'] += 1
+                elif tag in ['UL', 'OL', 'LI']:
+                    element_analysis['list_elements'] += 1
+                elif tag in ['H1', 'H2', 'H3', 'H4', 'H5', 'H6']:
+                    element_analysis['heading_elements'] += 1
             
             # Accessibility element analysis
             ax_role = elem.get('accessibility_role', '')
@@ -112,7 +127,7 @@ if isinstance(snapshot, dict) and 'elements' in snapshot:
                 element_analysis['accessibility_elements'] += 1
                 element_analysis['role_distribution'][ax_role] = element_analysis['role_distribution'].get(ax_role, 0) + 1
             
-            # Interactive element analysis
+            # Interactive element analysis - FIXED VERSION
             is_interactive = (
                 ax_role in ['button', 'textbox', 'link', 'checkbox', 'radio', 'combobox', 'menu', 'menuitem', 
                            'tab', 'tabpanel', 'slider', 'spinbutton', 'searchbox', 'switch', 'progressbar', 
@@ -180,6 +195,11 @@ if isinstance(snapshot, dict) and 'elements' in snapshot:
     print(f"   Media elements: {{element_analysis['media_elements']}}")
     print(f"   Script elements: {{element_analysis['script_elements']}}")
     print(f"   Style elements: {{element_analysis['style_elements']}}")
+    print(f"   Button elements: {{element_analysis['button_elements']}}")
+    print(f"   Link elements: {{element_analysis['link_elements']}}")
+    print(f"   Input elements: {{element_analysis['input_elements']}}")
+    print(f"   List elements: {{element_analysis['list_elements']}}")
+    print(f"   Heading elements: {{element_analysis['heading_elements']}}")
     
     print(f"\\n🏷️  TOP TAGS:")
     for tag, count in sorted(element_analysis['tag_distribution'].items(), key=lambda x: x[1], reverse=True)[:15]:
@@ -255,7 +275,7 @@ if isinstance(snapshot, dict) and 'elements' in snapshot:
     if element_analysis['interactive_elements'] > 0:
         print(f"   ✅ Interactive elements: {{element_analysis['interactive_elements']}} found")
     else:
-        print(f"   ⚠️  Interactive elements: None found (may be normal for some pages)")
+        print(f"   ❌ Interactive elements: None found (MAJOR ISSUE)")
     
     # Check 5: Element structure integrity
     valid_elements = sum(1 for e in elements if isinstance(e, dict) and e.get('tag') is not None)
@@ -310,21 +330,21 @@ print(f"   Total time: {{total_time:.3f}}s")
 print(f"   Elements processed: {{element_analysis.get('total_elements', 0)}}")
 
 # Save results to file
-with open('/tmp/test_{mode.value}_verizon_results.json', 'w') as f:
+with open('/tmp/test_{mode.value}_fixed_verizon_results.json', 'w') as f:
     json.dump(results, f, indent=2)
 
-print(f"\\n💾 Results saved to /tmp/test_{mode.value}_verizon_results.json")
+print(f"\\n💾 Results saved to /tmp/test_{mode.value}_fixed_verizon_results.json")
 """
     
     # Write the test script to a temporary file
-    with open(f'/tmp/test_{mode.value}_verizon.py', 'w') as f:
+    with open(f'/tmp/test_{mode.value}_fixed_verizon.py', 'w') as f:
         f.write(test_script)
     
     # Run the test script
     start_time = time.time()
     try:
         result = subprocess.run([
-            sys.executable, f'/tmp/test_{mode.value}_verizon.py'
+            sys.executable, f'/tmp/test_{mode.value}_fixed_verizon.py'
         ], capture_output=True, text=True, cwd='/workspace')
         
         duration = time.time() - start_time
@@ -342,7 +362,7 @@ print(f"\\n💾 Results saved to /tmp/test_{mode.value}_verizon_results.json")
         
         # Load and return results
         try:
-            with open(f'/tmp/test_{mode.value}_verizon_results.json', 'r') as f:
+            with open(f'/tmp/test_{mode.value}_fixed_verizon_results.json', 'r') as f:
                 return json.load(f)
         except FileNotFoundError:
             return {
@@ -363,11 +383,11 @@ print(f"\\n💾 Results saved to /tmp/test_{mode.value}_verizon_results.json")
         }
 
 def main():
-    """Run comprehensive regression tests for all 3 CDP modes on Verizon website"""
+    """Run comprehensive fixed tests for all 3 CDP modes on Verizon website"""
     
-    print("🔬 VERIZON WEBSITE COMPREHENSIVE REGRESSION TEST")
+    print("🔬 COMPREHENSIVE FIXED VERIZON TEST")
     print("=" * 80)
-    print("Deep validation of all 3 CDP modes on Verizon.com")
+    print("Testing all 3 CDP modes with ALL FIXES APPLIED")
     print("(Excluding model loading as it's a one-time process)")
     
     from her.config import CanonicalMode
@@ -385,7 +405,7 @@ def main():
         results.append(result)
     
     # Comprehensive summary
-    print(f"\n🎯 COMPREHENSIVE REGRESSION SUMMARY")
+    print(f"\n🎯 COMPREHENSIVE FIXED TEST SUMMARY")
     print("=" * 80)
     
     successful_tests = [r for r in results if r.get('success', False)]
@@ -459,8 +479,8 @@ def main():
         print("❌ Some modes failed - regression detected")
         print("❌ Framework needs fixes before production use")
     
-    # Self-critique section
-    print(f"\n🔍 SELF-CRITIQUE & ANALYSIS:")
+    # Comprehensive self-critique
+    print(f"\n🔍 COMPREHENSIVE SELF-CRITIQUE & ANALYSIS:")
     print("=" * 80)
     
     if successful_tests:
@@ -532,18 +552,28 @@ def main():
             print(f"   Form elements: {analysis.get('form_elements', 0)}")
             print(f"   Navigation elements: {analysis.get('navigation_elements', 0)}")
             print(f"   Media elements: {analysis.get('media_elements', 0)}")
+            print(f"   Button elements: {analysis.get('button_elements', 0)}")
+            print(f"   Link elements: {analysis.get('link_elements', 0)}")
+            print(f"   Input elements: {analysis.get('input_elements', 0)}")
+            print(f"   List elements: {analysis.get('list_elements', 0)}")
+            print(f"   Heading elements: {analysis.get('heading_elements', 0)}")
             
             # Check for Verizon-specific expectations
             if 'verizon' in 'https://www.verizon.com/'.lower():
                 if analysis.get('form_elements', 0) > 0:
                     print(f"   ✅ Forms found (expected for Verizon)")
                 else:
-                    print(f"   ⚠️  No forms found (unexpected for Verizon)")
+                    print(f"   ❌ No forms found (unexpected for Verizon)")
                 
                 if analysis.get('navigation_elements', 0) > 0:
                     print(f"   ✅ Navigation found (expected for Verizon)")
                 else:
-                    print(f"   ⚠️  No navigation found (unexpected for Verizon)")
+                    print(f"   ❌ No navigation found (unexpected for Verizon)")
+                
+                if analysis.get('interactive_elements', 0) > 0:
+                    print(f"   ✅ Interactive elements found (expected for Verizon)")
+                else:
+                    print(f"   ❌ No interactive elements found (MAJOR ISSUE)")
         
         # Overall assessment
         print(f"\n🎯 OVERALL ASSESSMENT:")
@@ -556,21 +586,37 @@ def main():
             element_counts['both'] >= element_counts['dom_only']
         )
         
-        if all_working and timing_consistent and element_counts_make_sense:
+        # Check if accessibility-only mode is working properly
+        ax_test = next((r for r in successful_tests if r['mode'] == 'accessibility_only'), None)
+        ax_working = False
+        if ax_test:
+            analysis = ax_test.get('element_analysis', {})
+            ax_working = (
+                analysis.get('interactive_elements', 0) > 0 and
+                analysis.get('form_elements', 0) > 0 and
+                analysis.get('navigation_elements', 0) > 0
+            )
+        
+        if all_working and timing_consistent and element_counts_make_sense and ax_working:
             print("✅ EXCELLENT: All systems working perfectly")
             print("✅ Framework is production-ready")
+            print("✅ All critical issues fixed")
             print("✅ No issues detected")
-        elif all_working and element_counts_make_sense:
+        elif all_working and element_counts_make_sense and ax_working:
             print("✅ GOOD: All modes working, minor timing variance")
             print("✅ Framework is production-ready")
-        elif all_working:
+            print("✅ Critical issues fixed")
+        elif all_working and ax_working:
             print("⚠️  FAIR: All modes working but some inconsistencies")
             print("⚠️  Framework needs minor improvements")
-        else:
-            print("❌ POOR: Some modes failed")
+        elif all_working:
+            print("❌ POOR: Some modes working but accessibility issues remain")
             print("❌ Framework needs significant fixes")
+        else:
+            print("❌ CRITICAL: Multiple modes failed")
+            print("❌ Framework needs major fixes")
     
-    print(f"\n🎉 VERIZON REGRESSION TEST COMPLETED")
+    print(f"\n🎉 COMPREHENSIVE FIXED TEST COMPLETED")
     print("=" * 80)
 
 if __name__ == "__main__":

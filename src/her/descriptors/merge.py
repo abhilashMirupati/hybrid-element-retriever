@@ -117,23 +117,23 @@ def merge_dom_ax(
     
     logger.debug(f"Merging {len(dom_nodes)} DOM nodes with {len(ax_by_id)} accessibility nodes")
     
+    # Use list comprehension for better performance
     merged_nodes = []
     for dom_node in dom_nodes:
         # Get the backend node ID from DOM node
         backend_id = dom_node.get('backendNodeId')
         if backend_id is None:
             # If no backend ID, use the DOM node as-is
-            merged_nodes.append(dom_node)
-            continue
-            
-        # Find matching accessibility node
-        ax_node = ax_by_id.get(backend_id)
-        if ax_node is None:
-            # No matching accessibility node, use DOM node as-is but still extract text
             merged_node = dom_node.copy()
         else:
-            # Merge DOM and accessibility attributes based on mode
-            merged_node = merge_node_attributes(dom_node, ax_node, canonical_mode)
+            # Find matching accessibility node
+            ax_node = ax_by_id.get(backend_id)
+            if ax_node is None:
+                # No matching accessibility node, use DOM node as-is but still extract text
+                merged_node = dom_node.copy()
+            else:
+                # Merge DOM and accessibility attributes based on mode
+                merged_node = merge_node_attributes(dom_node, ax_node, canonical_mode)
         
         # Extract text content for better MiniLM matching - ALWAYS do this
         text_content = extract_text_content(merged_node)
@@ -141,7 +141,19 @@ def merge_dom_ax(
         
         merged_nodes.append(merged_node)
     
-    logger.debug(f"Successfully merged {len(merged_nodes)} nodes")
+    # Add any accessibility nodes that don't have corresponding DOM nodes
+    # This ensures we don't lose accessibility-only elements
+    dom_backend_ids = {node.get('backendNodeId') for node in dom_nodes if node.get('backendNodeId') is not None}
+    for ax_node in ax_nodes:
+        node_id = ax_node.get('nodeId')
+        if node_id is not None and node_id not in dom_backend_ids:
+            # This accessibility node doesn't have a corresponding DOM node
+            # Convert it to element descriptor format and add it
+            element_descriptor = convert_accessibility_to_element(ax_node)
+            if element_descriptor:
+                merged_nodes.append(element_descriptor)
+    
+    logger.debug(f"Successfully merged {len(merged_nodes)} nodes (DOM: {len(dom_nodes)}, Accessibility: {len(ax_nodes)})")
     return merged_nodes
 
 
@@ -306,24 +318,84 @@ def convert_accessibility_to_element(ax_node: Dict[str, Any]) -> Dict[str, Any]:
     if not ax_node:
         return None
     
+    # Get role and determine if interactive
+    role = ax_node.get('role', '')
+    # Handle case where role might be a dict or other type
+    if isinstance(role, dict):
+        role = role.get('value', '') if 'value' in role else str(role)
+    elif not isinstance(role, str):
+        role = str(role) if role else ''
+    
+    is_interactive = is_accessibility_role_interactive(role)
+    
+    # Map accessibility role to HTML tag
+    tag_mapping = {
+        'button': 'BUTTON',
+        'link': 'A',
+        'textbox': 'INPUT',
+        'checkbox': 'INPUT',
+        'radio': 'INPUT',
+        'combobox': 'SELECT',
+        'menu': 'UL',
+        'menuitem': 'LI',
+        'list': 'UL',
+        'listitem': 'LI',
+        'heading': 'H1',
+        'img': 'IMG',
+        'text': 'SPAN',
+        'paragraph': 'P',
+        'article': 'ARTICLE',
+        'section': 'SECTION',
+        'navigation': 'NAV',
+        'main': 'MAIN',
+        'banner': 'HEADER',
+        'contentinfo': 'FOOTER',
+        'form': 'FORM',
+        'search': 'FORM',
+        'dialog': 'DIALOG',
+        'alert': 'DIV',
+        'status': 'DIV',
+        'progressbar': 'PROGRESS',
+        'slider': 'INPUT',
+        'spinbutton': 'INPUT',
+        'tab': 'BUTTON',
+        'tablist': 'DIV',
+        'tabpanel': 'DIV',
+        'tree': 'UL',
+        'treeitem': 'LI',
+        'grid': 'TABLE',
+        'gridcell': 'TD',
+        'row': 'TR',
+        'columnheader': 'TH',
+        'rowheader': 'TH',
+        'table': 'TABLE',
+        'cell': 'TD',
+        'rowgroup': 'TBODY',
+        'columnheader': 'TH',
+        'rowheader': 'TH'
+    }
+    
+    # Determine HTML tag from accessibility role
+    html_tag = tag_mapping.get(role.lower(), 'DIV')
+    
     # Extract basic information from accessibility node
     element = {
         'backendNodeId': ax_node.get('nodeId'),
         'framePath': ax_node.get('frameId', 'main'),
-        'tag': str(ax_node.get('role', '')).upper() if ax_node.get('role') else '',
-        'type': ax_node.get('role', ''),
+        'tag': html_tag,
+        'type': role,
         'id': ax_node.get('id', ''),
         'classes': [],
         'placeholder': extract_clean_text(ax_node.get('name', '')),
         'aria': {
             'label': extract_clean_text(ax_node.get('name', '')),
             'description': extract_clean_text(ax_node.get('description', '')),
-            'role': ax_node.get('role', ''),
+            'role': role,
             'hidden': ax_node.get('ignored', False),
             'disabled': ax_node.get('disabled', False)
         },
         'labels': [extract_clean_text(ax_node.get('name', ''))] if ax_node.get('name') else [],
-        'ax_role': ax_node.get('role', ''),
+        'ax_role': role,
         'ax_name': extract_clean_text(ax_node.get('name', '')),
         'ax_hidden': ax_node.get('ignored', False),
         'ax_disabled': ax_node.get('disabled', False),
@@ -333,7 +405,11 @@ def convert_accessibility_to_element(ax_node: Dict[str, Any]) -> Dict[str, Any]:
         'dom_hash': '',
         'shadowPath': '',
         'text': extract_clean_text(ax_node.get('name', '')),
-        'attributes': {}
+        'attributes': {},
+        'interactive': is_interactive,
+        'accessibility_role': role,
+        'accessibility_name': extract_clean_text(ax_node.get('name', '')),
+        'accessibility_description': extract_clean_text(ax_node.get('description', ''))
     }
     
     # Add accessibility-specific attributes
@@ -347,8 +423,41 @@ def convert_accessibility_to_element(ax_node: Dict[str, Any]) -> Dict[str, Any]:
         element['attributes']['aria-expanded'] = str(ax_node['expanded']).lower()
     if ax_node.get('selected') is not None:
         element['attributes']['aria-selected'] = str(ax_node['selected']).lower()
+    if ax_node.get('haspopup') is not None:
+        element['attributes']['aria-haspopup'] = str(ax_node['haspopup']).lower()
+    if ax_node.get('level'):
+        element['attributes']['aria-level'] = str(ax_node['level'])
+    if ax_node.get('posinset'):
+        element['attributes']['aria-posinset'] = str(ax_node['posinset'])
+    if ax_node.get('setsize'):
+        element['attributes']['aria-setsize'] = str(ax_node['setsize'])
     
     return element
+
+
+def is_accessibility_role_interactive(role: str) -> bool:
+    """
+    Determine if an accessibility role represents an interactive element.
+    
+    Args:
+        role: Accessibility role string
+        
+    Returns:
+        True if the role represents an interactive element
+    """
+    interactive_roles = {
+        'button', 'link', 'textbox', 'checkbox', 'radio', 'combobox', 'menu', 
+        'menuitem', 'tab', 'tabpanel', 'slider', 'spinbutton', 'searchbox',
+        'switch', 'progressbar', 'scrollbar', 'tree', 'treeitem', 'grid',
+        'gridcell', 'cell', 'row', 'columnheader', 'rowheader', 'option',
+        'listbox', 'listitem', 'menubar', 'menuitemcheckbox', 'menuitemradio',
+        'toolbar', 'tooltip', 'dialog', 'alertdialog', 'form', 'search',
+        'text', 'paragraph', 'heading', 'img', 'article', 'section',
+        'navigation', 'main', 'banner', 'contentinfo', 'complementary',
+        'region', 'status', 'alert', 'log', 'marquee', 'timer', 'tablist'
+    }
+    
+    return role.lower() in interactive_roles
 
 
 def enhance_element_descriptor(element: Dict[str, Any]) -> Dict[str, Any]:
