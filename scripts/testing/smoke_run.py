@@ -23,17 +23,17 @@ import base64
 from typing import List, Dict, Any
 
 ## Ensure local src/ is importable when running from repo root
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 SRC_DIR = ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from her.strict import (
+from her.core.strict import (
     require_playwright, require_path_exists, require_sqlite_open
 )
-from her.pipeline import HybridPipeline
-from her.executor_main import Executor
-from her.promotion_adapter import compute_label_key
+from her.core.pipeline import HybridPipeline
+from her.executor.main import Executor
+from her.promotion.promotion_adapter import compute_label_key
 from her.browser.snapshot import snapshot_sync
 
 

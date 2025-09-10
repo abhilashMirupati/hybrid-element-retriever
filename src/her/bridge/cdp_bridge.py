@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
-from .. import hashing
+from ..core import hashing
 
 logger = logging.getLogger(__name__)
 

@@ -13,7 +13,7 @@ import json
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from her.vectordb.sqlite_cache import SQLiteKV
-from her.promotion_adapter import compute_label_key, lookup_promotion, record_success, record_failure
+from her.promotion.promotion_adapter import compute_label_key, lookup_promotion, record_success, record_failure
 
 
 class TestCache:

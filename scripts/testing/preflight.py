@@ -21,7 +21,13 @@ import os
 import sys
 from pathlib import Path
 
-from her.strict import (
+## Ensure local src/ is importable when running from repo root
+ROOT = Path(__file__).resolve().parents[2]
+SRC_DIR = ROOT / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+from her.core.strict import (
     require_env,
     require_path_exists,
     require_sqlite_open,

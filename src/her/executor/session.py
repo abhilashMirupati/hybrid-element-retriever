@@ -8,7 +8,7 @@ from typing import Any, Optional
 
 import numpy as np
 
-from ..vectordb.two_tier_cache import TwoTierCache
+from ..cache.two_tier import TwoTierCache
 
 
 class Session:

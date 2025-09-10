@@ -46,13 +46,13 @@ The HER framework uses environment variables for configuration. You can set them
 #### Option 1: Using .env file (Recommended)
 ```bash
 # Copy the example file and modify as needed
-cp .env.example .env
+cp config/.env.example config/.env
 
 # Load environment variables (Python)
-python load_env.py
+python tools/load_env.py
 
 # Or source them in your shell
-eval "$(python load_env.py --export)"
+eval "$(python tools/load_env.py --export)"
 ```
 
 #### Option 2: Manual export (Legacy)
@@ -62,7 +62,7 @@ export HER_CACHE_DIR="$(pwd)/.her_cache"       # Cache directory
 ```
 
 #### Available Environment Variables
-See `.env.example` for a complete list of all available environment variables with descriptions and default values.
+See `config/.env.example` for a complete list of all available environment variables with descriptions and default values.
 
 ## 2) Key Concepts
 
@@ -85,7 +85,7 @@ After successful actions, the final selector is persisted (scoped by page_sig, f
 ## 3) Usage Example
 
 ```python
-from her.runner import run_steps
+from her.core.runner import run_steps
 
 # Simple step-by-step execution
 steps = [
@@ -103,9 +103,9 @@ run_steps(steps, headless=True)
 ### Advanced Usage
 
 ```python
-from her.pipeline import HybridPipeline
-from her.promotion_adapter import compute_label_key
-from her.executor_main import Executor
+from her.core.pipeline import HybridPipeline
+from her.promotion.promotion_adapter import compute_label_key
+from her.executor.main import Executor
 
 # 1) Create pipeline with real models
 pipe = HybridPipeline(models_root=Path("src/her/models"))

@@ -69,7 +69,7 @@ Environment variables are automatically loaded when you import the HER framework
 
 ```python
 import her  # .env file is loaded automatically
-from her.pipeline import HERPipeline
+from her.core.pipeline import HERPipeline
 ```
 
 ### Method 2: Manual Loading

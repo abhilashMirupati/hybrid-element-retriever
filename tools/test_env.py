@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 # Add src to path so we can import her modules
-sys.path.insert(0, str(Path(__file__).parent / "src"))
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 def test_env_loading():
     """Test that environment variables are loaded correctly."""
@@ -45,7 +45,7 @@ def test_env_loading():
     
     print("\nTesting HER configuration...")
     try:
-        from her.config import get_config
+        from her.core.config import get_config
         config = get_config()
         
         print(f"Canonical Mode: {config.get_canonical_mode().value}")

@@ -33,9 +33,19 @@ def load_env_file(env_file_path: str = ".env") -> dict:
         Dictionary of environment variables
     """
     env_vars = {}
-    env_path = Path(env_file_path)
+    # Look for .env file in current directory, config directory, and parent directories
+    current_dir = Path.cwd()
+    env_path = None
     
-    if not env_path.exists():
+    # Check current directory, config directory, and parent directories
+    search_paths = [current_dir, current_dir / "config"] + list(current_dir.parents)
+    for path in search_paths:
+        potential_env = path / env_file_path
+        if potential_env.exists():
+            env_path = potential_env
+            break
+    
+    if not env_path:
         print(f"Warning: {env_file_path} not found. Using system environment variables only.")
         return env_vars
     

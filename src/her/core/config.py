@@ -2,6 +2,7 @@
 
 import os
 from enum import Enum
+from pathlib import Path
 from typing import Optional
 
 
@@ -114,6 +115,19 @@ def get_config() -> HERConfig:
 def set_canonical_mode(mode: CanonicalMode) -> None:
     """Set canonical descriptor building mode globally."""
     config.set_canonical_mode(mode)
+
+
+# Cache configuration constants
+MEMORY_CACHE_SIZE = 1000  # Number of items in memory cache
+DISK_CACHE_SIZE_MB = 100  # Disk cache size in MB
+
+
+def get_cache_dir() -> Path:
+    """Get the cache directory path."""
+    cache_dir = os.getenv("HER_CACHE_DIR")
+    if cache_dir:
+        return Path(cache_dir).resolve()
+    return Path(".her_cache").resolve()
 
 
 def print_config() -> None:

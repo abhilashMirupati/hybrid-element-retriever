@@ -25,8 +25,8 @@ except Exception as e:  # pragma: no cover
         "and run `python -m playwright install chromium`."
     ) from e
 
-from her.promotion_adapter import record_failure, record_success
-from her.vectordb import get_default_kv
+from ..promotion.promotion_adapter import record_failure, record_success
+from ..vectordb import get_default_kv
 
 
 class Executor:

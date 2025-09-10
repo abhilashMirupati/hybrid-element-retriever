@@ -11,9 +11,9 @@ import shutil
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from her.pipeline import HybridPipeline
+from her.core.pipeline import HybridPipeline
 from her.vectordb.sqlite_cache import SQLiteKV
-from her.hashing import element_dom_hash
+from her.core.hashing import element_dom_hash
 
 
 class TestDeltaEmbedding:
