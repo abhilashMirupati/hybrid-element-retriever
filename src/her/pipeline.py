@@ -250,6 +250,7 @@ class HybridPipeline:
         print(f"   Element text: '{text[:50]}...'")
         
         score = 0.0
+        print(f"   Initial score: {score}")
         
         # 1. Query matching (most important - what user is looking for)
         if query:
@@ -289,11 +290,26 @@ class HybridPipeline:
         
         # 2. Target matching (what user wants to interact with)
         if target:
-            target_lower = target.lower()
-            if target_lower in text:
-                score += 0.2  # Exact target match
-            elif any(word in text for word in target_lower.split()):
-                score += 0.1  # Partial target match
+            # Extract quoted text from target (e.g., "Phones" from 'the "Phones" button')
+            import re
+            quoted_match = re.search(r'"([^"]+)"', target)
+            if quoted_match:
+                target_text = quoted_match.group(1).lower().strip()
+            else:
+                target_text = target.lower().strip().replace('"', '').replace("'", '')
+            
+            if target_text == text:
+                score += 0.5  # Exact target match (high priority)
+                print(f"   ✅ EXACT TARGET MATCH: '{target_text}' == '{text}' -> +0.5")
+            elif target_text in text:
+                score += 0.3  # Partial target match
+                print(f"   ✅ PARTIAL TARGET MATCH: '{target_text}' in '{text}' -> +0.3")
+            elif any(word in text for word in target_text.split()):
+                score += 0.1  # Word-level match
+                print(f"   ✅ WORD TARGET MATCH: '{target_text}' words in '{text}' -> +0.1")
+            else:
+                print(f"   ❌ NO TARGET MATCH: '{target_text}' vs '{text}'")
+            print(f"   Score after target matching: {score}")
         
         # 3. User intent matching (action user wants to perform)
         if user_intent:
