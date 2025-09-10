@@ -7,8 +7,8 @@ import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-from .parser.enhanced_intent import EnhancedIntentParser
-from .promotion_adapter import compute_label_key
+from ..parser.enhanced_intent import EnhancedIntentParser
+from ..promotion.promotion_adapter import compute_label_key
 from .hashing import page_signature, dom_hash, frame_hash as compute_frame_hash
 from .pipeline import HybridPipeline
 
@@ -169,8 +169,8 @@ class Runner:
     def _inline_snapshot(self) -> Dict[str, Any]:
         # First try to get DOM + accessibility tree via CDP
         try:
-            from .bridge.cdp_bridge import capture_complete_snapshot
-            from .descriptors.merge import merge_dom_ax, enhance_element_descriptor
+            from ..bridge.cdp_bridge import capture_complete_snapshot
+            from ..descriptors.merge import merge_dom_ax, enhance_element_descriptor
             from .config import get_config
             
             # Get configuration for canonical descriptor building
@@ -197,7 +197,7 @@ class Runner:
                     attrs = attrs_dict
                 
                 # Get text content using comprehensive extraction
-                from .descriptors.merge import extract_comprehensive_text
+                from ..descriptors.merge import extract_comprehensive_text
                 text = extract_comprehensive_text(node)
                 
                 # Get tag name
@@ -259,7 +259,7 @@ class Runner:
             config = get_config()
             if config.should_use_hierarchy():
                 try:
-                    from .descriptors.hierarchy import HierarchyContextBuilder
+                    from ..descriptors.hierarchy import HierarchyContextBuilder
                     hierarchy_builder = HierarchyContextBuilder()
                     elements = hierarchy_builder.add_context_to_elements(elements)
                     print(f"✅ Added hierarchical context to {len(elements)} elements")
@@ -938,7 +938,7 @@ class Runner:
                     # Try to scroll into view for better interaction, but don't skip elements
                     try:
                         element.scroll_into_view_if_needed()
-                        page.wait_for_timeout(500)  # Wait for scroll to complete
+                        self._page.wait_for_timeout(500)  # Wait for scroll to complete
                     except:
                         pass  # Continue even if scroll fails
                     

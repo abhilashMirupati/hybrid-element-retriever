@@ -7,25 +7,24 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
-from .embeddings._resolve import preflight_require_models
-from .embeddings.text_embedder import TextEmbedder
-from .embeddings.element_embedder import \
-    ElementEmbedder  # 768-d deterministic fallback
+from ..embeddings._resolve import preflight_require_models
+from ..embeddings.text_embedder import TextEmbedder
+from ..embeddings.element_embedder import  ElementEmbedder  # 768-d deterministic fallback
 from .hashing import element_dom_hash
-from .vectordb.faiss_store import InMemoryVectorStore
-from .vectordb.sqlite_cache import SQLiteKV
+from ..vectordb.faiss_store import InMemoryVectorStore
+from ..vectordb.sqlite_cache import SQLiteKV
 from .config import get_config
-from .descriptors.hierarchy import HierarchyContextBuilder
+from ..descriptors.hierarchy import HierarchyContextBuilder
 
 # Optional heavy embedder (if present locally)
 try:
-    from .embeddings.markuplm_embedder import MarkupLMEmbedder  # 768-d
+    from ..embeddings.markuplm_embedder import MarkupLMEmbedder  # 768-d
     _MARKUP_IMPORT_OK = True
 except Exception:
     _MARKUP_IMPORT_OK = False
 
 # Promotions (Step 6)
-from .promotion_adapter import lookup_promotion
+from ..promotion.promotion_adapter import lookup_promotion
 
 log = logging.getLogger("her.pipeline")
 
