@@ -19,7 +19,7 @@ except Exception:  # pragma: no cover
     _PLAYWRIGHT = False
 
 try:
-    from .executor_main import Executor  # type: ignore
+    from ..executor.main import Executor  # type: ignore
 except Exception:
     Executor = None  # type: ignore
 
@@ -832,7 +832,7 @@ class Runner:
                 return
         if action == "select":
             # For select actions, try to find the most visible/clickable element
-            self._click_best_element(selector, phrase)
+            self._click_best_element(selector, user_intent)
             return
         if action == "back":
             try:
@@ -854,7 +854,7 @@ class Runner:
             self._page.wait_for_timeout(int(secs * 1000))
             return
         # For click actions, try to find the best element
-        self._click_best_element(selector, phrase)
+        self._click_best_element(selector, user_intent)
 
     def _scroll_into_view(self, element) -> None:
         """Scroll element into view if it's not visible."""

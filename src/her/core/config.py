@@ -4,6 +4,7 @@ import os
 from enum import Enum
 from pathlib import Path
 from typing import Optional
+from dataclasses import dataclass
 
 
 class CanonicalMode(Enum):
@@ -11,6 +12,25 @@ class CanonicalMode(Enum):
     DOM_ONLY = "dom_only"           # Only DOM attributes
     ACCESSIBILITY_ONLY = "accessibility_only"  # Only accessibility tree attributes  
     BOTH = "both"                   # Both DOM + accessibility tree (default)
+
+
+@dataclass
+class PipelineConfig:
+    """Pipeline configuration for HER framework."""
+    use_minilm: bool = True
+    use_e5_small: bool = True
+    use_markuplm: bool = True
+    enable_cold_start_detection: bool = True
+    enable_incremental_updates: bool = True
+    enable_spa_tracking: bool = True
+    verify_url: bool = True
+    verify_dom_state: bool = True
+    verify_value: bool = True
+    max_retry_attempts: int = 3
+    wait_for_idle: bool = True
+    handle_frames: bool = True
+    handle_shadow_dom: bool = True
+    auto_dismiss_overlays: bool = True
 
 
 class HERConfig:

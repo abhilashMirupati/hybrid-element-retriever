@@ -51,3 +51,27 @@ def fuse(candidates: List[Dict[str, Any]], intent: Dict[str, Any]) -> List[Dict[
         scored.append(out)
     scored.sort(key=lambda x: x["score"], reverse=True)
     return scored
+
+
+class FusionScorer:
+    """Fusion scorer for combining multiple scoring signals."""
+    
+    def score(self, query_embedding: Any, element_embedding: Any, element_descriptor: Dict[str, Any], intent: Any) -> float:
+        """Score an element based on embeddings and intent."""
+        # Basic scoring based on element properties
+        base_score = 0.0
+        
+        # Text similarity
+        if hasattr(intent, 'target_phrase') and intent.target_phrase:
+            text = str(element_descriptor.get("text", ""))
+            base_score += _token_overlap(text, intent.target_phrase)
+        
+        # Tag bias
+        tag = element_descriptor.get("tag", "")
+        base_score += _tag_bias(tag)
+        
+        # Role bonus
+        role = element_descriptor.get("role", "")
+        base_score += _role_bonus(role)
+        
+        return base_score
