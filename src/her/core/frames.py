@@ -5,7 +5,7 @@ from typing import Dict, List, Optional
 
 import numpy as np
 
-from .db import VectorIndex
+from ..vectordb.faiss_store import InMemoryVectorStore as VectorIndex
 from .hashing import frame_hash as compute_fhash
 
 
