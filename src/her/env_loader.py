@@ -16,20 +16,24 @@ def _load_env_file(env_file_path: str = ".env") -> None:
     Args:
         env_file_path: Path to the .env file
     """
-    # Look for .env file in current directory, config directory, and parent directories
-    current_dir = Path.cwd()
-    env_path = None
-    
-    # Check current directory, config directory, and parent directories
-    search_paths = [current_dir, current_dir / "config"] + list(current_dir.parents)
-    for path in search_paths:
-        potential_env = path / env_file_path
-        if potential_env.exists():
-            env_path = potential_env
-            break
-    
-    if not env_path:
-        return  # No .env file found, use system environment variables
+    try:
+        # Look for .env file in current directory, config directory, and parent directories
+        current_dir = Path.cwd()
+        env_path = None
+        
+        # Check current directory, config directory, and parent directories
+        search_paths = [current_dir, current_dir / "config"] + list(current_dir.parents)
+        for path in search_paths:
+            potential_env = path / env_file_path
+            if potential_env.exists():
+                env_path = potential_env
+                break
+        
+        if not env_path:
+            return  # No .env file found, use system environment variables
+    except Exception as e:
+        # Silently fail if there are issues with path resolution
+        return
     
     with open(env_path, 'r') as f:
         for line_num, line in enumerate(f, 1):

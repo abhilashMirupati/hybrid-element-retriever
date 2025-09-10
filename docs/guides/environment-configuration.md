@@ -6,12 +6,12 @@ This document explains how to configure the HER framework using environment vari
 
 1. **Copy the example configuration:**
    ```bash
-   cp .env.example .env
+   cp config/.env.example config/.env
    ```
 
 2. **Edit the configuration:**
    ```bash
-   nano .env  # or your preferred editor
+   nano config/.env  # or your preferred editor
    ```
 
 3. **Use the framework:**
@@ -93,10 +93,10 @@ Load environment variables in your shell:
 
 ```bash
 # Source environment variables
-eval "$(python load_env.py --export)"
+eval "$(python tools/load_env.py --export)"
 
 # Or load from custom file
-eval "$(python load_env.py custom.env --export)"
+eval "$(python tools/load_env.py custom.env --export)"
 ```
 
 ### Method 4: Traditional Export
@@ -153,7 +153,7 @@ HER_STRICT=0
 1. **Check file location:** Ensure `.env` file is in the project root
 2. **Check file format:** Ensure no spaces around `=` signs
 3. **Check permissions:** Ensure file is readable
-4. **Manual loading:** Try `python load_env.py` to test
+4. **Manual loading:** Try `python tools/load_env.py` to test
 
 ### Configuration Not Applied
 
@@ -166,7 +166,7 @@ HER_STRICT=0
 Run the test script to verify your configuration:
 
 ```bash
-python test_env.py
+python tools/test_env.py
 ```
 
 This will show all loaded environment variables and test the HER configuration.
