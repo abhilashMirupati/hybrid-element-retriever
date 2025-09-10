@@ -13,7 +13,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Any, Dict, List, Optional
 
-from ..config import DISK_CACHE_SIZE_MB, MEMORY_CACHE_SIZE, get_cache_dir
+from ..core.config import DISK_CACHE_SIZE_MB, MEMORY_CACHE_SIZE, get_cache_dir
 
 logger = logging.getLogger(__name__)
 

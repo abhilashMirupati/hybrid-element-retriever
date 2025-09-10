@@ -1,4 +1,4 @@
-from ..executor_main import \
+from .main import \
     Executor  # Import from the module above the package
 from .actions import click, type, verify
 from .session import Session, SessionManager

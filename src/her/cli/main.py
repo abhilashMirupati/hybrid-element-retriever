@@ -9,9 +9,9 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 
-from her.pipeline import HybridPipeline
-from her.recovery.promotion import PromotionStore
-from her.recovery.self_heal import SelfHealer
+from ..core.pipeline import HybridPipeline
+from ..recovery.promotion import PromotionStore
+from ..recovery.self_heal import SelfHealer
 
 log = logging.getLogger("her.cli")
 

@@ -41,7 +41,7 @@ except Exception:  # pragma: no cover - allow module import without Playwright
         pass
     class PlaywrightTimeoutError(Exception):
         pass
-from .. import hashing
+from ..core import hashing
 
 logger = logging.getLogger("her.browser")
 

@@ -41,10 +41,37 @@ HER_E2E=1 python -m pytest tests/test_verizon_flow.py -v -s --timeout=300
 
 ### Environment Variables
 
+The HER framework uses environment variables for configuration. You can set them in two ways:
+
+#### Option 1: Using .env file (Recommended)
+```bash
+# Copy the example file and modify as needed
+cp config/.env.example config/.env
+
+# Load environment variables (Python)
+python tools/load_env.py
+
+# Or source them in your shell
+eval "$(python tools/load_env.py --export)"
+```
+
+#### Option 2: Manual export (Legacy)
 ```bash
 export HER_MODELS_DIR="$(pwd)/src/her/models"  # Path to models
 export HER_CACHE_DIR="$(pwd)/.her_cache"       # Cache directory
 ```
+
+#### Available Environment Variables
+See `config/.env.example` for a complete list of all available environment variables with descriptions and default values.
+
+## 📚 Documentation
+
+Complete documentation is available in the `docs/` directory:
+
+- **[Setup Guide](docs/setup/SETUP.md)** - Complete setup instructions
+- **[Environment Configuration](docs/guides/environment-configuration.md)** - Environment variables guide
+- **[Dependency Analysis](docs/development/dependency-analysis.md)** - Required and optional dependencies
+- **[Migration Guide](docs/development/migration-guide.md)** - Guide for users migrating from old structure
 
 ## 2) Key Concepts
 
@@ -67,7 +94,7 @@ After successful actions, the final selector is persisted (scoped by page_sig, f
 ## 3) Usage Example
 
 ```python
-from her.runner import run_steps
+from her.core.runner import run_steps
 
 # Simple step-by-step execution
 steps = [
@@ -85,9 +112,9 @@ run_steps(steps, headless=True)
 ### Advanced Usage
 
 ```python
-from her.pipeline import HybridPipeline
-from her.promotion_adapter import compute_label_key
-from her.executor_main import Executor
+from her.core.pipeline import HybridPipeline
+from her.promotion.promotion_adapter import compute_label_key
+from her.executor.main import Executor
 
 # 1) Create pipeline with real models
 pipe = HybridPipeline(models_root=Path("src/her/models"))
