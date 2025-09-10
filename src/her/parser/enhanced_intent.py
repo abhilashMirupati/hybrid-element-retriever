@@ -54,8 +54,8 @@ class EnhancedIntentParser:
         
         # Structured patterns for high accuracy
         self.structured_patterns = [
-            # Click actions: Click on "target" or Click "target"
-            (re.compile(r'^(click|press|tap|push|hit|select)\s+(?:on\s+)?["\']([^"\']+)["\']', re.I), "click", None),
+            # Click actions: Click on "target" or Click "target" (allow words between "on" and quotes)
+            (re.compile(r'^(click|press|tap|push|hit|select)\s+(?:on\s+)?(?:the\s+)?["\']([^"\']+)["\']', re.I), "click", None),
             
             # Type actions: Enter $value in "target" field
             (re.compile(r'^(type|enter|input|write|fill)\s+\$([^\s]+)\s+(?:in|into|to)\s+["\']([^"\']+)["\']', re.I), "type", "value"),
