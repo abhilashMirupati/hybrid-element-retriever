@@ -22,7 +22,14 @@ def _load_env_file(env_file_path: str = ".env") -> None:
         env_path = None
         
         # Check current directory, config directory, and parent directories
-        search_paths = [current_dir, current_dir / "config"] + list(current_dir.parents)
+        # Also check relative to the her package location
+        her_package_dir = Path(__file__).parent.parent.parent
+        search_paths = [
+            current_dir, 
+            current_dir / "config",
+            her_package_dir,
+            her_package_dir / "config"
+        ] + list(current_dir.parents)
         for path in search_paths:
             potential_env = path / env_file_path
             if potential_env.exists():
