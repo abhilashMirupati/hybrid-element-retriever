@@ -8,14 +8,9 @@ def __getattr__(name):
         import importlib
         mod = importlib.import_module('.gateway_server', __name__)
         return mod
-    # Provide direct access to the high-level runtime orchestrator.
+    # HerAgent is not available in this version
     if name == "HerAgent":
-        try:
-            from .runtime.agent import HerAgent as _HA
-            return _HA
-        except Exception:
-            # If runtime dependencies (e.g. Playwright) are missing, return None
-            return None
+        return None
     raise AttributeError(f"module {__name__} has no attribute {name}")
 
 
@@ -66,6 +61,5 @@ __all__ = [
     "FormValidator",
     "HybridElementRetrieverClient",
     "gateway_server",
-    "HerAgent",
     "__version__"
 ]
