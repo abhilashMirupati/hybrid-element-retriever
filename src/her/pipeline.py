@@ -367,7 +367,11 @@ class HybridPipeline:
             if any(word in role for word in query_words):
                 score += 0.05
         
-        final_score = min(score, 0.6)  # Cap at 0.6 for multi-parameter scoring
+        # Allow higher scores for exact matches, but cap others
+        if score >= 1.0:  # Exact match + clickable element
+            final_score = min(score, 1.0)  # Cap at 1.0 for exact matches
+        else:
+            final_score = min(score, 0.6)  # Cap at 0.6 for partial matches
         print(f"   Final intent score: {final_score:.3f}")
         return final_score
 
