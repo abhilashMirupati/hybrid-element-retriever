@@ -355,7 +355,7 @@ class HybridPipeline:
         print(f"   Final intent score: {final_score:.3f}")
         return final_score
 
-    def _apply_basic_heuristics(self, markup_scores: List[Tuple[float, Dict[str, Any]]], user_intent: str) -> List[Tuple[float, Dict[str, Any], List[str]]]:
+    def _apply_basic_heuristics(self, markup_scores: List[Tuple[float, Dict[str, Any]]], user_intent: str, target: str = None) -> List[Tuple[float, Dict[str, Any], List[str]]]:
         """Apply universal heuristics for all websites and UI patterns"""
         print(f"\\n🔍 Applying Universal Heuristics")
         print(f"   User Intent: '{user_intent}'")
@@ -440,7 +440,25 @@ class HybridPipeline:
                 bonus -= 0.1
                 reasons.append("-nav_element=-0.100")
             
-            # 7. Accessibility bonus (universal)
+            # 7. Exact text match bonus (highest priority)
+            if target and text:
+                # Extract quoted text from target (e.g., "Phones" from 'the "Phones" button')
+                import re
+                quoted_match = re.search(r'"([^"]+)"', target)
+                if quoted_match:
+                    target_text = quoted_match.group(1).lower().strip()
+                else:
+                    target_text = target.lower().strip().replace('"', '').replace("'", '')
+                
+                text_clean = text.lower().strip()
+                if target_text == text_clean:
+                    bonus += 0.5  # High bonus for exact text match
+                    reasons.append("+exact_text_match=0.500")
+                elif target_text in text_clean:
+                    bonus += 0.3  # Medium bonus for partial text match
+                    reasons.append("+partial_text_match=0.300")
+            
+            # 8. Accessibility bonus (universal)
             if attrs.get('aria-label') or attrs.get('aria-labelledby'):
                 bonus += 0.1
                 reasons.append("+accessible=0.100")
@@ -772,10 +790,10 @@ class HybridPipeline:
                 ranked = [(score, meta, [f"markup_cosine={score:.3f}", "trusted_markup"]) for score, meta in markup_scores]
             else:
                 print(f"   ⚠️  Close scores - applying basic heuristics")
-                ranked = self._apply_basic_heuristics(markup_scores, user_intent)
+                ranked = self._apply_basic_heuristics(markup_scores, user_intent, target)
         else:
             print(f"   ⚠️  Only {len(markup_scores)} candidates - applying basic heuristics")
-            ranked = self._apply_basic_heuristics(markup_scores, user_intent)
+            ranked = self._apply_basic_heuristics(markup_scores, user_intent, target)
 
         ranked.sort(key=lambda t: t[0], reverse=True)
         ranked = ranked[:top_k]
