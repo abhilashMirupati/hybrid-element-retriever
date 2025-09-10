@@ -64,6 +64,15 @@ export HER_CACHE_DIR="$(pwd)/.her_cache"       # Cache directory
 #### Available Environment Variables
 See `config/.env.example` for a complete list of all available environment variables with descriptions and default values.
 
+## 📚 Documentation
+
+Complete documentation is available in the `docs/` directory:
+
+- **[Setup Guide](docs/setup/SETUP.md)** - Complete setup instructions
+- **[Environment Configuration](docs/guides/environment-configuration.md)** - Environment variables guide
+- **[Dependency Analysis](docs/development/dependency-analysis.md)** - Required and optional dependencies
+- **[Migration Guide](docs/development/migration-guide.md)** - Guide for users migrating from old structure
+
 ## 2) Key Concepts
 
 ### 2-Stage Hybrid Search
