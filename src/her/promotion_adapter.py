@@ -13,7 +13,7 @@ Backed by: src/her/vectordb/sqlite_cache.py (promotions table)
 
 from typing import Iterable, Optional
 
-from her.vectordb.sqlite_cache import SQLiteKV
+from .vectordb.sqlite_cache import SQLiteKV
 
 
 def compute_label_key(label_tokens: Iterable[str]) -> str:
