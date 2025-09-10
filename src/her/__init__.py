@@ -1,5 +1,8 @@
 # HER package init
 
+# Load environment variables from .env file if available
+from . import env_loader  # noqa: F401
+
 def __getattr__(name):
     if name == "gateway_server":
         import importlib

@@ -41,10 +41,28 @@ HER_E2E=1 python -m pytest tests/test_verizon_flow.py -v -s --timeout=300
 
 ### Environment Variables
 
+The HER framework uses environment variables for configuration. You can set them in two ways:
+
+#### Option 1: Using .env file (Recommended)
+```bash
+# Copy the example file and modify as needed
+cp .env.example .env
+
+# Load environment variables (Python)
+python load_env.py
+
+# Or source them in your shell
+eval "$(python load_env.py --export)"
+```
+
+#### Option 2: Manual export (Legacy)
 ```bash
 export HER_MODELS_DIR="$(pwd)/src/her/models"  # Path to models
 export HER_CACHE_DIR="$(pwd)/.her_cache"       # Cache directory
 ```
+
+#### Available Environment Variables
+See `.env.example` for a complete list of all available environment variables with descriptions and default values.
 
 ## 2) Key Concepts
 
