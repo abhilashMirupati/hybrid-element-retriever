@@ -30,6 +30,14 @@ class HERConfig:
         
         # Debug settings
         self.debug_canonical_building = os.getenv("HER_DEBUG_CANONICAL", "0") == "1"
+        
+        # Hierarchy settings
+        self.use_hierarchy = os.getenv("HER_USE_HIERARCHY", "false").lower() == "true"
+        self.use_two_stage = os.getenv("HER_USE_TWO_STAGE", "false").lower() == "true"
+        self.debug_hierarchy = os.getenv("HER_DEBUG_HIERARCHY", "false").lower() == "true"
+        
+        # Heuristics settings
+        self.disable_heuristics = os.getenv("HER_DISABLE_HEURISTICS", "false").lower() == "true"
     
     def _get_canonical_mode(self) -> CanonicalMode:
         """Get canonical descriptor building mode from environment."""
@@ -47,7 +55,8 @@ class HERConfig:
     
     def get_canonical_mode(self) -> CanonicalMode:
         """Get current canonical descriptor building mode."""
-        return self.canonical_mode
+        # Read environment variable dynamically each time
+        return self._get_canonical_mode()
     
     def set_canonical_mode(self, mode: CanonicalMode) -> None:
         """Set canonical descriptor building mode."""
@@ -56,11 +65,13 @@ class HERConfig:
     
     def should_use_dom(self) -> bool:
         """Check if DOM attributes should be included."""
-        return self.canonical_mode in [CanonicalMode.DOM_ONLY, CanonicalMode.BOTH]
+        mode = self.get_canonical_mode()
+        return mode in [CanonicalMode.DOM_ONLY, CanonicalMode.BOTH]
     
     def should_use_accessibility(self) -> bool:
         """Check if accessibility tree should be included."""
-        return self.canonical_mode in [CanonicalMode.ACCESSIBILITY_ONLY, CanonicalMode.BOTH]
+        mode = self.get_canonical_mode()
+        return mode in [CanonicalMode.ACCESSIBILITY_ONLY, CanonicalMode.BOTH]
     
     def is_performance_optimized(self) -> bool:
         """Check if performance optimization is enabled."""
@@ -73,6 +84,22 @@ class HERConfig:
     def should_select_all_elements(self) -> bool:
         """Check if all elements should be selected for MiniLM."""
         return self.select_all_elements_for_minilm
+    
+    def should_use_hierarchy(self) -> bool:
+        """Check if hierarchical context should be used."""
+        return self.use_hierarchy
+    
+    def should_use_two_stage(self) -> bool:
+        """Check if two-stage MarkupLM processing should be used."""
+        return self.use_two_stage
+    
+    def is_hierarchy_debug_enabled(self) -> bool:
+        """Check if hierarchy debugging is enabled."""
+        return self.debug_hierarchy
+    
+    def should_disable_heuristics(self) -> bool:
+        """Check if heuristics should be disabled (MarkupLM-only mode)."""
+        return self.disable_heuristics
 
 
 # Global configuration instance
@@ -99,3 +126,7 @@ def print_config() -> None:
     print(f"   Accessibility Mandatory: {config.is_accessibility_mandatory()}")
     print(f"   Select All Elements: {config.should_select_all_elements()}")
     print(f"   Debug Canonical: {config.debug_canonical_building}")
+    print(f"   Use Hierarchy: {config.should_use_hierarchy()}")
+    print(f"   Use Two-Stage: {config.should_use_two_stage()}")
+    print(f"   Debug Hierarchy: {config.is_hierarchy_debug_enabled()}")
+    print(f"   Heuristics: {'❌ Disabled (MarkupLM-only)' if config.disable_heuristics else '✅ Enabled'}")

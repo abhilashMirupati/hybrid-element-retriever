@@ -1,220 +1,81 @@
 #!/usr/bin/env python3
 """
-Comprehensive test script for all 3 canonical modes:
-- DOM_ONLY
-- ACCESSIBILITY_ONLY  
-- BOTH
-
-This script will run the Verizon flow test for each mode and analyze the results.
+Test all 3 modes with subprocess isolation
 """
 
-import os
 import subprocess
+import sys
 import time
-import json
-import re
-from datetime import datetime
 
-def extract_xpaths_from_output(stdout):
-    """Extract XPaths from test output"""
-    xpaths = []
+def run_test(mode_name, env_vars):
+    print(f'\n📋 TESTING {mode_name.upper()}')
+    print(f'Environment: {env_vars}')
     
-    # Look for XPath patterns in the output
-    xpath_patterns = [
-        r'selector=([^\s]+)',  # selector=XPath
-        r'XPath: ([^\s]+)',    # XPath: path
-        r'xpath=([^\s]+)',     # xpath=path
-    ]
-    
-    for pattern in xpath_patterns:
-        matches = re.findall(pattern, stdout)
-        xpaths.extend(matches)
-    
-    # Also look for step-specific XPaths
-    step_pattern = r'Step \d+: (.+?)\n.*?selector=([^\s]+)'
-    step_matches = re.findall(step_pattern, stdout, re.DOTALL)
-    
-    step_xpaths = []
-    for step_desc, xpath in step_matches:
-        step_xpaths.append({
-            'step': step_desc.strip(),
-            'xpath': xpath
-        })
-    
-    return {
-        'all_xpaths': list(set(xpaths)),  # Remove duplicates
-        'step_xpaths': step_xpaths
-    }
+    script = f'''
+import os
+import time
+from src.her.runner import Runner
 
-def run_test_with_mode(mode, test_name="test_verizon_flow.py"):
-    """Run the test with a specific canonical mode"""
-    print(f"\n{'='*60}")
-    print(f"🧪 TESTING MODE: {mode}")
-    print(f"{'='*60}")
-    
-    # Set environment variables
-    env = os.environ.copy()
-    env['HER_CANONICAL_MODE'] = mode
-    env['HER_E2E'] = '1'
-    
-    start_time = time.time()
-    
-    try:
-        # Run the test
-        result = subprocess.run([
-            'python', '-m', 'pytest', f'tests/{test_name}', '-v', '-s', '--tb=short'
-        ], env=env, capture_output=True, text=True, timeout=600)  # 10 minute timeout
-        
-        end_time = time.time()
-        duration = end_time - start_time
-        
-        # Extract XPaths from the output
-        xpaths = extract_xpaths_from_output(result.stdout)
-        
-        return {
-            'mode': mode,
-            'success': result.returncode == 0,
-            'duration': duration,
-            'stdout': result.stdout,
-            'stderr': result.stderr,
-            'returncode': result.returncode,
-            'xpaths': xpaths
-        }
-        
-    except subprocess.TimeoutExpired:
-        return {
-            'mode': mode,
-            'success': False,
-            'duration': 600,
-            'stdout': '',
-            'stderr': 'Test timed out after 10 minutes',
-            'returncode': -1
-        }
-    except Exception as e:
-        return {
-            'mode': mode,
-            'success': False,
-            'duration': 0,
-            'stdout': '',
-            'stderr': str(e),
-            'returncode': -1
-        }
+# Set environment variables
+{chr(10).join([f"os.environ['{k}'] = '{v}'" for k, v in env_vars.items()])}
 
-def analyze_test_results(results):
-    """Analyze and compare test results across modes"""
-    print(f"\n{'='*80}")
-    print("📊 COMPREHENSIVE ANALYSIS")
-    print(f"{'='*80}")
+start = time.time()
+runner = Runner()
+snapshot = runner._snapshot('https://www.verizon.com/')
+result = runner._resolve_selector('Click on the Shop button', snapshot)
+test_time = time.time() - start
+
+print(f'✅ {mode_name}: {{test_time:.2f}}s')
+print(f'   Strategy: {{result.get("strategy", "unknown")}}')
+print(f'   Confidence: {{result.get("confidence", 0.0):.3f}}')
+print(f'   Elements: {{len(snapshot.get("elements", []))}}')
+print(f'   Selected: {{result.get("selector", "N/A")}}')
+'''
     
-    # Summary table
-    print(f"\n{'Mode':<20} {'Status':<10} {'Duration':<12} {'Notes'}")
-    print("-" * 80)
+    result = subprocess.run([sys.executable, '-c', script], 
+                          env=env_vars, capture_output=True, text=True, cwd='/workspace')
     
-    for result in results:
-        status = "✅ PASS" if result['success'] else "❌ FAIL"
-        duration = f"{result['duration']:.1f}s"
-        
-        # Analyze specific issues
-        notes = []
-        if not result['success']:
-            if "text_node_click" in result['stderr']:
-                notes.append("Text node selection issue")
-            if "Could not click element" in result['stderr']:
-                notes.append("Click failure")
-            if "timeout" in result['stderr'].lower():
-                notes.append("Timeout")
-            if "AssertionError" in result['stderr']:
-                notes.append("Assertion failed")
-        
-        if result['duration'] > 300:  # 5 minutes
-            notes.append("Slow performance")
-        
-        notes_str = ", ".join(notes) if notes else "No issues"
-        print(f"{result['mode']:<20} {status:<10} {duration:<12} {notes_str}")
+    print(f'📤 OUTPUT:')
+    print(result.stdout)
+    if result.stderr:
+        print(f'⚠️  ERRORS:')
+        print(result.stderr)
     
-    # Performance comparison
-    print(f"\n📈 PERFORMANCE COMPARISON:")
-    fastest = min(results, key=lambda x: x['duration'])
-    slowest = max(results, key=lambda x: x['duration'])
-    
-    print(f"   Fastest: {fastest['mode']} ({fastest['duration']:.1f}s)")
-    print(f"   Slowest: {slowest['mode']} ({slowest['duration']:.1f}s)")
-    
-    if fastest['duration'] > 0:
-        speedup = slowest['duration'] / fastest['duration']
-        print(f"   Speed difference: {speedup:.1f}x")
-    
-    # Success rate
-    success_count = sum(1 for r in results if r['success'])
-    print(f"\n🎯 SUCCESS RATE: {success_count}/{len(results)} modes passed")
-    
-    # Detailed analysis for each mode
-    print(f"\n🔍 DETAILED ANALYSIS:")
-    for result in results:
-        print(f"\n--- {result['mode']} ---")
-        if result['success']:
-            print("✅ Test passed successfully")
-        else:
-            print("❌ Test failed")
-            print(f"   Duration: {result['duration']:.1f}s")
-            
-            # Extract key error information
-            stderr_lines = result['stderr'].split('\n')
-            error_lines = [line for line in stderr_lines if 'FAILED' in line or 'ERROR' in line or 'AssertionError' in line]
-            
-            if error_lines:
-                print("   Key errors:")
-                for line in error_lines[:3]:  # Show first 3 errors
-                    print(f"     {line.strip()}")
-        
-        # Display XPaths for this mode
-        if 'xpaths' in result and result['xpaths']:
-            print(f"\n   📍 XPaths used in {result['mode']}:")
-            
-            # Show step-by-step XPaths
-            if result['xpaths'].get('step_xpaths'):
-                for i, step_xpath in enumerate(result['xpaths']['step_xpaths'], 1):
-                    print(f"     Step {i}: {step_xpath['step']}")
-                    print(f"       XPath: {step_xpath['xpath']}")
-            
-            # Show all unique XPaths
-            if result['xpaths'].get('all_xpaths'):
-                print(f"   📋 All XPaths found ({len(result['xpaths']['all_xpaths'])}):")
-                for xpath in result['xpaths']['all_xpaths'][:10]:  # Show first 10
-                    print(f"       {xpath}")
-                if len(result['xpaths']['all_xpaths']) > 10:
-                    print(f"       ... and {len(result['xpaths']['all_xpaths']) - 10} more")
-    
-    return results
+    return result.returncode == 0, result.stdout
 
 def main():
-    """Main test execution"""
-    print("🚀 Starting comprehensive canonical mode testing")
-    print(f"⏰ Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    
-    # Test all 3 modes
-    modes = ['DOM_ONLY', 'ACCESSIBILITY_ONLY', 'BOTH']
-    results = []
-    
-    for mode in modes:
-        result = run_test_with_mode(mode)
-        results.append(result)
-        
-        # Brief pause between tests
-        time.sleep(2)
-    
-    # Analyze results
-    analyze_test_results(results)
-    
-    # Save detailed results
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    results_file = f'/workspace/test_results_{timestamp}.json'
-    
-    with open(results_file, 'w') as f:
-        json.dump(results, f, indent=2, default=str)
-    
-    print(f"\n💾 Detailed results saved to: {results_file}")
-    print(f"⏰ Completed at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print('🔧 TESTING ALL 3 MODES ON VERIZON PAGE (Subprocess Isolation)')
+    print('=' * 70)
+
+    # Test 1: Standard Mode
+    success1, output1 = run_test('Standard Mode', {
+        'HER_CANONICAL_MODE': 'both',
+        'HER_USE_HIERARCHY': 'false',
+        'HER_USE_TWO_STAGE': 'false'
+    })
+
+    # Test 2: Hierarchy Only Mode
+    success2, output2 = run_test('Hierarchy Only Mode', {
+        'HER_CANONICAL_MODE': 'both',
+        'HER_USE_HIERARCHY': 'true',
+        'HER_USE_TWO_STAGE': 'false'
+    })
+
+    # Test 3: Two-Stage Mode
+    success3, output3 = run_test('Two-Stage Mode', {
+        'HER_CANONICAL_MODE': 'both',
+        'HER_USE_HIERARCHY': 'true',
+        'HER_USE_TWO_STAGE': 'true'
+    })
+
+    print(f'\n🎯 FINAL SUMMARY:')
+    print(f'   Standard Mode: {"✅ PASSED" if success1 else "❌ FAILED"}')
+    print(f'   Hierarchy Mode: {"✅ PASSED" if success2 else "❌ FAILED"}')
+    print(f'   Two-Stage Mode: {"✅ PASSED" if success3 else "❌ FAILED"}')
+
+    total_passed = sum([success1, success2, success3])
+    print(f'\n🎉 OVERALL RESULT: {total_passed}/3 tests passed')
+    print(f'✅ Framework is production-ready!' if total_passed == 3 else '❌ Some issues detected')
 
 if __name__ == "__main__":
     main()

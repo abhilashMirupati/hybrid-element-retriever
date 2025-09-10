@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-from .parser.intent import IntentParser
+from .parser.enhanced_intent import EnhancedIntentParser
 from .promotion_adapter import compute_label_key
 from .hashing import page_signature, dom_hash, frame_hash as compute_frame_hash
 from .pipeline import HybridPipeline
@@ -38,10 +38,27 @@ class StepResult:
 
 
 class Runner:
+    _shared_pipeline = None
+    _pipeline_lock = None
+    
     def __init__(self, headless: bool = True) -> None:
         self.headless = headless
-        self.intent = IntentParser()
-        self.pipeline = HybridPipeline()
+        self.intent = EnhancedIntentParser()
+        
+        # Use shared pipeline to avoid reloading models
+        if Runner._shared_pipeline is None:
+            import threading
+            if Runner._pipeline_lock is None:
+                Runner._pipeline_lock = threading.Lock()
+            
+            with Runner._pipeline_lock:
+                if Runner._shared_pipeline is None:
+                    print("📦 Loading models (one-time cost for all runners)...")
+                    start_time = time.time()
+                    Runner._shared_pipeline = HybridPipeline()
+                    print(f"   ✅ Models loaded in {time.time() - start_time:.3f}s")
+        
+        self.pipeline = Runner._shared_pipeline
         self._page = None
         self._browser = None
         self._playwright = None
@@ -139,6 +156,15 @@ class Runner:
         self._page = None
         self._browser = None
         self._playwright = None
+    
+    @classmethod
+    def cleanup_models(cls) -> None:
+        """Cleanup shared models (call at end of test suite)"""
+        if cls._shared_pipeline is not None:
+            print("🧹 Cleaning up shared models...")
+            del cls._shared_pipeline
+            cls._shared_pipeline = None
+            print("✅ Models cleaned up")
 
     def _inline_snapshot(self) -> Dict[str, Any]:
         # First try to get DOM + accessibility tree via CDP
@@ -154,94 +180,101 @@ class Runner:
             # Capture complete snapshot with accessibility tree
             snapshot = capture_complete_snapshot(self._page, include_frames=True)
             
-            if snapshot.dom_nodes and snapshot.ax_nodes:
-                # Merge DOM and accessibility tree based on configuration
-                merged_nodes = merge_dom_ax(snapshot.dom_nodes, snapshot.ax_nodes)
-                print(f"✅ CDP Integration: Merged {len(merged_nodes)} nodes using {config.get_canonical_mode().value} mode")
+            # Merge DOM and accessibility tree based on configuration
+            merged_nodes = merge_dom_ax(snapshot.dom_nodes, snapshot.ax_nodes)
+            print(f"✅ CDP Integration: Merged {len(merged_nodes)} nodes using {config.get_canonical_mode().value} mode")
+            
+            # Convert to the expected format
+            elements = []
+            for node in merged_nodes:
+                # Extract attributes
+                attrs = node.get('attributes', {})
+                if isinstance(attrs, list):
+                    attrs_dict = {}
+                    for i in range(0, len(attrs), 2):
+                        if i + 1 < len(attrs):
+                            attrs_dict[str(attrs[i])] = attrs[i + 1]
+                    attrs = attrs_dict
                 
-                # Convert to the expected format
-                elements = []
-                for node in merged_nodes:
-                    # Extract attributes
-                    attrs = node.get('attributes', {})
-                    if isinstance(attrs, list):
-                        attrs_dict = {}
-                        for i in range(0, len(attrs), 2):
-                            if i + 1 < len(attrs):
-                                attrs_dict[str(attrs[i])] = attrs[i + 1]
-                        attrs = attrs_dict
-                    
-                    # Get text content - prioritize the text extracted by merge function
-                    text = node.get('text', '').strip()
-                    if not text:
-                        text = node.get('nodeValue', '').strip()
-                    
-                    # For interactive elements, try to get text from accessibility tree
-                    if not text and node.get('accessibility'):
-                        text = node['accessibility'].get('name', '').strip()
-                        if not text:
-                            text = node['accessibility'].get('value', '').strip()
-                    
-                    # Get tag name
-                    tag = (node.get('tagName') or node.get('nodeName') or '').upper()
-                    
-                    # Get role from accessibility tree
-                    role = attrs.get('role', '')
-                    if not role and 'accessibility' in node:
-                        role = node['accessibility'].get('role', '')
-                    
-                    # Debug: Print element details
-                    print(f"🔍 Processing element: tag='{tag}', text='{text[:50]}{'...' if len(text) > 50 else ''}', attrs={len(attrs)}")
-                    
-                    # Generate XPath if not present
-                    xpath = node.get('xpath', '')
-                    if not xpath:
-                        # Generate basic XPath from tag and attributes
-                        if tag and tag != '#text':
-                            if attrs.get('id'):
-                                xpath = f"//*[@id='{attrs['id']}']"
-                            elif attrs.get('data-testid'):
-                                xpath = f"//*[@data-testid='{attrs['data-testid']}']"
-                            elif attrs.get('aria-label'):
-                                xpath = f"//*[@aria-label='{attrs['aria-label']}']"
-                            elif text:
-                                xpath = f"//{tag.lower()}[normalize-space()='{text}']"
-                            else:
-                                xpath = f"//{tag.lower()}"
-                    
-                    # Determine if element is interactive
-                    interactive = self._is_element_interactive(tag, attrs, role)
-                    
-                    # NO FILTERING - MiniLM should see ALL elements
-                    # Let MiniLM and MarkupLM decide what's relevant based on text similarity
-                    
-                    # Create element descriptor
-                    element = {
-                        'text': text,
-                        'tag': tag,
-                        'role': role or None,
-                        'attrs': attrs,
-                        'xpath': xpath,
-                        'bbox': node.get('bbox', {'x': 0, 'y': 0, 'width': 0, 'height': 0, 'w': 0, 'h': 0}),
-                        'visible': node.get('visible', True),
-                        'below_fold': node.get('below_fold', False),
-                        'interactive': interactive,
-                        'backendNodeId': node.get('backendNodeId'),
-                        'accessibility': node.get('accessibility', {})
-                    }
-                    
-                    # Enhance with accessibility information
-                    element = enhance_element_descriptor(element)
-                    elements.append(element)
+                # Get text content using comprehensive extraction
+                from .descriptors.merge import extract_comprehensive_text
+                text = extract_comprehensive_text(node)
                 
-                # Return in expected format
-                frame_url = getattr(self._page, "url", "")
-                fh = compute_frame_hash(frame_url, elements)
-                for it in elements:
-                    (it.setdefault("meta", {}))["frame_hash"] = fh
-                    it["frame_url"] = frame_url
-                frames = [{"frame_url": frame_url, "elements": elements, "frame_hash": fh}]
-                return {"elements": elements, "dom_hash": dom_hash(frames), "url": frame_url}
+                # Get tag name
+                tag = (node.get('tagName') or node.get('nodeName') or node.get('tag') or '').upper()
+                
+                # Get role from accessibility tree
+                role = attrs.get('role', '')
+                if not role and 'accessibility' in node:
+                    role = node['accessibility'].get('role', '')
+                if not role:
+                    role = node.get('type', '')
+                
+                # Debug: Print element details
+                print(f"🔍 Processing element: tag='{tag}', text='{text[:50]}{'...' if len(text) > 50 else ''}', attrs={len(attrs)}")
+                
+                # Generate XPath if not present
+                xpath = node.get('xpath', '')
+                if not xpath:
+                    # Generate basic XPath from tag and attributes
+                    if tag and tag != '#text':
+                        if attrs.get('id'):
+                            xpath = f"//*[@id='{attrs['id']}']"
+                        elif attrs.get('data-testid'):
+                            xpath = f"//*[@data-testid='{attrs['data-testid']}']"
+                        elif attrs.get('aria-label'):
+                            xpath = f"//*[@aria-label='{attrs['aria-label']}']"
+                        elif text:
+                            xpath = f"//{tag.lower()}[normalize-space()='{text}']"
+                        else:
+                            xpath = f"//{tag.lower()}"
+                
+                # Determine if element is interactive
+                interactive = self._is_element_interactive(tag, attrs, role)
+                
+                # NO FILTERING - MiniLM should see ALL elements
+                # Let MiniLM and MarkupLM decide what's relevant based on text similarity
+                
+                # Create element descriptor
+                element = {
+                    'text': text,
+                    'tag': tag,
+                    'role': role or None,
+                    'attrs': attrs,
+                    'xpath': xpath,
+                    'bbox': node.get('bbox', {'x': 0, 'y': 0, 'width': 0, 'height': 0, 'w': 0, 'h': 0}),
+                    'visible': node.get('visible', True),
+                    'below_fold': node.get('below_fold', False),
+                    'interactive': interactive,
+                    'backendNodeId': node.get('backendNodeId'),
+                    'accessibility': node.get('accessibility', {})
+                }
+                
+                # Enhance with accessibility information
+                element = enhance_element_descriptor(element)
+                elements.append(element)
+            
+            # Add hierarchical context if enabled
+            from .config import get_config
+            config = get_config()
+            if config.should_use_hierarchy():
+                try:
+                    from .descriptors.hierarchy import HierarchyContextBuilder
+                    hierarchy_builder = HierarchyContextBuilder()
+                    elements = hierarchy_builder.add_context_to_elements(elements)
+                    print(f"✅ Added hierarchical context to {len(elements)} elements")
+                except Exception as e:
+                    print(f"⚠️  Failed to add hierarchical context: {e}")
+                    # Continue without hierarchy context
+            
+            # Return in expected format
+            frame_url = getattr(self._page, "url", "")
+            fh = compute_frame_hash(frame_url, elements)
+            for it in elements:
+                (it.setdefault("meta", {}))["frame_hash"] = fh
+                it["frame_url"] = frame_url
+            frames = [{"frame_url": frame_url, "elements": elements, "frame_hash": fh}]
+            return {"elements": elements, "dom_hash": dom_hash(frames), "url": frame_url}
                 
         except Exception as e:
             print(f"⚠️  CDP accessibility integration failed: {e}")
@@ -250,7 +283,7 @@ class Runner:
             traceback.print_exc()
             
             # Force fallback to JavaScript approach
-            pass
+            # This will be handled by the fallback code below
         
         # Fallback to original JavaScript-based snapshot
         js = r"""
@@ -648,13 +681,13 @@ class Runner:
         
         # DETAILED LOGGING: Parameters being passed
         print(f"\n🔍 PARAMETERS PASSED TO PIPELINE:")
-        print(f"   Query (full step): '{phrase}'")
+        print(f"   Query (target only for MiniLM): '{target_phrase}'")
         print(f"   User Intent (action): '{parsed.action}'")
         print(f"   Target (target phrase): '{parsed.target_phrase}'")
         print(f"   Top K: 10")
         
         result = self.pipeline.query(
-            phrase,  # Query: full step for MiniLM
+            target_phrase,  # Query: target phrase only for MiniLM semantic matching
             elements,
             top_k=10,
             page_sig=ps,
@@ -676,7 +709,7 @@ class Runner:
             print(f"[HER DEBUG] candidates: {' | '.join(top3)}")
         best = candidates[:1]
         if not best:
-            return {"selector": "", "confidence": 0.0, "reason": "no-results", "candidates": candidates, "promo": {"page_sig": ps, "frame_hash": frame_hash, "label_key": label_key}}
+            return {"selector": "", "confidence": 0.0, "reason": "no-results", "candidates": candidates, "promo": {"page_sig": ps, "frame_hash": frame_hash, "label_key": label_key}, "strategy": result.get("strategy", "unknown")}
         return {
             "selector": best[0].get("selector", ""),
             "confidence": float(result.get("confidence", 0.0)),
@@ -684,6 +717,7 @@ class Runner:
             "reasons": best[0].get("reasons", []),
             "candidates": candidates,
             "promo": {"page_sig": ps, "frame_hash": frame_hash, "label_key": label_key},
+            "strategy": result.get("strategy", "unknown"),
         }
 
     def _dismiss_overlays(self) -> None:
@@ -1224,7 +1258,9 @@ class Runner:
                     candidates = resolved.get("candidates", [])
                     if selector:
                         try:
-                            self._do_action(intent.action, selector, intent.args, resolved.get("promo", {}), step)
+                            # Use extracted value if available, otherwise use args
+                            value = getattr(intent, 'value', None) or intent.args
+                            self._do_action(intent.action, selector, value, resolved.get("promo", {}), step)
                             last_err = None
                             # Wait after successful action for page to update
                             if intent.action in ["click", "select"]:
