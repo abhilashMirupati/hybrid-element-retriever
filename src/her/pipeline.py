@@ -508,9 +508,19 @@ class HybridPipeline:
         """Embed query using MarkupLM for reranking (768-d)."""
         if not isinstance(text, str) or not text.strip():
             raise ValueError("query text must be a non-empty string")
-        # Create a dummy element for MarkupLM embedding
-        dummy_element = {"text": text, "tag": "query", "attributes": {}}
-        q = self.element_embedder.encode(dummy_element)
+        # Create proper HTML structure for MarkupLM embedding
+        # Extract action and target from query for better HTML structure
+        if "click" in text.lower():
+            html_text = f"<button type='button'>{text}</button>"
+        elif "enter" in text.lower() or "type" in text.lower():
+            html_text = f"<input type='text' placeholder='{text}'>"
+        elif "select" in text.lower():
+            html_text = f"<select>{text}</select>"
+        else:
+            html_text = f"<div>{text}</div>"
+        
+        html_element = {"text": html_text, "tag": "html", "attributes": {}}
+        q = self.element_embedder.encode(html_element)
         assert q.shape[0] == self._E_DIM, f"MarkupLM query should be {self._E_DIM}d, got {q.shape[0]}d"
         return _l2norm(q)
 
@@ -665,19 +675,46 @@ class HybridPipeline:
         print(f"✅ Query embedded with MarkupLM, vector shape: {q_markup.shape}")
         print(f"🔍 MarkupLM Query Vector (first 10 dims): {q_markup[:10]}")
         
-        # Create enhanced elements with hierarchy context for MarkupLM
+        # Create enhanced elements with proper HTML structure for MarkupLM
         shortlist_elements = []
         for (_, meta) in shortlist[:10]:  # Limit to top 10
-            # Create enhanced element with hierarchy context for MarkupLM
+            # Create enhanced element with proper HTML structure for MarkupLM
             enhanced_meta = meta.copy()
-            # Get current config dynamically
+            
+            # Convert element to proper HTML structure
+            tag = meta.get('tag', '').lower()
+            text = meta.get('text', '')
+            attrs = meta.get('attributes', {})
+            
+            # Build attribute string
+            attr_str = ""
+            for key, value in attrs.items():
+                attr_str += f' {key}="{value}"'
+            
+            # Create HTML structure based on element type
+            if tag in ['a', 'button', 'input', 'select', 'option']:
+                if tag == 'a':
+                    html_text = f'<a{attr_str}>{text}</a>'
+                elif tag == 'button':
+                    html_text = f'<button{attr_str}>{text}</button>'
+                elif tag == 'input':
+                    html_text = f'<input{attr_str} value="{text}">'
+                else:
+                    html_text = f'<{tag}{attr_str}>{text}</{tag}>'
+            else:
+                html_text = f'<{tag}{attr_str}>{text}</{tag}>'
+            
+            # Add hierarchy context if enabled
             current_config = get_config()
             if current_config.should_use_hierarchy() and "context" in meta:
                 context = meta["context"]
                 hierarchy_path = context.get("hierarchy_path", "")
                 if hierarchy_path and hierarchy_path != "PENDING" and hierarchy_path != "ERROR":
-                    # Prepend hierarchy context to text for MarkupLM
-                    enhanced_meta["text"] = f"{hierarchy_path} | {meta.get('text', '')}" if meta.get('text') else hierarchy_path
+                    # Prepend hierarchy context to HTML for MarkupLM
+                    html_text = f"{hierarchy_path} | {html_text}"
+            
+            enhanced_meta["text"] = html_text
+            enhanced_meta["tag"] = "html"  # Mark as HTML for MarkupLM
             shortlist_elements.append(enhanced_meta)
         
         print(f"🔍 MarkupLM Processing {len(shortlist_elements)} shortlisted elements")
