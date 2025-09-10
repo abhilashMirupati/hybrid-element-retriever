@@ -809,11 +809,23 @@ class HybridPipeline:
                 print(f"   ✅ Trusting MarkupLM - clear winner (gap > 0.1)")
                 ranked = [(score, meta, [f"markup_cosine={score:.3f}", "trusted_markup"]) for score, meta in markup_scores]
             else:
-                print(f"   ⚠️  Close scores - applying basic heuristics")
-                ranked = self._apply_basic_heuristics(markup_scores, user_intent, target)
+                # Check if heuristics are disabled
+                current_config = get_config()
+                if current_config.should_disable_heuristics():
+                    print(f"   ⚠️  Close scores - heuristics disabled, trusting MarkupLM")
+                    ranked = [(score, meta, [f"markup_cosine={score:.3f}", "trusted_markup"]) for score, meta in markup_scores]
+                else:
+                    print(f"   ⚠️  Close scores - applying basic heuristics")
+                    ranked = self._apply_basic_heuristics(markup_scores, user_intent, target)
         else:
-            print(f"   ⚠️  Only {len(markup_scores)} candidates - applying basic heuristics")
-            ranked = self._apply_basic_heuristics(markup_scores, user_intent, target)
+            # Check if heuristics are disabled
+            current_config = get_config()
+            if current_config.should_disable_heuristics():
+                print(f"   ⚠️  Only {len(markup_scores)} candidates - heuristics disabled, trusting MarkupLM")
+                ranked = [(score, meta, [f"markup_cosine={score:.3f}", "trusted_markup"]) for score, meta in markup_scores]
+            else:
+                print(f"   ⚠️  Only {len(markup_scores)} candidates - applying basic heuristics")
+                ranked = self._apply_basic_heuristics(markup_scores, user_intent, target)
 
         ranked.sort(key=lambda t: t[0], reverse=True)
         ranked = ranked[:top_k]

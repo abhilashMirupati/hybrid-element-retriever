@@ -35,6 +35,9 @@ class HERConfig:
         self.use_hierarchy = os.getenv("HER_USE_HIERARCHY", "false").lower() == "true"
         self.use_two_stage = os.getenv("HER_USE_TWO_STAGE", "false").lower() == "true"
         self.debug_hierarchy = os.getenv("HER_DEBUG_HIERARCHY", "false").lower() == "true"
+        
+        # Heuristics settings
+        self.disable_heuristics = os.getenv("HER_DISABLE_HEURISTICS", "false").lower() == "true"
     
     def _get_canonical_mode(self) -> CanonicalMode:
         """Get canonical descriptor building mode from environment."""
@@ -93,6 +96,10 @@ class HERConfig:
     def is_hierarchy_debug_enabled(self) -> bool:
         """Check if hierarchy debugging is enabled."""
         return self.debug_hierarchy
+    
+    def should_disable_heuristics(self) -> bool:
+        """Check if heuristics should be disabled (MarkupLM-only mode)."""
+        return self.disable_heuristics
 
 
 # Global configuration instance
@@ -122,3 +129,4 @@ def print_config() -> None:
     print(f"   Use Hierarchy: {config.should_use_hierarchy()}")
     print(f"   Use Two-Stage: {config.should_use_two_stage()}")
     print(f"   Debug Hierarchy: {config.is_hierarchy_debug_enabled()}")
+    print(f"   Heuristics: {'❌ Disabled (MarkupLM-only)' if config.disable_heuristics else '✅ Enabled'}")
