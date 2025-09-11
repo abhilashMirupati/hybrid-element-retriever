@@ -4,7 +4,8 @@ import hashlib
 import inspect
 import json
 import logging
-import pickle
+import json
+import base64
 import sqlite3
 import time
 from collections import OrderedDict
@@ -13,9 +14,33 @@ from pathlib import Path
 from threading import Lock
 from typing import Any, Dict, List, Optional
 
-from ..core.config import DISK_CACHE_SIZE_MB, MEMORY_CACHE_SIZE, get_cache_dir
+from ..config.settings import get_config, MEMORY_CACHE_SIZE, DISK_CACHE_SIZE_MB, get_cache_dir
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_serialize(value):
+    """Safely serialize a value using JSON instead of pickle."""
+    try:
+        # Try JSON serialization first (safer)
+        return json.dumps(value, default=str).encode('utf-8')
+    except (TypeError, ValueError):
+        # Fallback to base64 encoding of string representation
+        return base64.b64encode(str(value).encode('utf-8'))
+
+
+def _safe_deserialize(data):
+    """Safely deserialize a value from JSON instead of pickle."""
+    try:
+        # Try JSON deserialization first
+        return json.loads(data.decode('utf-8'))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        try:
+            # Fallback to base64 decoding
+            return base64.b64decode(data).decode('utf-8')
+        except Exception:
+            # Last resort: return the raw data as string
+            return data.decode('utf-8', errors='replace')
 
 
 @dataclass
@@ -102,7 +127,7 @@ class LRUCache:
                 key=key,
                 value=value,
                 metadata=metadata or {},
-                size_bytes=len(pickle.dumps(value)),
+                size_bytes=len(_safe_serialize(value)),
             )
             self.cache[key] = entry
 
@@ -205,7 +230,7 @@ class SQLiteCache:
                     conn.commit()
 
                     try:
-                        return pickle.loads(value_blob)
+                        return _safe_deserialize(value_blob)
                     except Exception as e:
                         logger.error(f"Failed to deserialize cache value: {e}")
                         return None
@@ -236,7 +261,7 @@ class SQLiteCache:
                     # Update hits in one pass
                     for k, value_blob, hits in rows:
                         try:
-                            results[k] = pickle.loads(value_blob)
+                            results[k] = _safe_deserialize(value_blob)
                         except Exception:
                             continue
                         conn.execute("UPDATE cache SET hits = ? WHERE key = ?", (int(hits) + 1, k))
@@ -255,7 +280,7 @@ class SQLiteCache:
         """
         with self.lock:
             try:
-                value_blob = pickle.dumps(value)
+                value_blob = _safe_serialize(value)
                 size_bytes = len(value_blob)
 
                 with sqlite3.connect(str(self.db_path)) as conn:
@@ -303,7 +328,7 @@ class SQLiteCache:
                 now = time.time()
                 meta_json = json.dumps(metadata or {})
                 for k, v in items.items():
-                    blob = pickle.dumps(v)
+                    blob = _safe_serialize(v)
                     sz = len(blob)
                     rows.append((k, blob, now, sz, meta_json))
                     total_size += sz

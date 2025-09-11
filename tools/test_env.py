@@ -45,7 +45,7 @@ def test_env_loading():
     
     print("\nTesting HER configuration...")
     try:
-        from her.core.config import get_config
+        from src.her.core.config import get_config
         config = get_config()
         
         print(f"Canonical Mode: {config.get_canonical_mode().value}")

@@ -3,7 +3,7 @@
 from typing import Any, Dict, List, Optional, Tuple
 import logging
 
-from ..core.config import get_config, CanonicalMode
+from ..config.settings import get_config, CanonicalMode
 
 logger = logging.getLogger(__name__)
 

@@ -28,13 +28,13 @@ SRC_DIR = ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from her.core.strict import (
+from src.her.core.strict import (
     require_playwright, require_path_exists, require_sqlite_open
 )
-from her.core.pipeline import HybridPipeline
-from her.executor.main import Executor
-from her.promotion.promotion_adapter import compute_label_key
-from her.browser.snapshot import snapshot_sync
+from src.her.core.pipeline import HybridPipeline
+from src.her.executor.main import Executor
+from src.her.promotion.promotion_adapter import compute_label_key
+from src.her.browser.snapshot import snapshot_sync
 
 
 TEST_HTML = """

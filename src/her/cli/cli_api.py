@@ -40,7 +40,7 @@ from ..rank.fusion import FusionScorer
 # New integrated components (optional for environments without full deps)
 try:
     from ..core.pipeline import HybridPipeline as HERPipeline
-    from ..core.config import PipelineConfig
+    from ..config.settings import HERConfig as PipelineConfig
 except Exception:  # pragma: no cover - allow smoke tests without full pipeline deps
     HERPipeline = None  # type: ignore
     PipelineConfig = None  # type: ignore

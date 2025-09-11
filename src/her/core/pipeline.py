@@ -13,7 +13,8 @@ from ..embeddings.element_embedder import  ElementEmbedder  # 768-d deterministi
 from .hashing import element_dom_hash
 from ..vectordb.faiss_store import InMemoryVectorStore
 from ..vectordb.sqlite_cache import SQLiteKV
-from .config import get_config
+from ..config.settings import get_config
+from .config_service import get_config_service
 from ..descriptors.hierarchy import HierarchyContextBuilder
 
 # Optional heavy embedder (if present locally)
@@ -112,9 +113,40 @@ class HybridPipeline:
         return st
 
     def _reset_stores(self, frame_hash: str) -> None:
+        """Reset stores for a specific frame to free memory."""
         self._mini_stores.pop(frame_hash, None)
         self._markup_stores.pop(frame_hash, None)
         self._meta.pop(frame_hash, None)
+    
+    def cleanup_old_stores(self, max_stores: int = 10) -> None:
+        """Clean up old stores to prevent memory leaks.
+        
+        Args:
+            max_stores: Maximum number of stores to keep per type.
+        """
+        if len(self._mini_stores) > max_stores:
+            # Remove oldest stores (simple FIFO)
+            oldest_frames = list(self._mini_stores.keys())[:-max_stores]
+            for frame_hash in oldest_frames:
+                self._reset_stores(frame_hash)
+            log.info(f"Cleaned up {len(oldest_frames)} old stores to prevent memory leak")
+    
+    def get_memory_usage(self) -> Dict[str, int]:
+        """Get current memory usage statistics.
+        
+        Returns:
+            Dictionary with memory usage information.
+        """
+        total_vectors = sum(len(store.vectors) for store in self._mini_stores.values())
+        total_markup_vectors = sum(len(store.vectors) for store in self._markup_stores.values())
+        
+        return {
+            "mini_stores_count": len(self._mini_stores),
+            "markup_stores_count": len(self._markup_stores),
+            "total_mini_vectors": total_vectors,
+            "total_markup_vectors": total_markup_vectors,
+            "estimated_memory_mb": (total_vectors * 384 + total_markup_vectors * 768) * 4 / (1024 * 1024)  # 4 bytes per float32
+        }
 
     def _prepare_elements(self, elements: List[Dict[str, Any]]) -> Tuple[np.ndarray, List[Dict[str, Any]]]:
         """Prepare elements for hybrid search - creates both MiniLM and MarkupLM embeddings."""
@@ -122,8 +154,8 @@ class HybridPipeline:
             raise ValueError("elements must be a list of element descriptors")
 
         # Add hierarchical context if enabled (check dynamically)
-        current_config = get_config()
-        if current_config.should_use_hierarchy() and self.hierarchy_builder:
+        config_service = get_config_service()
+        if config_service.should_use_hierarchy() and self.hierarchy_builder:
             try:
                 elements = self.hierarchy_builder.add_context_to_elements(elements)
                 log.info(f"Added hierarchical context to {len(elements)} elements")
@@ -159,7 +191,8 @@ class HybridPipeline:
             texts = []
             for el in descs:
                 text = el.get("text", "")
-                if current_config.should_use_hierarchy() and "context" in el:
+                config_service = get_config_service()
+                if config_service.should_use_hierarchy() and "context" in el:
                     context = el["context"]
                     hierarchy_path = context.get("hierarchy_path", "")
                     if hierarchy_path and hierarchy_path != "PENDING" and hierarchy_path != "ERROR":
@@ -539,48 +572,65 @@ class HybridPipeline:
         user_intent: Optional[str] = None,
         target: Optional[str] = None,
     ) -> Dict[str, Any]:
-        print(f"\n🔍 PHASE 3: Enhanced Pipeline Query")
-        print(f"Query: '{query}'")
-        print(f"Total elements available: {len(elements)}")
-        print(f"Hierarchy enabled: {self.use_hierarchy}")
-        print(f"Two-stage enabled: {self.use_two_stage}")
+        """Main query method - orchestrates the query processing pipeline."""
+        self._log_query_start(query, elements)
         
+        # Validate inputs
+        if not self._validate_query_inputs(query, elements):
+            return {"results": [], "strategy": "hybrid-delta", "confidence": 0.0}
+
+        # Prepare elements for processing
+        E, meta = self._prepare_elements_for_query(elements, frame_hash)
+        if E.size == 0:
+            log.warning("No elements after preparation")
+            return {"results": [], "strategy": "hybrid-delta", "confidence": 0.0}
+        
+        # Clean up old stores to prevent memory leaks
+        self.cleanup_old_stores()
+        
+        # Choose and execute query strategy
+        return self._execute_query_strategy(query, meta, top_k, page_sig, frame_hash, label_key, user_intent, target)
+    
+    def _log_query_start(self, query: str, elements: List[Dict[str, Any]]) -> None:
+        """Log query start information."""
+        log.info(f"Enhanced Pipeline Query - Query: '{query}', Elements: {len(elements)}, Hierarchy: {self.use_hierarchy}, Two-stage: {self.use_two_stage}")
+    
+    def _validate_query_inputs(self, query: str, elements: List[Dict[str, Any]]) -> bool:
+        """Validate query inputs."""
         if not isinstance(elements, list):
             raise ValueError("elements must be a list")
         if len(elements) == 0:
-            print("❌ No elements provided")
-            return {"results": [], "strategy": "hybrid-delta", "confidence": 0.0}
-
-        # Prepare elements (creates both MiniLM and MarkupLM embeddings)
-        print(f"\n🔍 CACHING ANALYSIS:")
-        print(f"   Current MiniLM stores: {len(self._mini_stores)}")
-        print(f"   Current MarkupLM stores: {len(self._markup_stores)}")
-        print(f"   Frame hash for this query: {frame_hash}")
+            log.warning("No elements provided for query")
+            return False
+        return True
+    
+    def _prepare_elements_for_query(self, elements: List[Dict[str, Any]], frame_hash: Optional[str]) -> Tuple[np.ndarray, List[Dict[str, Any]]]:
+        """Prepare elements for query processing."""
+        log.debug(f"Caching analysis - MiniLM stores: {len(self._mini_stores)}, MarkupLM stores: {len(self._markup_stores)}, frame_hash: {frame_hash}")
         
         E, meta = self._prepare_elements(elements)
-        if E.size == 0:
-            print("❌ No elements after preparation")
-            return {"results": [], "strategy": "hybrid-delta", "confidence": 0.0}
         
-        print(f"✅ Prepared {len(meta)} elements with both MiniLM and MarkupLM embeddings")
-        print(f"   After preparation - MiniLM stores: {len(self._mini_stores)}")
-        print(f"   After preparation - MarkupLM stores: {len(self._markup_stores)}")
+        log.debug(f"Prepared {len(meta)} elements with both MiniLM and MarkupLM embeddings")
+        log.debug(f"After preparation - MiniLM stores: {len(self._mini_stores)}, MarkupLM stores: {len(self._markup_stores)}")
         
-        # Choose strategy based on hierarchy and two-stage settings
-        # Check configuration dynamically to handle environment variable changes
-        current_config = get_config()
-        use_hierarchy = current_config.should_use_hierarchy()
-        use_two_stage = current_config.should_use_two_stage()
+        return E, meta
+    
+    def _execute_query_strategy(self, query: str, meta: List[Dict[str, Any]], top_k: int, 
+                               page_sig: Optional[str], frame_hash: Optional[str], 
+                               label_key: Optional[str], user_intent: Optional[str], 
+                               target: Optional[str]) -> Dict[str, Any]:
+        """Execute the appropriate query strategy based on configuration."""
+        config_service = get_config_service()
+        use_hierarchy = config_service.should_use_hierarchy()
+        use_two_stage = config_service.should_use_two_stage()
         
-        print(f"🔍 DYNAMIC CONFIG CHECK:")
-        print(f"   Current hierarchy setting: {use_hierarchy}")
-        print(f"   Current two-stage setting: {use_two_stage}")
+        log.debug(f"Dynamic config check - hierarchy: {use_hierarchy}, two_stage: {use_two_stage}")
         
         if use_hierarchy and use_two_stage:
-            print("🎯 Using TWO-STAGE MarkupLM strategy")
+            log.debug("Using TWO-STAGE MarkupLM strategy")
             return self._query_two_stage(query, meta, top_k, page_sig, frame_hash, label_key, user_intent, target)
         else:
-            print("🎯 Using STANDARD strategy")
+            log.debug("Using STANDARD strategy")
             return self._query_standard(query, meta, top_k, page_sig, frame_hash, label_key, user_intent, target)
 
     def _query_standard(
@@ -704,8 +754,8 @@ class HybridPipeline:
                 html_text = f'<{tag}{attr_str}>{text}</{tag}>'
             
             # Add hierarchy context if enabled
-            current_config = get_config()
-            if current_config.should_use_hierarchy() and "context" in meta:
+            config_service = get_config_service()
+            if config_service.should_use_hierarchy() and "context" in meta:
                 context = meta["context"]
                 hierarchy_path = context.get("hierarchy_path", "")
                 if hierarchy_path and hierarchy_path != "PENDING" and hierarchy_path != "ERROR":
@@ -846,8 +896,8 @@ class HybridPipeline:
                 ranked = [(score, meta, [f"markup_cosine={score:.3f}", "trusted_markup"]) for score, meta in markup_scores]
             else:
                 # Check if heuristics are disabled
-                current_config = get_config()
-                if current_config.should_disable_heuristics():
+                config_service = get_config_service()
+                if config_service.should_disable_heuristics():
                     print(f"   ⚠️  Close scores - heuristics disabled, trusting MarkupLM")
                     ranked = [(score, meta, [f"markup_cosine={score:.3f}", "trusted_markup"]) for score, meta in markup_scores]
                 else:
@@ -855,8 +905,8 @@ class HybridPipeline:
                     ranked = self._apply_basic_heuristics(markup_scores, user_intent, target)
         else:
             # Check if heuristics are disabled
-            current_config = get_config()
-            if current_config.should_disable_heuristics():
+            config_service = get_config_service()
+            if config_service.should_disable_heuristics():
                 print(f"   ⚠️  Only {len(markup_scores)} candidates - heuristics disabled, trusting MarkupLM")
                 ranked = [(score, meta, [f"markup_cosine={score:.3f}", "trusted_markup"]) for score, meta in markup_scores]
             else:

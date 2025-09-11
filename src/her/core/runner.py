@@ -41,24 +41,37 @@ class Runner:
     _shared_pipeline = None
     _pipeline_lock = None
     
-    def __init__(self, headless: bool = True) -> None:
+    def __init__(self, headless: bool = True, intent_parser: Optional[EnhancedIntentParser] = None, pipeline: Optional[HybridPipeline] = None) -> None:
+        """Initialize Runner with optional dependency injection.
+        
+        Args:
+            headless: Whether to run browser in headless mode.
+            intent_parser: Optional intent parser instance. If None, creates default.
+            pipeline: Optional pipeline instance. If None, uses shared pipeline.
+        """
         self.headless = headless
-        self.intent = EnhancedIntentParser()
+        self.intent = intent_parser or EnhancedIntentParser()
         
-        # Use shared pipeline to avoid reloading models
-        if Runner._shared_pipeline is None:
-            import threading
-            if Runner._pipeline_lock is None:
-                Runner._pipeline_lock = threading.Lock()
+        # Use provided pipeline or shared pipeline to avoid reloading models
+        if pipeline is not None:
+            # Validate that the provided pipeline is compatible
+            if not hasattr(pipeline, 'query') or not callable(getattr(pipeline, 'query')):
+                raise ValueError("Provided pipeline must have a 'query' method")
+            self.pipeline = pipeline
+        else:
+            if Runner._shared_pipeline is None:
+                import threading
+                if Runner._pipeline_lock is None:
+                    Runner._pipeline_lock = threading.Lock()
+                
+                with Runner._pipeline_lock:
+                    if Runner._shared_pipeline is None:
+                        print("📦 Loading models (one-time cost for all runners)...")
+                        start_time = time.time()
+                        Runner._shared_pipeline = HybridPipeline()
+                        print(f"   ✅ Models loaded in {time.time() - start_time:.3f}s")
             
-            with Runner._pipeline_lock:
-                if Runner._shared_pipeline is None:
-                    print("📦 Loading models (one-time cost for all runners)...")
-                    start_time = time.time()
-                    Runner._shared_pipeline = HybridPipeline()
-                    print(f"   ✅ Models loaded in {time.time() - start_time:.3f}s")
-        
-        self.pipeline = Runner._shared_pipeline
+            self.pipeline = Runner._shared_pipeline
         self._page = None
         self._browser = None
         self._playwright = None
@@ -804,6 +817,17 @@ class Runner:
         frames = [{"frame_url": frame_url, "elements": items, "frame_hash": fh}]
         return {"elements": items, "dom_hash": dom_hash(frames), "url": frame_url}
 
+    def snapshot(self, url: Optional[str] = None) -> Dict[str, Any]:
+        """Take a snapshot of the current page or navigate to a URL.
+        
+        Args:
+            url: Optional URL to navigate to. If None, captures current page.
+            
+        Returns:
+            Dictionary containing elements, DOM hash, and URL.
+        """
+        return self._snapshot(url)
+    
     def _snapshot(self, url: Optional[str] = None) -> Dict[str, Any]:
         page = self._ensure_browser()
         if not _PLAYWRIGHT or not page:
@@ -821,6 +845,18 @@ class Runner:
                 pass
         return self._inline_snapshot()
 
+    def resolve_selector(self, phrase: str, snapshot: Dict[str, Any]) -> Dict[str, Any]:
+        """Resolve a natural language phrase to a CSS selector.
+        
+        Args:
+            phrase: Natural language description of the element to find.
+            snapshot: Page snapshot from snapshot() method.
+            
+        Returns:
+            Dictionary containing selector, confidence, and metadata.
+        """
+        return self._resolve_selector(phrase, snapshot)
+    
     def _resolve_selector(self, phrase: str, snapshot: Dict[str, Any]) -> Dict[str, Any]:
         elements = snapshot.get("elements", [])
         if not elements:
@@ -1059,14 +1095,70 @@ class Runner:
             except Exception:
                 continue
 
-    def _scroll_into_view(self, selector: str) -> None:
+    def _scroll_into_view(self, target) -> None:
+        """Scroll element into view if it's not visible."""
         if not _PLAYWRIGHT or not self._page:
             return
+        
         try:
-            self._page.locator(f"xpath={selector}").first.scroll_into_view_if_needed(timeout=2000)
+            # Handle both selector string and element object
+            if isinstance(target, str):
+                # If it's a selector string, get the element first
+                element = self._page.locator(f"xpath={target}").first
+                element.scroll_into_view_if_needed(timeout=2000)
+            else:
+                # If it's an element object, check if it's in viewport
+                if not hasattr(target, 'bounding_box'):
+                    return
+                    
+                bbox = target.bounding_box()
+                if not bbox:
+                    return
+                
+                viewport = self._page.viewport_size
+                if not viewport:
+                    return
+                
+                # Check if element is already in viewport
+                if (bbox['x'] >= 0 and bbox['y'] >= 0 and 
+                    bbox['x'] + bbox['width'] <= viewport['width'] and 
+                    bbox['y'] + bbox['height'] <= viewport['height']):
+                    return
+                
+                # Scroll element into view
+                target.scroll_into_view_if_needed(timeout=2000)
         except Exception:
             pass
 
+    def do_action(self, action: str, selector: str, value: Optional[str] = None, promo: Optional[Dict[str, Any]] = None, user_intent: str = "") -> None:
+        """Execute an action on a page element.
+        
+        Args:
+            action: Action to perform (click, type, etc.).
+            selector: CSS selector for the target element.
+            value: Optional value for input actions.
+            promo: Optional promotion metadata.
+            user_intent: Optional user intent description.
+        """
+        return self._do_action(action, selector, value, promo or {}, user_intent)
+    
+    def wait_for_timeout(self, timeout: int) -> None:
+        """Wait for a specified timeout.
+        
+        Args:
+            timeout: Timeout in milliseconds.
+        """
+        if self._page:
+            self._page.wait_for_timeout(timeout)
+    
+    def get_current_url(self) -> str:
+        """Get the current page URL.
+        
+        Returns:
+            Current page URL.
+        """
+        return self._page.url if self._page else ""
+    
     def _do_action(self, action: str, selector: str, value: Optional[str], promo: Dict[str, Any], user_intent: str = "") -> None:
         if not _PLAYWRIGHT or not self._page:
             raise RuntimeError("Playwright unavailable for action execution")
@@ -1075,30 +1167,33 @@ class Runner:
         self._dismiss_overlays()
         # Strict executor if available
         if Executor is not None and action not in {"back", "refresh", "wait"}:
-            ex = Executor(self._page)
-            kw = dict(page_sig=promo.get("page_sig"), frame_hash=promo.get("frame_hash"), label_key=promo.get("label_key"))
-            if action == "type" and value is not None:
-                ex.type(selector, str(value), **kw)
-                return
-            if action == "press" and value:
-                ex.press(selector, str(value), **kw)
-                return
-            if action == "hover":
-                self._page.locator(f"xpath={selector}").first.hover()
-                return
-            if action in {"check", "uncheck"}:
-                handle = self._page.locator(f"xpath={selector}").first
-                try:
-                    if action == "check":
-                        handle.check()
-                    else:
-                        handle.uncheck()
+            try:
+                ex = Executor(self._page)
+                kw = dict(page_sig=promo.get("page_sig"), frame_hash=promo.get("frame_hash"), label_key=promo.get("label_key"))
+                if action == "type" and value is not None:
+                    ex.type(selector, str(value), **kw)
                     return
-                except Exception:
-                    pass
-            # select action is handled later in the method
-            ex.click(selector, **kw)
-            return
+                if action == "press" and value:
+                    ex.press(selector, str(value), **kw)
+                    return
+                if action == "hover":
+                    self._page.locator(f"xpath={selector}").first.hover()
+                    return
+            except Exception as e:
+                logger.warning(f"Executor failed for action '{action}': {e}, falling back to direct Playwright")
+                # Fall through to direct Playwright implementation
+        
+        # Direct Playwright implementation
+        if action in {"check", "uncheck"}:
+            handle = self._page.locator(f"xpath={selector}").first
+            try:
+                if action == "check":
+                    handle.check()
+                else:
+                    handle.uncheck()
+                return
+            except Exception:
+                pass
         # Fallback raw Playwright and navigation/waits
         if action == "type" and value is not None:
             element = self._page.locator(f"xpath={selector}").first
@@ -1158,48 +1253,6 @@ class Runner:
         # For click actions, try to find the best element
         self._click_best_element(selector, user_intent)
 
-    def _scroll_into_view(self, element) -> None:
-        """Scroll element into view if it's not visible."""
-        try:
-            # Check if element is in viewport
-            if not hasattr(element, 'bounding_box'):
-                print(f"⚠️  Element does not have bounding_box method, skipping scroll")
-                return
-                
-            bbox = element.bounding_box()
-            if not bbox:
-                return
-            
-            viewport = self._page.viewport_size
-            if not viewport:
-                return
-            
-            # Check if element is at least partially visible
-            element_top = bbox['y']
-            element_bottom = bbox['y'] + bbox['height']
-            element_left = bbox['x']
-            element_right = bbox['x'] + bbox['width']
-            
-            viewport_height = viewport['height']
-            viewport_width = viewport['width']
-            
-            # Check if element is visible in viewport
-            is_visible = (
-                element_top >= 0 and element_top < viewport_height and
-                element_left >= 0 and element_left < viewport_width and
-                element_bottom > 0 and element_right > 0
-            )
-            
-            if not is_visible:
-                print(f"🔄 Element not in viewport, scrolling into view...")
-                element.scroll_into_view_if_needed()
-                self._page.wait_for_timeout(500)  # Wait for scroll to complete
-                print(f"✅ Scrolled element into view")
-            else:
-                print(f"✅ Element already in viewport")
-                
-        except Exception as e:
-            print(f"⚠️  Could not scroll element into view: {e}")
 
     def _click_best_element(self, selector: str, user_intent: str = "") -> None:
         """Click the best element when there are multiple matches, using user intent."""
@@ -1288,10 +1341,10 @@ class Runner:
                         if intent_lower in text_lower:
                             intent_score += 1000
                         
-                        # Partial word matches (case-insensitive)
-                        intent_words = [w.strip() for w in intent_lower.split() if w.strip()]
-                        text_words = [w.strip() for w in text_lower.split() if w.strip()]
-                        word_matches = sum(1 for word in intent_words if any(word in text_word for text_word in text_words))
+                        # Partial word matches (case-insensitive) - optimized
+                        intent_words = set(w.strip() for w in intent_lower.split() if w.strip())
+                        text_words = set(w.strip() for w in text_lower.split() if w.strip())
+                        word_matches = len(intent_words.intersection(text_words))
                         intent_score += word_matches * 200
                         
                         # Check attributes for intent
@@ -1438,8 +1491,9 @@ class Runner:
                 expected_parts = [part.strip() for part in expected.lower().split('/') if part.strip()]
                 current_parts = [part.strip() for part in current_url.lower().split('/') if part.strip()]
                 
-                # Check if key parts of expected URL are present in current URL
-                matching_parts = sum(1 for part in expected_parts if any(part in current_part for current_part in current_parts))
+                # Check if key parts of expected URL are present in current URL - optimized
+                current_parts_set = set(current_parts)
+                matching_parts = sum(1 for part in expected_parts if part in current_parts_set)
                 if matching_parts >= len(expected_parts) * 0.6:  # 60% match threshold
                     return True
                 

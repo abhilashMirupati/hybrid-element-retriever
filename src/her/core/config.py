@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Optional
 from dataclasses import dataclass
 
+# Note: Using local HERConfig class, not the centralized one to avoid conflicts
+
 
 class CanonicalMode(Enum):
     """Canonical descriptor building modes."""
