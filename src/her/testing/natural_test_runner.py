@@ -148,6 +148,9 @@ class NaturalTestRunner:
             # Wait for action to complete
             self.runner.wait_for_timeout(2000)
             
+            # Take a fresh snapshot after action to capture any page changes
+            fresh_snapshot = self.runner.snapshot()
+            
             return {
                 'step_number': step_number,
                 'success': True,
@@ -199,7 +202,7 @@ class NaturalTestRunner:
         value = None
         
         if action == 'type':
-            # Extract text to type
+            # Extract text to type - look for common patterns
             if 'type' in description_lower:
                 parts = description.split('type', 1)
                 if len(parts) > 1:
@@ -210,6 +213,16 @@ class NaturalTestRunner:
                 if len(parts) > 1:
                     target = parts[0].strip()
                     value = parts[1].strip().strip('"\'')
+            elif 'fill' in description_lower:
+                parts = description.split('fill', 1)
+                if len(parts) > 1:
+                    target = parts[0].strip()
+                    value = parts[1].strip().strip('"\'')
+            else:
+                # If no clear pattern, assume the whole description is the value
+                # and look for common input field names
+                value = description
+                target = "search box" if any(word in description_lower for word in ['search', 'query']) else "input field"
         elif action == 'navigate':
             # Extract URL
             if 'to' in description_lower:
