@@ -913,23 +913,16 @@ class HybridPipeline:
             except Exception as e:
                 print(f"   ⚠️  Could not validate XPath: {e}")
             
-            # Special logging for Apple filter case
-            if 'Apple' in query and 'filter' in query.lower():
-                print(f"\n🍎 APPLE FILTER SELECTION ANALYSIS:")
+            # Universal filter selection analysis
+            if 'filter' in query.lower():
+                print(f"\n🔍 FILTER SELECTION ANALYSIS:")
                 print(f"   Query: '{query}'")
                 print(f"   Selected XPath: {selected['selector']}")
                 print(f"   Element ID: {selected['meta'].get('attributes', {}).get('id', 'None')}")
                 print(f"   Element Class: {selected['meta'].get('attributes', {}).get('class', 'None')}")
                 print(f"   Element Role: {selected['meta'].get('role', 'None')}")
                 print(f"   Element Aria Label: {selected['meta'].get('attributes', {}).get('aria-label', 'None')}")
-                
-                # Check if this is the correct Apple filter button
-                if 'Apple_2' in selected['selector']:
-                    print(f"   ✅ CORRECT: Selected Apple filter button (id=Apple_2)")
-                else:
-                    print(f"   ❌ INCORRECT: Did not select Apple filter button")
-                    print(f"   Expected: //*[@id=\"Apple_2\"]")
-                    print(f"   Got: {selected['selector']}")
+                print(f"   Element Text: '{selected['meta'].get('text', '')[:50]}...'")
 
         return {
             "results": results[:top_k],

@@ -88,8 +88,7 @@ class Runner:
 
     def _is_element_interactive(self, tag: str, attrs: Dict[str, Any], role: str) -> bool:
         """
-        Determine if an element is interactive based on tag, attributes, and role.
-        Neutral approach - doesn't penalize text nodes for validation steps.
+        Universal element interactivity detection - works for any website.
         
         Args:
             tag: Element tag name
@@ -103,39 +102,244 @@ class Runner:
         if tag == '#text' or not tag:
             return False
         
-        # Check interactive tags
-        interactive_tags = ['button', 'a', 'input', 'select', 'textarea', 'option', 'label', 'form', 'fieldset']
+        # Universal interactive tags (works across all websites)
+        interactive_tags = ['button', 'a', 'input', 'select', 'textarea', 'option', 'label', 'form', 'fieldset', 'summary', 'details']
         if tag.lower() in interactive_tags:
             return True
         
-        # Check interactive roles
-        interactive_roles = ['button', 'link', 'menuitem', 'tab', 'option', 'radio', 'checkbox', 'switch', 'textbox', 'combobox', 'listbox', 'menu', 'menubar', 'toolbar', 'slider', 'progressbar', 'scrollbar', 'tablist', 'tree', 'grid', 'cell', 'row', 'columnheader', 'rowheader', 'dialog', 'alertdialog', 'log', 'marquee', 'status', 'timer', 'tooltip']
+        # Universal interactive roles (accessibility standard)
+        interactive_roles = [
+            'button', 'link', 'menuitem', 'tab', 'option', 'radio', 'checkbox', 'switch', 
+            'textbox', 'combobox', 'listbox', 'menu', 'menubar', 'toolbar', 'slider', 
+            'progressbar', 'scrollbar', 'tablist', 'tree', 'grid', 'cell', 'row', 
+            'columnheader', 'rowheader', 'dialog', 'alertdialog', 'log', 'marquee', 
+            'status', 'timer', 'tooltip', 'searchbox', 'spinbutton', 'tabpanel'
+        ]
         if role and role.lower() in interactive_roles:
             return True
         
-        # Check for click handlers
-        if attrs.get('onclick') or attrs.get('onmousedown') or attrs.get('onmouseup'):
+        # Check for universal click handlers
+        click_handlers = ['onclick', 'onmousedown', 'onmouseup', 'ontouchstart', 'ontouchend']
+        if any(attrs.get(handler) for handler in click_handlers):
             return True
         
-        # Check for tabindex (focusable)
+        # Check for tabindex (focusable elements)
         tabindex = attrs.get('tabindex')
         if tabindex and str(tabindex).isdigit() and int(tabindex) >= 0:
             return True
         
-        # Check for specific input types
+        # Universal input type detection
         if tag.lower() == 'input':
             input_type = attrs.get('type', '').lower()
-            interactive_types = ['button', 'submit', 'reset', 'radio', 'checkbox', 'file', 'image', 'range', 'color', 'date', 'datetime-local', 'email', 'month', 'number', 'password', 'search', 'tel', 'text', 'time', 'url', 'week']
-            if input_type in interactive_types:
+            # All input types are interactive except 'hidden'
+            if input_type != 'hidden':
                 return True
         
-        # Check for data attributes indicating interactivity
-        data_attrs = ['data-testid', 'data-id', 'data-value', 'data-action', 'data-click', 'data-toggle']
-        for attr in data_attrs:
-            if attrs.get(attr):
-                return True
+        # Universal data attributes indicating interactivity
+        interactive_data_attrs = [
+            'data-testid', 'data-id', 'data-value', 'data-action', 'data-click', 
+            'data-toggle', 'data-target', 'data-controls', 'data-dismiss',
+            'data-bs-toggle', 'data-bs-target', 'data-bs-dismiss'
+        ]
+        if any(attrs.get(attr) for attr in interactive_data_attrs):
+            return True
+        
+        # Check for ARIA attributes indicating interactivity
+        aria_interactive = ['aria-expanded', 'aria-selected', 'aria-checked', 'aria-pressed']
+        if any(attrs.get(attr) for attr in aria_interactive):
+            return True
+        
+        # Check for common interactive class patterns
+        class_name = attrs.get('class', '').lower()
+        interactive_class_patterns = [
+            'btn', 'button', 'link', 'clickable', 'interactive', 'action',
+            'nav', 'menu', 'tab', 'toggle', 'dropdown', 'accordion'
+        ]
+        if any(pattern in class_name for pattern in interactive_class_patterns):
+            return True
         
         return False
+
+    def _detect_universal_elements(self, page) -> Dict[str, Any]:
+        """
+        Universal element detection that works for any website structure.
+        Detects common UI patterns without hardcoded assumptions.
+        """
+        if not _PLAYWRIGHT or not page:
+            return {}
+        
+        try:
+            # Detect common UI patterns universally
+            patterns = {
+                'filters': self._detect_filter_elements(page),
+                'buttons': self._detect_button_elements(page),
+                'forms': self._detect_form_elements(page),
+                'navigation': self._detect_navigation_elements(page),
+                'content': self._detect_content_elements(page)
+            }
+            
+            print(f"🔍 Universal element detection:")
+            for pattern_type, elements in patterns.items():
+                print(f"   {pattern_type}: {len(elements)} elements")
+            
+            return patterns
+        except Exception as e:
+            print(f"⚠️  Universal element detection failed: {e}")
+            return {}
+
+    def _detect_filter_elements(self, page) -> List[Dict[str, Any]]:
+        """Detect filter elements universally."""
+        filter_selectors = [
+            '[role="button"][aria-expanded]',  # Dropdown filters
+            'button[data-testid*="filter"]',   # Test ID filters
+            'button[class*="filter"]',         # Class-based filters
+            'input[type="checkbox"]',          # Checkbox filters
+            'input[type="radio"]',             # Radio filters
+            'select',                          # Select filters
+            '[aria-label*="filter" i]',        # Aria label filters
+            'button:has-text("Filter")',       # Text-based filters
+            'button:has-text("Sort")',         # Sort filters
+            'button:has-text("Category")',     # Category filters
+        ]
+        
+        elements = []
+        for selector in filter_selectors:
+            try:
+                locators = page.locator(selector)
+                for i in range(locators.count()):
+                    element = locators.nth(i)
+                    if element.is_visible():
+                        elements.append({
+                            'selector': selector,
+                            'text': element.text_content() or '',
+                            'type': 'filter'
+                        })
+            except:
+                continue
+        
+        return elements
+
+    def _detect_button_elements(self, page) -> List[Dict[str, Any]]:
+        """Detect button elements universally."""
+        button_selectors = [
+            'button',
+            'a[role="button"]',
+            '[role="button"]',
+            'input[type="button"]',
+            'input[type="submit"]',
+            '[data-testid*="button"]',
+            '[class*="btn"]',
+            '[class*="button"]'
+        ]
+        
+        elements = []
+        for selector in button_selectors:
+            try:
+                locators = page.locator(selector)
+                for i in range(locators.count()):
+                    element = locators.nth(i)
+                    if element.is_visible():
+                        elements.append({
+                            'selector': selector,
+                            'text': element.text_content() or '',
+                            'type': 'button'
+                        })
+            except:
+                continue
+        
+        return elements
+
+    def _detect_form_elements(self, page) -> List[Dict[str, Any]]:
+        """Detect form elements universally."""
+        form_selectors = [
+            'input[type="text"]',
+            'input[type="email"]',
+            'input[type="password"]',
+            'input[type="search"]',
+            'textarea',
+            'select',
+            'input[type="checkbox"]',
+            'input[type="radio"]'
+        ]
+        
+        elements = []
+        for selector in form_selectors:
+            try:
+                locators = page.locator(selector)
+                for i in range(locators.count()):
+                    element = locators.nth(i)
+                    if element.is_visible():
+                        elements.append({
+                            'selector': selector,
+                            'text': element.get_attribute('placeholder') or element.text_content() or '',
+                            'type': 'form'
+                        })
+            except:
+                continue
+        
+        return elements
+
+    def _detect_navigation_elements(self, page) -> List[Dict[str, Any]]:
+        """Detect navigation elements universally."""
+        nav_selectors = [
+            'nav a',
+            '[role="navigation"] a',
+            '[role="menubar"] a',
+            '[role="tablist"] a',
+            '.nav a',
+            '.menu a',
+            '.breadcrumb a',
+            'header a',
+            'footer a'
+        ]
+        
+        elements = []
+        for selector in nav_selectors:
+            try:
+                locators = page.locator(selector)
+                for i in range(locators.count()):
+                    element = locators.nth(i)
+                    if element.is_visible():
+                        elements.append({
+                            'selector': selector,
+                            'text': element.text_content() or '',
+                            'type': 'navigation'
+                        })
+            except:
+                continue
+        
+        return elements
+
+    def _detect_content_elements(self, page) -> List[Dict[str, Any]]:
+        """Detect content elements universally."""
+        content_selectors = [
+            'h1, h2, h3, h4, h5, h6',  # Headings
+            'p',                        # Paragraphs
+            'div[class*="content"]',    # Content divs
+            'article',                  # Articles
+            'section',                  # Sections
+            'main',                     # Main content
+            '[role="main"]'             # Main role
+        ]
+        
+        elements = []
+        for selector in content_selectors:
+            try:
+                locators = page.locator(selector)
+                for i in range(locators.count()):
+                    element = locators.nth(i)
+                    if element.is_visible():
+                        text = element.text_content() or ''
+                        if text and len(text.strip()) > 10:  # Only meaningful content
+                            elements.append({
+                                'selector': selector,
+                                'text': text[:100] + '...' if len(text) > 100 else text,
+                                'type': 'content'
+                            })
+            except:
+                continue
+        
+        return elements
 
     def _close(self) -> None:
         try:
@@ -611,49 +815,8 @@ class Runner:
                 page.wait_for_timeout(3000)
                 # Try to dismiss any initial popups/overlays
                 self._dismiss_overlays()
-                # Scroll down to load more products (especially for product listing pages)
-                if "smartphones" in url or "products" in url or "iphone" in url:
-                    # Scroll to load all products
-                    page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                    page.wait_for_timeout(3000)
-                    # Scroll back up a bit to ensure products are visible
-                    page.evaluate("window.scrollTo(0, document.body.scrollHeight / 3)")
-                    page.wait_for_timeout(2000)
-                    # Additional scroll to trigger any remaining dynamic content
-                    page.evaluate("window.scrollTo(0, document.body.scrollHeight / 2)")
-                    page.wait_for_timeout(1000)
-                    
-                    # Special handling for iPhone product pages - wait longer for dynamic content
-                    if "iphone" in url and "16-pro" in url:
-                        print("🔍 iPhone 16 Pro page detected - waiting for dynamic content to load...")
-                        
-                        # Wait for DOM to be fully loaded
-                        try:
-                            page.wait_for_load_state("domcontentloaded", timeout=10000)
-                            page.wait_for_load_state("networkidle", timeout=10000)
-                        except:
-                            pass
-                        
-                        # Wait for specific elements to appear (radio buttons for color selection)
-                        try:
-                            page.wait_for_selector('input[type="radio"]', timeout=10000)
-                            print("✅ Radio buttons found!")
-                        except:
-                            print("⚠️  Radio buttons not found, continuing...")
-                        
-                        # Wait additional time for dynamic content
-                        page.wait_for_timeout(5000)
-                        
-                        # Scroll to different positions to trigger all dynamic content
-                        page.evaluate("window.scrollTo(0, document.body.scrollHeight / 4)")
-                        page.wait_for_timeout(2000)
-                        page.evaluate("window.scrollTo(0, document.body.scrollHeight / 2)")
-                        page.wait_for_timeout(2000)
-                        page.evaluate("window.scrollTo(0, document.body.scrollHeight * 3 / 4)")
-                        page.wait_for_timeout(2000)
-                        
-                        # Final wait for any remaining dynamic content
-                        page.wait_for_timeout(3000)
+                # Universal dynamic content loading - works for any website
+                self._load_dynamic_content(page)
             except Exception:
                 pass
         return self._inline_snapshot()
@@ -719,6 +882,145 @@ class Runner:
             "promo": {"page_sig": ps, "frame_hash": frame_hash, "label_key": label_key},
             "strategy": result.get("strategy", "unknown"),
         }
+
+    def _load_dynamic_content(self, page) -> None:
+        """Universal dynamic content loading that works for any website."""
+        if not _PLAYWRIGHT or not page:
+            return
+        
+        print("🔄 Loading dynamic content universally...")
+        
+        # Wait for initial page load
+        try:
+            page.wait_for_load_state("domcontentloaded", timeout=10000)
+            page.wait_for_load_state("networkidle", timeout=10000)
+        except:
+            pass
+        
+        # Detect if page has infinite scroll or dynamic content
+        has_infinite_scroll = self._detect_infinite_scroll(page)
+        has_dynamic_forms = self._detect_dynamic_forms(page)
+        has_lazy_images = self._detect_lazy_images(page)
+        
+        print(f"   Infinite scroll: {has_infinite_scroll}")
+        print(f"   Dynamic forms: {has_dynamic_forms}")
+        print(f"   Lazy images: {has_lazy_images}")
+        
+        # Universal scrolling strategy
+        if has_infinite_scroll or has_dynamic_forms or has_lazy_images:
+            self._universal_scroll_strategy(page)
+        
+        # Detect universal UI patterns
+        detected_patterns = self._detect_universal_elements(page)
+        
+        # Wait for any remaining dynamic content
+        page.wait_for_timeout(2000)
+        print("✅ Dynamic content loading completed")
+
+    def _detect_infinite_scroll(self, page) -> bool:
+        """Detect if page has infinite scroll patterns."""
+        try:
+            # Check for common infinite scroll indicators
+            indicators = [
+                'button:has-text("Load more")',
+                'button:has-text("Show more")',
+                '[data-testid*="load"]',
+                '[data-testid*="more"]',
+                '.load-more',
+                '.show-more',
+                '.infinite-scroll'
+            ]
+            
+            for indicator in indicators:
+                if page.locator(indicator).count() > 0:
+                    return True
+            
+            # Check if page height changes significantly on scroll
+            initial_height = page.evaluate("document.body.scrollHeight")
+            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            page.wait_for_timeout(1000)
+            final_height = page.evaluate("document.body.scrollHeight")
+            
+            return final_height > initial_height * 1.2
+        except:
+            return False
+
+    def _detect_dynamic_forms(self, page) -> bool:
+        """Detect if page has dynamic form elements."""
+        try:
+            # Check for dynamic form patterns
+            patterns = [
+                'input[type="radio"]',
+                'input[type="checkbox"]',
+                'select',
+                'option',
+                '[role="radio"]',
+                '[role="checkbox"]',
+                '[role="option"]'
+            ]
+            
+            for pattern in patterns:
+                if page.locator(pattern).count() > 0:
+                    return True
+            
+            return False
+        except:
+            return False
+
+    def _detect_lazy_images(self, page) -> bool:
+        """Detect if page has lazy-loaded images."""
+        try:
+            # Check for lazy loading indicators
+            lazy_indicators = [
+                'img[loading="lazy"]',
+                'img[data-src]',
+                'img[data-lazy]',
+                '.lazy',
+                '.lazy-load'
+            ]
+            
+            for indicator in lazy_indicators:
+                if page.locator(indicator).count() > 0:
+                    return True
+            
+            return False
+        except:
+            return False
+
+    def _universal_scroll_strategy(self, page) -> None:
+        """Universal scrolling strategy that works for any website."""
+        try:
+            # Get initial page state
+            initial_height = page.evaluate("document.body.scrollHeight")
+            viewport_height = page.evaluate("window.innerHeight")
+            
+            # Progressive scrolling to load content
+            scroll_positions = [
+                0.25,  # 25% down
+                0.5,   # 50% down
+                0.75,  # 75% down
+                1.0,   # Bottom
+                0.5,   # Back to middle
+                0.25   # Back to top area
+            ]
+            
+            for position in scroll_positions:
+                scroll_y = int(initial_height * position)
+                page.evaluate(f"window.scrollTo(0, {scroll_y})")
+                page.wait_for_timeout(1000)
+                
+                # Check if new content loaded
+                current_height = page.evaluate("document.body.scrollHeight")
+                if current_height > initial_height * 1.1:  # 10% increase
+                    print(f"   New content detected at {position*100}% scroll")
+                    initial_height = current_height
+            
+            # Final scroll to top for better element visibility
+            page.evaluate("window.scrollTo(0, 0)")
+            page.wait_for_timeout(500)
+            
+        except Exception as e:
+            print(f"⚠️  Universal scroll strategy failed: {e}")
 
     def _dismiss_overlays(self) -> None:
         if not _PLAYWRIGHT or not self._page:
@@ -921,11 +1223,10 @@ class Runner:
             print(f"🔍 Found {count} elements with selector: {selector}")
             print(f"🎯 User intent: '{user_intent}'")
             
-            # NO FILTERING - MiniLM should see ALL elements
-            # Let MiniLM and MarkupLM decide what's relevant based on text similarity
-            print(f"   Action type: {user_intent} | Processing ALL elements for MiniLM")
+            # Universal element processing - no hardcoded filtering
+            print(f"   Action type: {user_intent} | Processing ALL elements universally")
             
-            # Try to find the most visible and clickable element
+            # Try to find the most suitable element based on universal criteria
             best_element = None
             best_score = -1
             element_details = []
@@ -934,21 +1235,15 @@ class Runner:
                 try:
                     element = locators.nth(i)
                     
-                    # NO FILTERING - Let heuristics decide what's relevant
-                    # Try to scroll into view for better interaction, but don't skip elements
+                    # Scroll into view for better interaction
                     try:
                         element.scroll_into_view_if_needed()
-                        self._page.wait_for_timeout(500)  # Wait for scroll to complete
+                        self._page.wait_for_timeout(500)
                     except:
-                        pass  # Continue even if scroll fails
-                    
-                    # NO FILTERING - MiniLM should see ALL elements
-                    # Let MiniLM and MarkupLM decide what's relevant
+                        pass
                     
                     # Get element properties
                     bbox = element.bounding_box()
-                    # NO FILTERING - MiniLM should see ALL elements regardless of size
-                    # Let heuristics decide what's relevant based on text similarity and context
                     
                     # Get element text and attributes for better scoring
                     try:
@@ -969,19 +1264,21 @@ class Runner:
                     # Calculate score based on multiple factors
                     score = bbox['width'] * bbox['height']  # Area as base score
                     
-                    # HEURISTIC 1: Filter out hidden/background elements
-                    if bbox['y'] < 0 or bbox['x'] < 0:  # Off-screen elements
+                    # Universal heuristics - work for any website
+                    
+                    # HEURISTIC 1: Skip completely off-screen elements
+                    if bbox['y'] < -100 or bbox['x'] < -100:  # Far off-screen
                         continue
                     
-                    # HEURISTIC 2: Filter out very small elements (likely decorative)
-                    if bbox['width'] < 10 or bbox['height'] < 10:
+                    # HEURISTIC 2: Skip extremely small elements (likely decorative)
+                    if bbox['width'] < 5 or bbox['height'] < 5:
                         continue
                     
-                    # HEURISTIC 3: Filter out elements with no meaningful content
-                    if not text.strip() and not href and not role:
+                    # HEURISTIC 3: Skip elements with no meaningful content (unless they have important attributes)
+                    if not text.strip() and not href and not role and not id_attr and not class_name:
                         continue
                     
-                    # HEURISTIC 4: User intent matching
+                    # HEURISTIC 4: Universal intent matching
                     intent_score = 0
                     if user_intent:
                         intent_lower = user_intent.lower()
@@ -991,48 +1288,72 @@ class Runner:
                         if intent_lower in text_lower:
                             intent_score += 1000
                         
-                        # Partial word matches
-                        intent_words = intent_lower.split()
-                        text_words = text_lower.split()
-                        word_matches = sum(1 for word in intent_words if word in text_words)
+                        # Partial word matches (case-insensitive)
+                        intent_words = [w.strip() for w in intent_lower.split() if w.strip()]
+                        text_words = [w.strip() for w in text_lower.split() if w.strip()]
+                        word_matches = sum(1 for word in intent_words if any(word in text_word for text_word in text_words))
                         intent_score += word_matches * 200
                         
-                        # Check href for intent
-                        if href and any(word in href.lower() for word in intent_words):
+                        # Check attributes for intent
+                        all_attrs = f"{href} {id_attr} {class_name} {role}".lower()
+                        if any(word in all_attrs for word in intent_words):
                             intent_score += 300
                     
-                    # HEURISTIC 5: Position-based scoring
+                    # HEURISTIC 5: Universal position-based scoring
                     viewport = self._page.viewport_size
                     if viewport:
-                        # Bonus for being in viewport center
-                        center_x = bbox['x'] + bbox['width'] / 2
-                        center_y = bbox['y'] + bbox['height'] / 2
-                        viewport_center_x = viewport['width'] / 2
-                        viewport_center_y = viewport['height'] / 2
+                        # Bonus for being visible in viewport
+                        element_center_x = bbox['x'] + bbox['width'] / 2
+                        element_center_y = bbox['y'] + bbox['height'] / 2
                         
-                        # Distance from center (closer is better)
-                        distance = ((center_x - viewport_center_x) ** 2 + (center_y - viewport_center_y) ** 2) ** 0.5
-                        center_bonus = max(0, 1000 - distance)  # Bonus decreases with distance
-                        score += center_bonus
+                        # Check if element is in viewport
+                        in_viewport = (
+                            0 <= bbox['x'] < viewport['width'] and
+                            0 <= bbox['y'] < viewport['height'] and
+                            bbox['width'] > 0 and bbox['height'] > 0
+                        )
                         
-                        # Bonus for being higher on the page (top elements are usually more important)
-                        top_bonus = max(0, 1000 - bbox['y'])  # Higher elements get more bonus
-                        score += top_bonus
+                        if in_viewport:
+                            # Bonus for being in viewport
+                            score += 500
+                            
+                            # Bonus for being in upper portion of viewport (more likely to be important)
+                            if bbox['y'] < viewport['height'] * 0.5:
+                                score += 300
+                        else:
+                            # Small penalty for off-screen elements
+                            score -= 100
                     
-                    # HEURISTIC 6: Interactive element bonus
-                    if tag_name in ['a', 'button'] or role in ['button', 'link']:
+                    # HEURISTIC 6: Universal interactive element detection
+                    interactive_tags = ['a', 'button', 'input', 'select', 'textarea', 'option', 'label']
+                    interactive_roles = ['button', 'link', 'menuitem', 'tab', 'option', 'radio', 'checkbox', 'switch']
+                    
+                    if tag_name in interactive_tags or role in interactive_roles:
                         score += 500
                     
-                    # HEURISTIC 7: Meaningful content bonus
+                    # HEURISTIC 7: Content quality bonus
                     if text and len(text.strip()) > 0:
-                        score += 100
+                        # Bonus for meaningful text length
+                        text_length = len(text.strip())
+                        if 5 <= text_length <= 100:  # Sweet spot for button text
+                            score += 200
+                        elif text_length > 100:  # Longer text might be less clickable
+                            score += 100
+                        else:  # Very short text
+                            score += 50
                     
-                    # HEURISTIC 8: Accessibility attributes bonus
-                    if id_attr or role or href:
-                        score += 200
+                    # HEURISTIC 8: Accessibility and identification bonus
+                    if id_attr:
+                        score += 300  # ID is very reliable
+                    if role:
+                        score += 200  # Role is good for accessibility
+                    if href:
+                        score += 150  # Href indicates navigation
+                    if class_name and any(keyword in class_name.lower() for keyword in ['btn', 'button', 'link', 'nav', 'menu']):
+                        score += 100  # Semantic class names
                     
-                    # HEURISTIC 9: Universal element scoring (no hardcoded penalties)
-                    # All elements are potentially valid targets based on user intent
+                    # HEURISTIC 9: Universal element scoring - no hardcoded penalties
+                    # All elements are potentially valid targets based on user intent and context
                     
                     # Add intent score
                     score += intent_score
@@ -1113,25 +1434,14 @@ class Runner:
                 if current == exp_norm:
                     return True
                 
-                # If not exact, check if key parts are in the URL
-                # Extract key parts from expected URL (product name)
-                if "iphone" in expected.lower():
-                    # For iPhone URLs, check if we have the right product
-                    import re
-                    # Extract product identifier from expected (e.g., "iphone-16-pro")
-                    product_match = re.search(r'iphone-[\w-]+', expected.lower())
-                    if product_match:
-                        product_id = product_match.group(0)
-                        # Check if this product ID is in current URL
-                        if product_id in current_url.lower():
-                            return True
+                # Universal URL validation - check for key components
+                expected_parts = [part.strip() for part in expected.lower().split('/') if part.strip()]
+                current_parts = [part.strip() for part in current_url.lower().split('/') if part.strip()]
                 
-                # Fallback: check if we're at least on the right domain/section
-                if "/smartphones/" in expected and "/smartphones/" in current_url:
-                    # We're in smartphones section
-                    if "apple" in expected.lower() and "apple" in current_url.lower():
-                        # It's an Apple product page
-                        return True
+                # Check if key parts of expected URL are present in current URL
+                matching_parts = sum(1 for part in expected_parts if any(part in current_part for current_part in current_parts))
+                if matching_parts >= len(expected_parts) * 0.6:  # 60% match threshold
+                    return True
                 
                 return False
             except Exception as e:
