@@ -104,6 +104,10 @@ class HERConfig:
         """Check if accessibility tree should be used."""
         return self.canonical_mode in [CanonicalMode.ACCESSIBILITY_ONLY, CanonicalMode.BOTH]
     
+    def should_disable_heuristics(self) -> bool:
+        """Check if heuristics should be disabled (MarkupLM-only mode)."""
+        return self.disable_heuristics
+    
     def is_performance_optimized(self) -> bool:
         """Check if performance optimizations are enabled."""
         return not self.debug and not self.debug_canonical
