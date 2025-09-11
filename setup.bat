@@ -33,6 +33,6 @@ echo    $env:HER_MODELS_DIR = (Resolve-Path 'src\her\models').Path
 echo    $env:HER_CACHE_DIR = (Resolve-Path '.\her_cache').Path
 echo.
 echo 3. Run tests:
-echo    python organized/tests/test_essential_validation.py
+echo    python -m pytest tests/ -v
 echo.
 pause

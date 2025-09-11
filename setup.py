@@ -165,7 +165,7 @@ def verify_installation():
         return False
     
     # Run essential validation
-    if not run_command([str(python_cmd), "organized/tests/test_essential_validation.py"]):
+    if not run_command([str(python_cmd), "-m", "pytest", "tests/unit/core/test_embedder_dims.py", "-v"]):
         print("❌ Essential validation failed")
         return False
     
@@ -222,7 +222,7 @@ def main():
         print("   export HER_MODELS_DIR=\"$(pwd)/src/her/models\"")
         print("   export HER_CACHE_DIR=\"$(pwd)/.her_cache\"")
     print("3. Run tests:")
-    print("   python organized/tests/test_essential_validation.py")
+    print("   python -m pytest tests/ -v")
     
     return True
 
