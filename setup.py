@@ -160,7 +160,7 @@ def verify_installation():
         python_cmd = Path("venv") / "bin" / "python"
     
     # Run preflight check
-    if not run_command([str(python_cmd), "scripts/preflight.py"]):
+    if not run_command([str(python_cmd), "scripts/testing/preflight.py"]):
         print("❌ Preflight check failed")
         return False
     

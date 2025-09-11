@@ -63,10 +63,10 @@ from her.promotion.promotion_adapter import compute_label_key
 
 #### Old Script Locations:
 ```bash
-python scripts/preflight.py
-python scripts/smoke_run.py
-python load_env.py
-python test_env.py
+python scripts/testing/preflight.py
+python scripts/testing/smoke_run.py
+python tools/load_env.py
+python tools/test_env.py
 ```
 
 #### New Script Locations:

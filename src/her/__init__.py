@@ -4,12 +4,8 @@
 from . import env_loader  # noqa: F401
 
 def __getattr__(name):
-    if name == "gateway_server":
-        import importlib
-        mod = importlib.import_module('.gateway_server', __name__)
-        return mod
-    # HerAgent is not available in this version
-    if name == "HerAgent":
+    # These modules are not available in this version
+    if name in ["gateway_server", "HerAgent"]:
         return None
     raise AttributeError(f"module {__name__} has no attribute {name}")
 
@@ -60,6 +56,5 @@ __all__ = [
     "DOMValidator",
     "FormValidator",
     "HybridElementRetrieverClient",
-    "gateway_server",
     "__version__"
 ]
