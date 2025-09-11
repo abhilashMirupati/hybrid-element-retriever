@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Optional
 from dataclasses import dataclass
 
+from ..config.settings import get_config
+
 
 class CanonicalMode(Enum):
     """Canonical descriptor building modes."""

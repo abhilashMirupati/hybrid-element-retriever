@@ -1059,11 +1059,38 @@ class Runner:
             except Exception:
                 continue
 
-    def _scroll_into_view(self, selector: str) -> None:
+    def _scroll_into_view(self, target) -> None:
+        """Scroll element into view if it's not visible."""
         if not _PLAYWRIGHT or not self._page:
             return
+        
         try:
-            self._page.locator(f"xpath={selector}").first.scroll_into_view_if_needed(timeout=2000)
+            # Handle both selector string and element object
+            if isinstance(target, str):
+                # If it's a selector string, get the element first
+                element = self._page.locator(f"xpath={target}").first
+                element.scroll_into_view_if_needed(timeout=2000)
+            else:
+                # If it's an element object, check if it's in viewport
+                if not hasattr(target, 'bounding_box'):
+                    return
+                    
+                bbox = target.bounding_box()
+                if not bbox:
+                    return
+                
+                viewport = self._page.viewport_size
+                if not viewport:
+                    return
+                
+                # Check if element is already in viewport
+                if (bbox['x'] >= 0 and bbox['y'] >= 0 and 
+                    bbox['x'] + bbox['width'] <= viewport['width'] and 
+                    bbox['y'] + bbox['height'] <= viewport['height']):
+                    return
+                
+                # Scroll element into view
+                target.scroll_into_view_if_needed(timeout=2000)
         except Exception:
             pass
 
@@ -1158,48 +1185,6 @@ class Runner:
         # For click actions, try to find the best element
         self._click_best_element(selector, user_intent)
 
-    def _scroll_into_view(self, element) -> None:
-        """Scroll element into view if it's not visible."""
-        try:
-            # Check if element is in viewport
-            if not hasattr(element, 'bounding_box'):
-                print(f"⚠️  Element does not have bounding_box method, skipping scroll")
-                return
-                
-            bbox = element.bounding_box()
-            if not bbox:
-                return
-            
-            viewport = self._page.viewport_size
-            if not viewport:
-                return
-            
-            # Check if element is at least partially visible
-            element_top = bbox['y']
-            element_bottom = bbox['y'] + bbox['height']
-            element_left = bbox['x']
-            element_right = bbox['x'] + bbox['width']
-            
-            viewport_height = viewport['height']
-            viewport_width = viewport['width']
-            
-            # Check if element is visible in viewport
-            is_visible = (
-                element_top >= 0 and element_top < viewport_height and
-                element_left >= 0 and element_left < viewport_width and
-                element_bottom > 0 and element_right > 0
-            )
-            
-            if not is_visible:
-                print(f"🔄 Element not in viewport, scrolling into view...")
-                element.scroll_into_view_if_needed()
-                self._page.wait_for_timeout(500)  # Wait for scroll to complete
-                print(f"✅ Scrolled element into view")
-            else:
-                print(f"✅ Element already in viewport")
-                
-        except Exception as e:
-            print(f"⚠️  Could not scroll element into view: {e}")
 
     def _click_best_element(self, selector: str, user_intent: str = "") -> None:
         """Click the best element when there are multiple matches, using user intent."""
@@ -1288,10 +1273,10 @@ class Runner:
                         if intent_lower in text_lower:
                             intent_score += 1000
                         
-                        # Partial word matches (case-insensitive)
-                        intent_words = [w.strip() for w in intent_lower.split() if w.strip()]
-                        text_words = [w.strip() for w in text_lower.split() if w.strip()]
-                        word_matches = sum(1 for word in intent_words if any(word in text_word for text_word in text_words))
+                        # Partial word matches (case-insensitive) - optimized
+                        intent_words = set(w.strip() for w in intent_lower.split() if w.strip())
+                        text_words = set(w.strip() for w in text_lower.split() if w.strip())
+                        word_matches = len(intent_words.intersection(text_words))
                         intent_score += word_matches * 200
                         
                         # Check attributes for intent
@@ -1438,8 +1423,9 @@ class Runner:
                 expected_parts = [part.strip() for part in expected.lower().split('/') if part.strip()]
                 current_parts = [part.strip() for part in current_url.lower().split('/') if part.strip()]
                 
-                # Check if key parts of expected URL are present in current URL
-                matching_parts = sum(1 for part in expected_parts if any(part in current_part for current_part in current_parts))
+                # Check if key parts of expected URL are present in current URL - optimized
+                current_parts_set = set(current_parts)
+                matching_parts = sum(1 for part in expected_parts if part in current_parts_set)
                 if matching_parts >= len(expected_parts) * 0.6:  # 60% match threshold
                     return True
                 
