@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Optional
 from dataclasses import dataclass
 
-from ..config.settings import get_config
+# Note: Using local HERConfig class, not the centralized one to avoid conflicts
 
 
 class CanonicalMode(Enum):

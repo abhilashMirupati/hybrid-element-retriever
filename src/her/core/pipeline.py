@@ -13,7 +13,7 @@ from ..embeddings.element_embedder import  ElementEmbedder  # 768-d deterministi
 from .hashing import element_dom_hash
 from ..vectordb.faiss_store import InMemoryVectorStore
 from ..vectordb.sqlite_cache import SQLiteKV
-from .config import get_config
+from ..config.settings import get_config
 from ..descriptors.hierarchy import HierarchyContextBuilder
 
 # Optional heavy embedder (if present locally)

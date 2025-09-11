@@ -22,7 +22,7 @@ except ImportError as e:
     HybridPipeline = None
     HERPipeline = None
 
-from .core.config import PipelineConfig
+from .config.settings import HERConfig as PipelineConfig
 
 # Import CLI classes that exist
 try:

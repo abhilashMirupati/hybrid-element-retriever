@@ -6,6 +6,14 @@ import os
 from pathlib import Path
 from typing import Optional, Dict, Any
 from dataclasses import dataclass, field
+from enum import Enum
+
+
+class CanonicalMode(Enum):
+    """Canonical descriptor building modes."""
+    DOM_ONLY = "dom_only"           # Only DOM attributes
+    ACCESSIBILITY_ONLY = "accessibility_only"  # Only accessibility tree attributes  
+    BOTH = "both"                   # Both DOM + accessibility tree (default)
 
 
 @dataclass
@@ -40,6 +48,9 @@ class HERConfig:
     # E2E testing
     e2e_enabled: bool = field(default_factory=lambda: os.getenv("HER_E2E", "0") == "1")
     
+    # Canonical mode
+    canonical_mode: CanonicalMode = field(default_factory=lambda: CanonicalMode.BOTH)
+    
     def __post_init__(self):
         """Validate configuration after initialization."""
         self._validate_paths()
@@ -47,7 +58,8 @@ class HERConfig:
     
     def _validate_paths(self):
         """Validate that required paths are accessible."""
-        if not self.models_dir.exists():
+        # Only validate if models directory is explicitly set and exists
+        if self.models_dir != Path("src/her/models") and not self.models_dir.exists():
             raise ValueError(f"Models directory does not exist: {self.models_dir}")
         
         # Cache directory will be created if it doesn't exist
@@ -77,7 +89,44 @@ class HERConfig:
             'headless': self.headless,
             'browser_timeout': self.browser_timeout,
             'e2e_enabled': self.e2e_enabled,
+            'canonical_mode': self.canonical_mode,
         }
+    
+    def get_canonical_mode(self) -> CanonicalMode:
+        """Get canonical mode."""
+        return self.canonical_mode
+    
+    def should_use_dom(self) -> bool:
+        """Check if DOM should be used."""
+        return self.canonical_mode in [CanonicalMode.DOM_ONLY, CanonicalMode.BOTH]
+    
+    def should_use_accessibility(self) -> bool:
+        """Check if accessibility tree should be used."""
+        return self.canonical_mode in [CanonicalMode.ACCESSIBILITY_ONLY, CanonicalMode.BOTH]
+    
+    def is_performance_optimized(self) -> bool:
+        """Check if performance optimizations are enabled."""
+        return not self.debug and not self.debug_canonical
+    
+    def is_accessibility_mandatory(self) -> bool:
+        """Check if accessibility is mandatory."""
+        return self.canonical_mode == CanonicalMode.ACCESSIBILITY_ONLY
+    
+    def should_select_all_elements(self) -> bool:
+        """Check if all elements should be selected."""
+        return self.debug or self.debug_canonical
+    
+    def should_use_hierarchy(self) -> bool:
+        """Check if hierarchy should be used."""
+        return self.use_hierarchy
+    
+    def should_use_two_stage(self) -> bool:
+        """Check if two-stage processing should be used."""
+        return self.use_two_stage
+    
+    def is_hierarchy_debug_enabled(self) -> bool:
+        """Check if hierarchy debug is enabled."""
+        return self.debug_hierarchy
     
     @classmethod
     def from_env(cls) -> 'HERConfig':
@@ -112,3 +161,12 @@ def reset_config() -> None:
     """Reset the global configuration instance."""
     global _config
     _config = None
+
+
+# Cache constants for backward compatibility
+MEMORY_CACHE_SIZE = 1000
+DISK_CACHE_SIZE_MB = 100
+
+def get_cache_dir() -> Path:
+    """Get cache directory from configuration."""
+    return get_config().cache_dir
