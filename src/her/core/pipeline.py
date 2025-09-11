@@ -191,7 +191,8 @@ class HybridPipeline:
             texts = []
             for el in descs:
                 text = el.get("text", "")
-                if current_config.should_use_hierarchy() and "context" in el:
+                config_service = get_config_service()
+                if config_service.should_use_hierarchy() and "context" in el:
                     context = el["context"]
                     hierarchy_path = context.get("hierarchy_path", "")
                     if hierarchy_path and hierarchy_path != "PENDING" and hierarchy_path != "ERROR":
@@ -753,8 +754,8 @@ class HybridPipeline:
                 html_text = f'<{tag}{attr_str}>{text}</{tag}>'
             
             # Add hierarchy context if enabled
-            current_config = get_config()
-            if current_config.should_use_hierarchy() and "context" in meta:
+            config_service = get_config_service()
+            if config_service.should_use_hierarchy() and "context" in meta:
                 context = meta["context"]
                 hierarchy_path = context.get("hierarchy_path", "")
                 if hierarchy_path and hierarchy_path != "PENDING" and hierarchy_path != "ERROR":
@@ -895,8 +896,8 @@ class HybridPipeline:
                 ranked = [(score, meta, [f"markup_cosine={score:.3f}", "trusted_markup"]) for score, meta in markup_scores]
             else:
                 # Check if heuristics are disabled
-                current_config = get_config()
-                if current_config.should_disable_heuristics():
+                config_service = get_config_service()
+                if config_service.should_disable_heuristics():
                     print(f"   ⚠️  Close scores - heuristics disabled, trusting MarkupLM")
                     ranked = [(score, meta, [f"markup_cosine={score:.3f}", "trusted_markup"]) for score, meta in markup_scores]
                 else:
@@ -904,8 +905,8 @@ class HybridPipeline:
                     ranked = self._apply_basic_heuristics(markup_scores, user_intent, target)
         else:
             # Check if heuristics are disabled
-            current_config = get_config()
-            if current_config.should_disable_heuristics():
+            config_service = get_config_service()
+            if config_service.should_disable_heuristics():
                 print(f"   ⚠️  Only {len(markup_scores)} candidates - heuristics disabled, trusting MarkupLM")
                 ranked = [(score, meta, [f"markup_cosine={score:.3f}", "trusted_markup"]) for score, meta in markup_scores]
             else:
