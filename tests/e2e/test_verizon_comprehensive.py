@@ -23,7 +23,7 @@ class TestVerizonComprehensive:
     
     def test_verizon_phone_navigation_flow(self):
         """Test complete flow: navigate to Verizon, find phones, filter by Apple, select iPhone."""
-        from her.core.runner import Runner
+        from src.her.core.runner import Runner
         
         runner = Runner(headless=True)
         
@@ -72,7 +72,7 @@ class TestVerizonComprehensive:
     
     def test_verizon_search_functionality(self):
         """Test search functionality on Verizon site."""
-        from her.core.runner import Runner
+        from src.her.core.runner import Runner
         
         runner = Runner(headless=True)
         
@@ -105,7 +105,7 @@ class TestVerizonComprehensive:
     
     def test_verizon_menu_navigation(self):
         """Test menu navigation on Verizon site."""
-        from her.core.runner import Runner
+        from src.her.core.runner import Runner
         
         runner = Runner(headless=True)
         
@@ -139,7 +139,7 @@ class TestVerizonComprehensive:
     
     def test_verizon_element_detection_accuracy(self):
         """Test accuracy of element detection on Verizon pages."""
-        from her.core.runner import Runner
+        from src.her.core.runner import Runner
         
         runner = Runner(headless=True)
         
@@ -181,7 +181,7 @@ class TestVerizonComprehensive:
     
     def test_verizon_error_handling(self):
         """Test error handling with invalid selectors."""
-        from her.core.runner import Runner
+        from src.her.core.runner import Runner
         
         runner = Runner(headless=True)
         

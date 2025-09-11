@@ -9,9 +9,13 @@ import sys
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from her.embeddings.text_embedder import TextEmbedder
-from her.embeddings.markuplm_embedder import MarkupLMEmbedder
-from her.embeddings.element_embedder import ElementEmbedder
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+
+from src.her.embeddings.text_embedder import TextEmbedder
+from src.her.embeddings.markuplm_embedder import MarkupLMEmbedder
+from src.her.embeddings.element_embedder import ElementEmbedder
 
 
 class TestEmbedderDimensions:

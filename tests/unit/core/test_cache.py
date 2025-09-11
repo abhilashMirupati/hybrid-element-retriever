@@ -12,8 +12,12 @@ import json
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from her.vectordb.sqlite_cache import SQLiteKV
-from her.promotion.promotion_adapter import compute_label_key, lookup_promotion, record_success, record_failure
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+
+from src.her.vectordb.sqlite_cache import SQLiteKV
+from src.her.promotion.promotion_adapter import compute_label_key, lookup_promotion, record_success, record_failure
 
 
 class TestCache:
