@@ -41,24 +41,34 @@ class Runner:
     _shared_pipeline = None
     _pipeline_lock = None
     
-    def __init__(self, headless: bool = True) -> None:
+    def __init__(self, headless: bool = True, intent_parser: Optional[EnhancedIntentParser] = None, pipeline: Optional[HybridPipeline] = None) -> None:
+        """Initialize Runner with optional dependency injection.
+        
+        Args:
+            headless: Whether to run browser in headless mode.
+            intent_parser: Optional intent parser instance. If None, creates default.
+            pipeline: Optional pipeline instance. If None, uses shared pipeline.
+        """
         self.headless = headless
-        self.intent = EnhancedIntentParser()
+        self.intent = intent_parser or EnhancedIntentParser()
         
-        # Use shared pipeline to avoid reloading models
-        if Runner._shared_pipeline is None:
-            import threading
-            if Runner._pipeline_lock is None:
-                Runner._pipeline_lock = threading.Lock()
+        # Use provided pipeline or shared pipeline to avoid reloading models
+        if pipeline is not None:
+            self.pipeline = pipeline
+        else:
+            if Runner._shared_pipeline is None:
+                import threading
+                if Runner._pipeline_lock is None:
+                    Runner._pipeline_lock = threading.Lock()
+                
+                with Runner._pipeline_lock:
+                    if Runner._shared_pipeline is None:
+                        print("📦 Loading models (one-time cost for all runners)...")
+                        start_time = time.time()
+                        Runner._shared_pipeline = HybridPipeline()
+                        print(f"   ✅ Models loaded in {time.time() - start_time:.3f}s")
             
-            with Runner._pipeline_lock:
-                if Runner._shared_pipeline is None:
-                    print("📦 Loading models (one-time cost for all runners)...")
-                    start_time = time.time()
-                    Runner._shared_pipeline = HybridPipeline()
-                    print(f"   ✅ Models loaded in {time.time() - start_time:.3f}s")
-        
-        self.pipeline = Runner._shared_pipeline
+            self.pipeline = Runner._shared_pipeline
         self._page = None
         self._browser = None
         self._playwright = None
@@ -804,6 +814,17 @@ class Runner:
         frames = [{"frame_url": frame_url, "elements": items, "frame_hash": fh}]
         return {"elements": items, "dom_hash": dom_hash(frames), "url": frame_url}
 
+    def snapshot(self, url: Optional[str] = None) -> Dict[str, Any]:
+        """Take a snapshot of the current page or navigate to a URL.
+        
+        Args:
+            url: Optional URL to navigate to. If None, captures current page.
+            
+        Returns:
+            Dictionary containing elements, DOM hash, and URL.
+        """
+        return self._snapshot(url)
+    
     def _snapshot(self, url: Optional[str] = None) -> Dict[str, Any]:
         page = self._ensure_browser()
         if not _PLAYWRIGHT or not page:
@@ -821,6 +842,18 @@ class Runner:
                 pass
         return self._inline_snapshot()
 
+    def resolve_selector(self, phrase: str, snapshot: Dict[str, Any]) -> Dict[str, Any]:
+        """Resolve a natural language phrase to a CSS selector.
+        
+        Args:
+            phrase: Natural language description of the element to find.
+            snapshot: Page snapshot from snapshot() method.
+            
+        Returns:
+            Dictionary containing selector, confidence, and metadata.
+        """
+        return self._resolve_selector(phrase, snapshot)
+    
     def _resolve_selector(self, phrase: str, snapshot: Dict[str, Any]) -> Dict[str, Any]:
         elements = snapshot.get("elements", [])
         if not elements:
@@ -1094,6 +1127,18 @@ class Runner:
         except Exception:
             pass
 
+    def do_action(self, action: str, selector: str, value: Optional[str] = None, promo: Optional[Dict[str, Any]] = None, user_intent: str = "") -> None:
+        """Execute an action on a page element.
+        
+        Args:
+            action: Action to perform (click, type, etc.).
+            selector: CSS selector for the target element.
+            value: Optional value for input actions.
+            promo: Optional promotion metadata.
+            user_intent: Optional user intent description.
+        """
+        return self._do_action(action, selector, value, promo or {}, user_intent)
+    
     def _do_action(self, action: str, selector: str, value: Optional[str], promo: Dict[str, Any], user_intent: str = "") -> None:
         if not _PLAYWRIGHT or not self._page:
             raise RuntimeError("Playwright unavailable for action execution")
