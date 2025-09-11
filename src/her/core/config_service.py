@@ -78,13 +78,19 @@ class ConfigService:
 
 # Global configuration service instance
 _config_service: Optional[ConfigService] = None
+_config_lock = None
 
 
 def get_config_service() -> ConfigService:
     """Get the global configuration service instance."""
-    global _config_service
+    global _config_service, _config_lock
     if _config_service is None:
-        _config_service = ConfigService()
+        import threading
+        if _config_lock is None:
+            _config_lock = threading.Lock()
+        with _config_lock:
+            if _config_service is None:
+                _config_service = ConfigService()
     return _config_service
 
 

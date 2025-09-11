@@ -30,7 +30,7 @@ class TestVerizonComprehensive:
         try:
             # Step 1: Navigate to Verizon homepage
             runner.snapshot("https://www.verizon.com/")
-            runner._page.wait_for_timeout(3000)
+            runner.wait_for_timeout(3000)
             
             # Step 2: Click on Phones navigation
             shot = runner.snapshot()
@@ -39,10 +39,10 @@ class TestVerizonComprehensive:
             assert result['confidence'] > 0.5, f"Low confidence for Phones selector: {result['confidence']}"
             
             runner.do_action("click", result["selector"], None, result.get("promo", {}))
-            runner._page.wait_for_timeout(3000)
+            runner.wait_for_timeout(3000)
             
             # Verify we're on phones page
-            current_url = runner._page.url
+            current_url = runner.get_current_url()
             assert "phones" in current_url.lower(), f"Expected phones in URL, got: {current_url}"
             
             # Step 3: Apply Apple filter
@@ -52,7 +52,7 @@ class TestVerizonComprehensive:
             assert result['confidence'] > 0.5, f"Low confidence for Apple filter: {result['confidence']}"
             
             runner.do_action("click", result["selector"], None, result.get("promo", {}))
-            runner._page.wait_for_timeout(3000)
+            runner.wait_for_timeout(3000)
             
             # Step 4: Select iPhone product
             shot = runner.snapshot()
@@ -61,10 +61,10 @@ class TestVerizonComprehensive:
             assert result['confidence'] > 0.5, f"Low confidence for iPhone selector: {result['confidence']}"
             
             runner.do_action("click", result["selector"], None, result.get("promo", {}))
-            runner._page.wait_for_timeout(5000)
+            runner.wait_for_timeout(5000)
             
             # Verify we're on iPhone product page
-            current_url = runner._page.url
+            current_url = runner.get_current_url()
             assert "iphone" in current_url.lower(), f"Expected iPhone in URL, got: {current_url}"
             
         finally:
@@ -79,7 +79,7 @@ class TestVerizonComprehensive:
         try:
             # Navigate to Verizon
             runner.snapshot("https://www.verizon.com/")
-            runner._page.wait_for_timeout(3000)
+            runner.wait_for_timeout(3000)
             
             # Find and use search box
             shot = runner.snapshot()
@@ -89,14 +89,14 @@ class TestVerizonComprehensive:
             
             # Type search query
             runner.do_action("type", result["selector"], "iPhone 16", result.get("promo", {}))
-            runner._page.wait_for_timeout(2000)
+            runner.wait_for_timeout(2000)
             
             # Submit search
             runner.do_action("press", result["selector"], "Enter", result.get("promo", {}))
-            runner._page.wait_for_timeout(5000)
+            runner.wait_for_timeout(5000)
             
             # Verify search results
-            current_url = runner._page.url
+            current_url = runner.get_current_url()
             assert "search" in current_url.lower() or "iphone" in current_url.lower(), \
                 f"Expected search results, got: {current_url}"
             
@@ -112,7 +112,7 @@ class TestVerizonComprehensive:
         try:
             # Navigate to Verizon
             runner.snapshot("https://www.verizon.com/")
-            runner._page.wait_for_timeout(3000)
+            runner.wait_for_timeout(3000)
             
             # Find and click menu button
             shot = runner.snapshot()
@@ -120,7 +120,7 @@ class TestVerizonComprehensive:
             
             if result['confidence'] > 0.3:
                 runner.do_action("click", result["selector"], None, result.get("promo", {}))
-                runner._page.wait_for_timeout(2000)
+                runner.wait_for_timeout(2000)
                 
                 # Try to find a menu item
                 shot = runner.snapshot()
@@ -128,10 +128,10 @@ class TestVerizonComprehensive:
                 
                 if result['confidence'] > 0.3:
                     runner.do_action("click", result["selector"], None, result.get("promo", {}))
-                    runner._page.wait_for_timeout(3000)
+                    runner.wait_for_timeout(3000)
                     
                     # Verify navigation
-                    current_url = runner._page.url
+                    current_url = runner.get_current_url()
                     assert "plan" in current_url.lower(), f"Expected plans in URL, got: {current_url}"
             
         finally:
@@ -146,7 +146,7 @@ class TestVerizonComprehensive:
         try:
             # Navigate to Verizon
             runner.snapshot("https://www.verizon.com/")
-            runner._page.wait_for_timeout(3000)
+            runner.wait_for_timeout(3000)
             
             # Test various element types
             test_queries = [
@@ -188,7 +188,7 @@ class TestVerizonComprehensive:
         try:
             # Navigate to Verizon
             runner.snapshot("https://www.verizon.com/")
-            runner._page.wait_for_timeout(3000)
+            runner.wait_for_timeout(3000)
             
             # Test with non-existent element
             shot = runner.snapshot()

@@ -54,6 +54,9 @@ class Runner:
         
         # Use provided pipeline or shared pipeline to avoid reloading models
         if pipeline is not None:
+            # Validate that the provided pipeline is compatible
+            if not hasattr(pipeline, 'query') or not callable(getattr(pipeline, 'query')):
+                raise ValueError("Provided pipeline must have a 'query' method")
             self.pipeline = pipeline
         else:
             if Runner._shared_pipeline is None:
@@ -1139,6 +1142,23 @@ class Runner:
         """
         return self._do_action(action, selector, value, promo or {}, user_intent)
     
+    def wait_for_timeout(self, timeout: int) -> None:
+        """Wait for a specified timeout.
+        
+        Args:
+            timeout: Timeout in milliseconds.
+        """
+        if self._page:
+            self._page.wait_for_timeout(timeout)
+    
+    def get_current_url(self) -> str:
+        """Get the current page URL.
+        
+        Returns:
+            Current page URL.
+        """
+        return self._page.url if self._page else ""
+    
     def _do_action(self, action: str, selector: str, value: Optional[str], promo: Dict[str, Any], user_intent: str = "") -> None:
         if not _PLAYWRIGHT or not self._page:
             raise RuntimeError("Playwright unavailable for action execution")
@@ -1147,30 +1167,33 @@ class Runner:
         self._dismiss_overlays()
         # Strict executor if available
         if Executor is not None and action not in {"back", "refresh", "wait"}:
-            ex = Executor(self._page)
-            kw = dict(page_sig=promo.get("page_sig"), frame_hash=promo.get("frame_hash"), label_key=promo.get("label_key"))
-            if action == "type" and value is not None:
-                ex.type(selector, str(value), **kw)
-                return
-            if action == "press" and value:
-                ex.press(selector, str(value), **kw)
-                return
-            if action == "hover":
-                self._page.locator(f"xpath={selector}").first.hover()
-                return
-            if action in {"check", "uncheck"}:
-                handle = self._page.locator(f"xpath={selector}").first
-                try:
-                    if action == "check":
-                        handle.check()
-                    else:
-                        handle.uncheck()
+            try:
+                ex = Executor(self._page)
+                kw = dict(page_sig=promo.get("page_sig"), frame_hash=promo.get("frame_hash"), label_key=promo.get("label_key"))
+                if action == "type" and value is not None:
+                    ex.type(selector, str(value), **kw)
                     return
-                except Exception:
-                    pass
-            # select action is handled later in the method
-            ex.click(selector, **kw)
-            return
+                if action == "press" and value:
+                    ex.press(selector, str(value), **kw)
+                    return
+                if action == "hover":
+                    self._page.locator(f"xpath={selector}").first.hover()
+                    return
+            except Exception as e:
+                logger.warning(f"Executor failed for action '{action}': {e}, falling back to direct Playwright")
+                # Fall through to direct Playwright implementation
+        
+        # Direct Playwright implementation
+        if action in {"check", "uncheck"}:
+            handle = self._page.locator(f"xpath={selector}").first
+            try:
+                if action == "check":
+                    handle.check()
+                else:
+                    handle.uncheck()
+                return
+            except Exception:
+                pass
         # Fallback raw Playwright and navigation/waits
         if action == "type" and value is not None:
             element = self._page.locator(f"xpath={selector}").first
