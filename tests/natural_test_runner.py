@@ -7,6 +7,10 @@ Run tests using plain English descriptions.
 import sys
 import os
 import argparse
+
+# Add the project root to the Python path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
 from src.her.testing.natural_test_runner import run_natural_test
 
 # Try to load environment variables from .env file (optional)
