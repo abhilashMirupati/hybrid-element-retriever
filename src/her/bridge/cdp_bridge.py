@@ -109,7 +109,7 @@ def get_flattened_document(
                 "DOM.getFlattenedDocument", {"depth": depth, "pierce": pierce}
             )
             nodes = response.get("nodes", [])
-            logger.debug(f"Retrieved {len(nodes)} DOM nodes via getFlattenedDocument")
+            print(f"Retrieved {len(nodes)} DOM nodes via getFlattenedDocument")
             return nodes
         except Exception as e:
             # Fall back to getDocument if getFlattenedDocument not available

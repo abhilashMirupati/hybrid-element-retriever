@@ -254,7 +254,7 @@ class NaturalTestRunner:
         if new_url != self.current_url:
             logger.info(f"Page transition detected: {self.current_url} -> {new_url}")
             self.current_url = new_url
-            
+             
             # Wait for page to fully load
             self.runner.wait_for_timeout(3000)
             
