@@ -109,8 +109,13 @@ class NaturalTestRunner:
                     'confidence': 0.0
                 }
             
-            # Parse the step description to understand the action
-            action_info = self._parse_step_description(description)
+            # Parse the step description using enhanced intent parser
+            enhanced_intent = parser.parse(description)
+            action_info = {
+                'action': enhanced_intent.action,
+                'target': enhanced_intent.target_phrase,
+                'value': enhanced_intent.value
+            }
             
             # Handle special cases
             if action_info['action'] == 'navigate':

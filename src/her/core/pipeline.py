@@ -939,9 +939,8 @@ class HybridPipeline:
             sel = md.get("xpath") or ""
             if not sel:
                 # Generate XPath for this top candidate
-                from ..core.runner import Runner
-                runner = Runner()
-                sel = runner._generate_xpath_for_element(md)
+                from ..utils.xpath_generator import generate_xpath_for_element
+                sel = generate_xpath_for_element(md)
             
             results.append({
                 "selector": sel,
@@ -1197,9 +1196,8 @@ class HybridPipeline:
             sel = md.get("xpath") or ""
             if not sel:
                 # Generate XPath for this top candidate
-                from ..core.runner import Runner
-                runner = Runner()
-                sel = runner._generate_xpath_for_element(md)
+                from ..utils.xpath_generator import generate_xpath_for_element
+                sel = generate_xpath_for_element(md)
             
             results.append({
                 "selector": sel,
