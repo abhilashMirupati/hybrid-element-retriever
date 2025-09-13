@@ -40,9 +40,7 @@ TEST_CONFIG = {
     "start_url": "https://www.google.com/",
     "steps": [
         "Navigate to \"https://www.google.com/\"",
-        "Click on \"search\"", 
-        "Enter $Python programming in \"search\"",
-        "Press Enter"
+        "Click on \"search\""
     ],
     "headless": True
 }

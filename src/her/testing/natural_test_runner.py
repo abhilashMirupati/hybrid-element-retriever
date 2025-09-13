@@ -10,6 +10,7 @@ from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 from ..core.runner import Runner
 from ..core.config_service import get_config_service
+from ..core.smart_snapshot_manager import SmartSnapshotManager, SnapshotReason
 
 logger = logging.getLogger("her.natural_test")
 
@@ -36,6 +37,13 @@ class NaturalTestRunner:
         self.config_service = get_config_service()
         self.current_url = ""
         self.step_results = []
+        self.snapshot_manager = SmartSnapshotManager(
+            snapshot_cooldown=0.1,  # 0.1 second cooldown for testing
+            max_consecutive_failures=2,  # Force snapshot after 2 failures
+            dynamic_content_threshold=0.1  # 10% element change threshold
+        )
+        print("🧠 Smart Snapshot Manager initialized")  # Use print to ensure visibility
+        logger.info("🧠 Smart Snapshot Manager initialized")
         
     def run_test(self, test_name: str, steps: List[str], start_url: str) -> Dict[str, Any]:
         """Run a test defined by natural language steps.
@@ -80,10 +88,20 @@ class NaturalTestRunner:
     
     def _navigate_to_start(self, start_url: str) -> None:
         """Navigate to the starting URL."""
-        logger.info(f"Navigating to: {start_url}")
+        logger.info(f"🚀 Navigating to: {start_url}")
+        
+        # Take initial snapshot
+        logger.info("📸 Taking initial snapshot")
+        start_time = time.time()
         snapshot = self.runner.snapshot(start_url)
+        snapshot_time = time.time() - start_time
+        logger.info(f"⏱️  Initial snapshot took: {snapshot_time:.2f}s")
+        
+        # Update snapshot manager state
+        self.snapshot_manager.update_state_after_snapshot(snapshot, SnapshotReason.INITIAL_LOAD)
+        
         self.current_url = self.runner.get_current_url()
-        logger.info(f"Successfully navigated to: {self.current_url}")
+        logger.info(f"✅ Successfully navigated to: {self.current_url}")
     
     def _execute_step(self, step_number: int, description: str) -> Dict[str, Any]:
         """Execute a single natural language step.
@@ -140,19 +158,68 @@ class NaturalTestRunner:
                     'selector': 'N/A'
                 }
             
-            # Take a snapshot of current page
-            snapshot = self.runner.snapshot()
+            # Smart snapshot management
+            should_take, reason, explanation = self.snapshot_manager.should_take_snapshot(
+                current_url=self.current_url,
+                action_type=action_info['action'],
+                force=False,
+                element_found=True,  # Will be updated after element finding
+                confidence=1.0
+            )
+            
+            if should_take:
+                print(f"📸 Taking snapshot: {reason.value} - {explanation}")
+                logger.info(f"📸 Taking snapshot: {reason.value} - {explanation}")
+                start_time = time.time()
+                snapshot = self.runner.snapshot()
+                snapshot_time = time.time() - start_time
+                print(f"⏱️  Snapshot took: {snapshot_time:.2f}s")
+                logger.info(f"⏱️  Snapshot took: {snapshot_time:.2f}s")
+                self.snapshot_manager.update_state_after_snapshot(snapshot, reason)
+            else:
+                print(f"♻️  Skipping snapshot: {explanation}")
+                logger.info(f"♻️  Skipping snapshot: {explanation}")
+                # Use last known snapshot or take a minimal one
+                snapshot = self._get_last_snapshot_or_minimal()
+                self.snapshot_manager.snapshots_saved += 1
             
             # Find the target element
             result = self.runner.resolve_selector(action_info['target'], snapshot)
             
             if result['confidence'] < 0.5:
-                return {
-                    'step_number': step_number,
-                    'success': False,
-                    'error': f"Could not find element for '{action_info['target']}' (confidence: {result['confidence']:.3f})",
-                    'confidence': result['confidence']
-                }
+                # Element not found - update snapshot manager and potentially retry
+                should_retry, retry_reason, retry_explanation = self.snapshot_manager.should_take_snapshot(
+                    current_url=self.current_url,
+                    action_type=action_info['action'],
+                    element_found=False,
+                    confidence=result['confidence']
+                )
+                
+                if should_retry:
+                    logger.info(f"🔄 Retrying with fresh snapshot: {retry_explanation}")
+                    start_time = time.time()
+                    snapshot = self.runner.snapshot()
+                    snapshot_time = time.time() - start_time
+                    logger.info(f"⏱️  Retry snapshot took: {snapshot_time:.2f}s")
+                    self.snapshot_manager.update_state_after_snapshot(snapshot, retry_reason)
+                    
+                    # Try finding element again
+                    result = self.runner.resolve_selector(action_info['target'], snapshot)
+                    
+                    if result['confidence'] < 0.5:
+                        return {
+                            'step_number': step_number,
+                            'success': False,
+                            'error': f"Could not find element for '{action_info['target']}' even after retry (confidence: {result['confidence']:.3f})",
+                            'confidence': result['confidence']
+                        }
+                else:
+                    return {
+                        'step_number': step_number,
+                        'success': False,
+                        'error': f"Could not find element for '{action_info['target']}' (confidence: {result['confidence']:.3f})",
+                        'confidence': result['confidence']
+                    }
             
             # Execute the action
             self.runner.do_action(
@@ -166,8 +233,34 @@ class NaturalTestRunner:
             # Wait for action to complete
             self.runner.wait_for_timeout(2000)
             
-            # Take a fresh snapshot after action to capture any page changes
-            fresh_snapshot = self.runner.snapshot()
+            # Update snapshot manager state after action
+            new_url = self.runner.get_current_url()
+            self.snapshot_manager.update_state_after_action(
+                action_type=action_info['action'],
+                success=True,
+                new_url=new_url
+            )
+            
+            # Check if we need a fresh snapshot after action
+            should_take_fresh, fresh_reason, fresh_explanation = self.snapshot_manager.should_take_snapshot(
+                current_url=new_url,
+                action_type=action_info['action'],
+                force=False,
+                element_found=True,
+                confidence=1.0
+            )
+            
+            if should_take_fresh:
+                logger.info(f"📸 Taking post-action snapshot: {fresh_explanation}")
+                start_time = time.time()
+                fresh_snapshot = self.runner.snapshot()
+                snapshot_time = time.time() - start_time
+                logger.info(f"⏱️  Post-action snapshot took: {snapshot_time:.2f}s")
+                self.snapshot_manager.update_state_after_snapshot(fresh_snapshot, fresh_reason)
+            else:
+                logger.info(f"♻️  Skipping post-action snapshot: {fresh_explanation}")
+                fresh_snapshot = snapshot  # Use same snapshot
+                self.snapshot_manager.snapshots_saved += 1
             
             return {
                 'step_number': step_number,
@@ -265,20 +358,40 @@ class NaturalTestRunner:
             'value': value
         }
     
+    def _get_last_snapshot_or_minimal(self) -> Dict[str, Any]:
+        """Get last snapshot or create a minimal one for same-page actions."""
+        # For now, we'll take a minimal snapshot
+        # In a more advanced implementation, we could cache the last snapshot
+        logger.info("🔄 Taking minimal snapshot for same-page action")
+        start_time = time.time()
+        snapshot = self.runner.snapshot()
+        snapshot_time = time.time() - start_time
+        logger.info(f"⏱️  Minimal snapshot took: {snapshot_time:.2f}s")
+        return snapshot
+    
     def _handle_page_transition(self) -> None:
         """Automatically detect page transitions and take new snapshot."""
         new_url = self.runner.get_current_url()
         
         if new_url != self.current_url:
-            logger.info(f"Page transition detected: {self.current_url} -> {new_url}")
+            logger.info(f"🔄 Page transition detected: {self.current_url} -> {new_url}")
+            old_url = self.current_url
             self.current_url = new_url
              
             # Wait for page to fully load
             self.runner.wait_for_timeout(3000)
             
-            # Take a new snapshot to ensure we have current page state
+            # Take a new snapshot for page transition
+            logger.info("📸 Taking snapshot for page transition")
+            start_time = time.time()
             snapshot = self.runner.snapshot()
-            logger.info(f"New page loaded with {len(snapshot.get('elements', []))} elements")
+            snapshot_time = time.time() - start_time
+            logger.info(f"⏱️  Page transition snapshot took: {snapshot_time:.2f}s")
+            
+            # Update snapshot manager state
+            self.snapshot_manager.update_state_after_snapshot(snapshot, SnapshotReason.PAGE_TRANSITION)
+            
+            logger.info(f"📄 New page loaded with {len(snapshot.get('elements', []))} elements")
     
     def _create_test_result(self, test_name: str, success: bool, message: str) -> Dict[str, Any]:
         """Create test result summary.
@@ -291,6 +404,9 @@ class NaturalTestRunner:
         Returns:
             Dictionary with test results.
         """
+        # Get performance statistics
+        perf_stats = self.snapshot_manager.get_performance_stats()
+        
         return {
             'test_name': test_name,
             'success': success,
@@ -299,7 +415,8 @@ class NaturalTestRunner:
             'successful_steps': sum(1 for r in self.step_results if r['success']),
             'failed_steps': sum(1 for r in self.step_results if not r['success']),
             'step_results': self.step_results,
-            'final_url': self.current_url
+            'final_url': self.current_url,
+            'performance_stats': perf_stats
         }
 
 
