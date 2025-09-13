@@ -96,6 +96,19 @@ class NaturalTestRunner:
             Dictionary with step execution results.
         """
         try:
+            # Validate structured format first
+            from ..parser.enhanced_intent import EnhancedIntentParser
+            parser = EnhancedIntentParser()
+            is_valid, error_msg = parser.validate_structured_format(description)
+            
+            if not is_valid:
+                return {
+                    'step_number': step_number,
+                    'success': False,
+                    'error': f"Format validation failed: {error_msg}",
+                    'confidence': 0.0
+                }
+            
             # Parse the step description to understand the action
             action_info = self._parse_step_description(description)
             
