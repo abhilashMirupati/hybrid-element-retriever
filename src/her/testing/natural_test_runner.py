@@ -8,6 +8,7 @@ import logging
 import time
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
+from ..core.snapshot_cache import IntelligentSnapshotManager
 from ..core.runner import Runner
 from ..core.config_service import get_config_service
 
@@ -36,6 +37,10 @@ class NaturalTestRunner:
         self.config_service = get_config_service()
         self.current_url = ""
         self.step_results = []
+        self.snapshot_manager = IntelligentSnapshotManager(
+            cache_ttl=5.0,  # Cache snapshots for 5 seconds
+            similarity_threshold=0.95
+        )
         
     def run_test(self, test_name: str, steps: List[str], start_url: str) -> Dict[str, Any]:
         """Run a test defined by natural language steps.
@@ -140,8 +145,23 @@ class NaturalTestRunner:
                     'selector': 'N/A'
                 }
             
-            # Take a snapshot of current page
-            snapshot = self.runner.snapshot()
+            # Intelligent snapshot management
+            should_take, reason = self.snapshot_manager.should_take_snapshot(
+                current_url=self.current_url,
+                action_type=action_info['action']
+            )
+            
+            if should_take:
+                logger.info(f"📸 Taking snapshot: {reason}")
+                snapshot = self.runner.snapshot()
+                self.snapshot_manager.cache_snapshot(self.current_url, snapshot)
+            else:
+                logger.info(f"♻️  Using cached snapshot: {reason}")
+                snapshot = self.snapshot_manager.get_cached_snapshot(self.current_url)
+                if not snapshot:
+                    # Fallback if cache miss
+                    snapshot = self.runner.snapshot()
+                    self.snapshot_manager.cache_snapshot(self.current_url, snapshot)
             
             # Find the target element
             result = self.runner.resolve_selector(action_info['target'], snapshot)
@@ -166,8 +186,19 @@ class NaturalTestRunner:
             # Wait for action to complete
             self.runner.wait_for_timeout(2000)
             
-            # Take a fresh snapshot after action to capture any page changes
-            fresh_snapshot = self.runner.snapshot()
+            # Check if we need a fresh snapshot after action
+            should_take_fresh, reason = self.snapshot_manager.should_take_snapshot(
+                current_url=self.current_url,
+                action_type=action_info['action'],
+                force=True  # Force snapshot after interactive actions
+            )
+            
+            if should_take_fresh:
+                logger.info(f"📸 Taking post-action snapshot: {reason}")
+                fresh_snapshot = self.runner.snapshot()
+                self.snapshot_manager.cache_snapshot(self.current_url, fresh_snapshot)
+            else:
+                fresh_snapshot = snapshot  # Use same snapshot
             
             return {
                 'step_number': step_number,
@@ -270,15 +301,25 @@ class NaturalTestRunner:
         new_url = self.runner.get_current_url()
         
         if new_url != self.current_url:
-            logger.info(f"Page transition detected: {self.current_url} -> {new_url}")
+            logger.info(f"🔄 Page transition detected: {self.current_url} -> {new_url}")
+            old_url = self.current_url
             self.current_url = new_url
              
             # Wait for page to fully load
             self.runner.wait_for_timeout(3000)
             
-            # Take a new snapshot to ensure we have current page state
+            # Take a new snapshot for the new page
             snapshot = self.runner.snapshot()
-            logger.info(f"New page loaded with {len(snapshot.get('elements', []))} elements")
+            self.snapshot_manager.cache_snapshot(self.current_url, snapshot)
+            
+            # Detect changes if we had a previous snapshot
+            if old_url:
+                old_snapshot = self.snapshot_manager.get_cached_snapshot(old_url)
+                if old_snapshot:
+                    changes = self.snapshot_manager.detect_page_changes(old_snapshot, snapshot)
+                    logger.info(f"📊 Page changes: {changes['element_count_change']:+d} elements, {changes['percentage_change']:.1f}% change")
+            
+            logger.info(f"📄 New page loaded with {len(snapshot.get('elements', []))} elements")
     
     def _create_test_result(self, test_name: str, success: bool, message: str) -> Dict[str, Any]:
         """Create test result summary.
@@ -291,6 +332,9 @@ class NaturalTestRunner:
         Returns:
             Dictionary with test results.
         """
+        # Get cache statistics
+        cache_stats = self.snapshot_manager.get_cache_stats()
+        
         return {
             'test_name': test_name,
             'success': success,
@@ -299,7 +343,8 @@ class NaturalTestRunner:
             'successful_steps': sum(1 for r in self.step_results if r['success']),
             'failed_steps': sum(1 for r in self.step_results if not r['success']),
             'step_results': self.step_results,
-            'final_url': self.current_url
+            'final_url': self.current_url,
+            'cache_stats': cache_stats
         }
 
 
