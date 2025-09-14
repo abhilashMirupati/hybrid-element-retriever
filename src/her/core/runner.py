@@ -389,6 +389,10 @@ class Runner:
             print("✅ Models cleaned up")
 
     def _inline_snapshot(self) -> Dict[str, Any]:
+        # Skip CDP entirely and use JavaScript fallback which we know works
+        print("🔧 Using JavaScript fallback snapshot (CDP disabled for debugging)")
+        return self._fallback_javascript_snapshot()
+        
         # First try to get DOM + accessibility tree via CDP
         try:
             from ..bridge.cdp_bridge import capture_complete_snapshot
@@ -532,20 +536,56 @@ class Runner:
             if not page:
                 return {"elements": [], "dom_hash": "", "url": ""}
             
+            # Ensure page is fully loaded before running JavaScript
+            print("🔄 Ensuring page is fully loaded before JavaScript...")
+            page.wait_for_load_state("domcontentloaded", timeout=15000)
+            page.wait_for_load_state("load", timeout=15000)
+            page.wait_for_load_state("networkidle", timeout=15000)
+            page.wait_for_timeout(5000)
+            
+            # Force re-render
+            page.evaluate("() => { document.body.offsetHeight; }")
+            page.wait_for_timeout(2000)
+            
+            print("✅ Page fully loaded, running JavaScript...")
+            
             # Use JavaScript to get DOM elements
             elements_js = page.evaluate("""
                 () => {
-                    const elements = [];
-                    const walker = document.createTreeWalker(
-                        document.body,
-                        NodeFilter.SHOW_ELEMENT,
-                        null,
-                        false
-                    );
-                    
-                    let node;
-                    while (node = walker.nextNode()) {
-                        if (node.nodeType === Node.ELEMENT_NODE) {
+                    try {
+                        console.log('JavaScript fallback starting...');
+                        console.log('Document ready state:', document.readyState);
+                        console.log('Body exists:', !!document.body);
+                        console.log('Body children count:', document.body ? document.body.children.length : 'N/A');
+                        
+                        const elements = [];
+                        
+                        // Try simple querySelectorAll first
+                        const allElements = document.querySelectorAll('*');
+                        console.log('querySelectorAll found:', allElements.length);
+                        
+                        // Process first few elements from querySelectorAll
+                        for (let i = 0; i < Math.min(10, allElements.length); i++) {
+                            const node = allElements[i];
+                            console.log('Element', i, ':', node.tagName, node.textContent?.substring(0, 50));
+                        }
+                        
+                        // Use TreeWalker as backup
+                        const walker = document.createTreeWalker(
+                            document.body,
+                            NodeFilter.SHOW_ELEMENT,
+                            null,
+                            false
+                        );
+                        
+                        let node;
+                        let count = 0;
+                        while (node = walker.nextNode()) {
+                            count++;
+                            if (count <= 5) {
+                                console.log('TreeWalker Node', count, ':', node.tagName, node.textContent?.substring(0, 50));
+                            }
+                            if (node.nodeType === Node.ELEMENT_NODE) {
                             const rect = node.getBoundingClientRect();
                             const style = window.getComputedStyle(node);
                             
@@ -589,11 +629,19 @@ class Runner:
                         }
                     }
                     
-                    return elements;
+                        console.log('Total elements found:', elements.length);
+                        console.log('First few elements:', elements.slice(0, 3));
+                        
+                        return elements;
+                    } catch (error) {
+                        console.error('JavaScript error:', error);
+                        return [];
+                    }
                 }
             """)
             
             # Convert to expected format and add frame_hash
+            print(f"🔍 JavaScript returned {len(elements_js)} elements")
             elements = []
             frame_url = getattr(page, "url", "")
             fh = compute_frame_hash(frame_url, elements_js)
@@ -604,11 +652,14 @@ class Runner:
                 element["frame_url"] = frame_url
                 elements.append(element)
             
+            print(f"🔍 Processed {len(elements)} elements")
             frames = [{"frame_url": frame_url, "elements": elements, "frame_hash": fh}]
             return {"elements": elements, "dom_hash": dom_hash(frames), "url": frame_url}
             
         except Exception as e:
             print(f"⚠️  JavaScript fallback also failed: {e}")
+            import traceback
+            traceback.print_exc()
             return {"elements": [], "dom_hash": "", "url": ""}
 
     def snapshot(self, url: Optional[str] = None) -> Dict[str, Any]:
