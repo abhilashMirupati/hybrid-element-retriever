@@ -228,34 +228,44 @@ class IntentParser:
         """
         heuristics = {
             IntentType.CLICK: {
-                'prefer_tags': ['button', 'a', 'input[type="button"]', 'input[type="submit"]'],
-                'prefer_attributes': ['onclick', 'data-click', 'role="button"'],
-                'avoid_tags': ['div', 'span', 'p'],
-                'min_interactive_score': 0.7
+                'prefer_tags': ['button', 'a', 'input[type="button"]', 'input[type="submit"]', 
+                               'span[onclick]', 'div[onclick]', 'span[role="button"]', 'div[role="button"]'],
+                'prefer_attributes': ['onclick', 'data-click', 'role="button"', 'tabindex'],
+                'avoid_tags': ['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'],  # Remove div, span from avoid
+                'min_interactive_score': 0.6,  # Lower threshold for clickable spans/divs
+                'interactive_indicators': ['onclick', 'role="button"', 'tabindex', 'data-click', 'data-action']
             },
             IntentType.ENTER: {
-                'prefer_tags': ['input[type="text"]', 'input[type="email"]', 'input[type="password"]', 'textarea'],
-                'prefer_attributes': ['name', 'id', 'placeholder'],
-                'avoid_tags': ['button', 'a', 'div'],
-                'min_interactive_score': 0.8
+                'prefer_tags': ['input[type="text"]', 'input[type="email"]', 'input[type="password"]', 
+                               'input[type="search"]', 'textarea', 'div[contenteditable]', 'span[contenteditable]'],
+                'prefer_attributes': ['name', 'id', 'placeholder', 'contenteditable'],
+                'avoid_tags': ['button', 'a', 'select'],
+                'min_interactive_score': 0.8,
+                'input_indicators': ['type="text"', 'type="email"', 'type="password"', 'contenteditable']
             },
             IntentType.SEARCH: {
-                'prefer_tags': ['input[type="text"]', 'input[type="search"]', 'input'],
-                'prefer_attributes': ['name*search', 'placeholder*search', 'id*search'],
-                'avoid_tags': ['button', 'a'],
-                'min_interactive_score': 0.8
+                'prefer_tags': ['input[type="text"]', 'input[type="search"]', 'input', 
+                               'div[role="searchbox"]', 'span[role="searchbox"]'],
+                'prefer_attributes': ['name*search', 'placeholder*search', 'id*search', 'role="searchbox"'],
+                'avoid_tags': ['button', 'a', 'select'],
+                'min_interactive_score': 0.8,
+                'search_indicators': ['search', 'query', 'find', 'look']
             },
             IntentType.SELECT: {
-                'prefer_tags': ['select', 'option', 'input[type="radio"]', 'input[type="checkbox"]'],
-                'prefer_attributes': ['name', 'id'],
-                'avoid_tags': ['div', 'span'],
-                'min_interactive_score': 0.7
+                'prefer_tags': ['select', 'option', 'input[type="radio"]', 'input[type="checkbox"]',
+                               'div[role="combobox"]', 'div[role="listbox"]', 'ul[role="listbox"]',
+                               'li[role="option"]', 'div[data-value]', 'span[data-value]'],
+                'prefer_attributes': ['name', 'id', 'role="combobox"', 'role="listbox"', 'role="option"', 'data-value'],
+                'avoid_tags': ['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'],
+                'min_interactive_score': 0.6,  # Lower for complex select structures
+                'select_indicators': ['select', 'dropdown', 'option', 'choice', 'pick']
             },
             IntentType.VALIDATE: {
-                'prefer_tags': ['label', 'span', 'div', 'p'],
-                'prefer_attributes': ['id', 'class', 'data-testid'],
-                'avoid_tags': ['input', 'button'],
-                'min_interactive_score': 0.5
+                'prefer_tags': ['label', 'span', 'div', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'],
+                'prefer_attributes': ['id', 'class', 'data-testid', 'role="status"', 'role="alert"'],
+                'avoid_tags': ['input', 'button', 'select'],
+                'min_interactive_score': 0.3,  # Very low for validation elements
+                'validation_indicators': ['error', 'success', 'warning', 'message', 'status']
             }
         }
         
@@ -263,5 +273,6 @@ class IntentParser:
             'prefer_tags': [],
             'prefer_attributes': [],
             'avoid_tags': [],
-            'min_interactive_score': 0.5
+            'min_interactive_score': 0.5,
+            'interactive_indicators': []
         })

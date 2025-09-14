@@ -1127,37 +1127,90 @@ class HybridPipeline:
             # Calculate intent-specific score
             intent_score = self._calculate_intent_score(match, parsed_intent)
             
-            # Apply tag preferences
+            # Apply tag preferences with enhanced matching
             if heuristics['prefer_tags']:
                 for prefer_tag in heuristics['prefer_tags']:
                     if self._tag_matches(element, prefer_tag):
-                        match.score += 0.2
+                        match.score += 0.3  # Increased bonus for preferred tags
                         break
             
             # Apply attribute preferences
             if heuristics['prefer_attributes']:
                 for prefer_attr in heuristics['prefer_attributes']:
                     if self._attribute_matches(attrs, prefer_attr):
+                        match.score += 0.2  # Increased bonus for preferred attributes
+                        break
+            
+            # Apply interactive indicators bonus
+            if 'interactive_indicators' in heuristics:
+                for indicator in heuristics['interactive_indicators']:
+                    if self._has_interactive_indicator(element, indicator):
                         match.score += 0.1
                         break
             
-            # Apply tag avoidance
+            # Apply intent-specific indicators
+            intent_indicators_key = f"{parsed_intent.intent.value}_indicators"
+            if intent_indicators_key in heuristics:
+                for indicator in heuristics[intent_indicators_key]:
+                    if self._has_intent_indicator(element, indicator, parsed_intent):
+                        match.score += 0.15
+                        break
+            
+            # Apply tag avoidance (reduced penalty)
             if heuristics['avoid_tags']:
                 for avoid_tag in heuristics['avoid_tags']:
                     if self._tag_matches(element, avoid_tag):
-                        match.score -= 0.1
+                        match.score -= 0.05  # Reduced penalty
                         break
             
-            # Apply minimum interactive score
+            # Apply minimum interactive score (more lenient)
             min_score = heuristics.get('min_interactive_score', 0.5)
             if match.score < min_score:
-                match.score *= 0.5  # Reduce score for low-interactive elements
+                match.score *= 0.8  # Less aggressive reduction
         
         # Sort by updated scores
         matches.sort(key=lambda m: m.score, reverse=True)
         
-        log.info(f"Applied intent-specific heuristics for {parsed_intent.intent.value}")
+        log.info(f"Applied enhanced intent-specific heuristics for {parsed_intent.intent.value}")
         return matches
+    
+    def _has_interactive_indicator(self, element: Dict[str, Any], indicator: str) -> bool:
+        """Check if element has specific interactive indicator."""
+        attrs = element.get('attributes', {})
+        tag = element.get('tag', '').lower()
+        
+        if indicator == 'onclick':
+            return 'onclick' in attrs
+        elif indicator == 'role="button"':
+            return attrs.get('role') == 'button'
+        elif indicator == 'tabindex':
+            return 'tabindex' in attrs
+        elif indicator == 'data-click':
+            return 'data-click' in attrs
+        elif indicator == 'data-action':
+            return 'data-action' in attrs
+        
+        return False
+    
+    def _has_intent_indicator(self, element: Dict[str, Any], indicator: str, parsed_intent: ParsedIntent) -> bool:
+        """Check if element has intent-specific indicator."""
+        attrs = element.get('attributes', {})
+        text = element.get('text', '').lower()
+        
+        if parsed_intent.intent == IntentType.SEARCH:
+            return (indicator in text or 
+                   any(indicator in str(attrs.get(attr, '')).lower() 
+                       for attr in ['name', 'id', 'placeholder', 'class']))
+        elif parsed_intent.intent == IntentType.SELECT:
+            return (indicator in text or 
+                   attrs.get('role') == indicator or
+                   'data-value' in attrs)
+        elif parsed_intent.intent == IntentType.VALIDATE:
+            return (indicator in text or 
+                   any(indicator in str(attrs.get(attr, '')).lower() 
+                       for attr in ['class', 'id', 'data-testid']))
+        
+        return False
     
     def _calculate_intent_score(self, match: DOMMatch, parsed_intent: ParsedIntent) -> float:
         """Calculate intent-specific score for a match."""

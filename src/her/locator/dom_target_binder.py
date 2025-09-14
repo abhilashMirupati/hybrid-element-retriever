@@ -88,6 +88,10 @@ class DOMTargetBinder:
             if not self._is_element_visible(element):
                 continue
             
+            # Check if element is interactive for the given intent
+            if not self._is_element_interactive(element, intent):
+                continue
+            
             # Get backend node ID
             backend_node_id = self._get_backend_node_id(element)
             if not backend_node_id:
@@ -218,6 +222,53 @@ class DOMTargetBinder:
             return False
         
         return True
+    
+    def _is_element_interactive(self, element: Dict[str, Any], intent: str = "click") -> bool:
+        """Check if element is interactive based on intent.
+        
+        Args:
+            element: Element descriptor
+            intent: User intent
+            
+        Returns:
+            True if element is interactive for the given intent
+        """
+        tag = element.get("tag", "").lower()
+        attrs = element.get("attributes", {})
+        
+        # Check for interactive indicators
+        interactive_indicators = [
+            'onclick', 'onmousedown', 'onmouseup', 'onkeydown', 'onkeyup',
+            'role="button"', 'role="link"', 'role="menuitem"', 'role="tab"',
+            'tabindex', 'data-click', 'data-action', 'data-toggle'
+        ]
+        
+        has_interactive_indicator = any(
+            indicator in str(attrs) for indicator in interactive_indicators
+        )
+        
+        # Check for input elements
+        is_input_element = tag in ['input', 'textarea', 'select', 'button']
+        
+        # Check for clickable elements
+        is_clickable_element = tag in ['a', 'button'] or has_interactive_indicator
+        
+        # Check for contenteditable elements
+        is_editable = attrs.get('contenteditable') == 'true'
+        
+        # Intent-specific checks
+        if intent == "click":
+            return is_clickable_element or (tag in ['span', 'div'] and has_interactive_indicator)
+        elif intent in ["enter", "type", "search"]:
+            return is_input_element or is_editable
+        elif intent == "select":
+            return (tag in ['select', 'option'] or 
+                   attrs.get('role') in ['combobox', 'listbox', 'option'] or
+                   'data-value' in attrs)
+        elif intent == "validate":
+            return True  # Most elements can be validated
+        
+        return is_input_element or is_clickable_element
     
     def _get_backend_node_id(self, element: Dict[str, Any]) -> Optional[str]:
         """Get backend node ID for element.
