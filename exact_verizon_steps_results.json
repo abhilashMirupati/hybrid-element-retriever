@@ -1,0 +1,8 @@
+{
+  "no_semantic": [
+    {
+      "step": 1,
+      "description": "Open https://www.verizon.com/",
+      "success": true,
+      "time": 18.67357850074768,
+      "result": 
