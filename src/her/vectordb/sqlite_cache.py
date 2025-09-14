@@ -39,6 +39,8 @@ CREATE TABLE IF NOT EXISTS promotions (
     success_count INTEGER NOT NULL DEFAULT 0,
     failure_count INTEGER NOT NULL DEFAULT 0,
     updated_at INTEGER NOT NULL,
+    element_signature TEXT,  -- Canonical element signature for validation
+    confidence REAL DEFAULT 0.0,  -- Confidence score when promoted
     PRIMARY KEY (page_sig, frame_hash, label_key, selector)
 );
 """
