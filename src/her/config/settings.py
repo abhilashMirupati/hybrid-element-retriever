@@ -35,6 +35,7 @@ class HERConfig:
     use_hierarchy: bool = field(default_factory=lambda: os.getenv("HER_USE_HIERARCHY", "false").lower() == "true")
     use_two_stage: bool = field(default_factory=lambda: os.getenv("HER_USE_TWO_STAGE", "false").lower() == "true")
     disable_heuristics: bool = field(default_factory=lambda: os.getenv("HER_DISABLE_HEURISTICS", "false").lower() == "true")
+    use_semantic_search: bool = field(default_factory=lambda: os.getenv("HER_USE_SEMANTIC_SEARCH", "true").lower() == "true")
     
     # Performance settings
     max_text_length: int = field(default_factory=lambda: int(os.getenv("HER_MAX_TEXT_LENGTH", "1024")))
@@ -83,6 +84,7 @@ class HERConfig:
             'use_hierarchy': self.use_hierarchy,
             'use_two_stage': self.use_two_stage,
             'disable_heuristics': self.disable_heuristics,
+            'use_semantic_search': self.use_semantic_search,
             'max_text_length': self.max_text_length,
             'max_elements': self.max_elements,
             'cache_size_mb': self.cache_size_mb,
@@ -127,6 +129,10 @@ class HERConfig:
     def should_use_two_stage(self) -> bool:
         """Check if two-stage processing should be used."""
         return self.use_two_stage
+    
+    def should_use_semantic_search(self) -> bool:
+        """Check if semantic search should be used (vs exact DOM matching)."""
+        return self.use_semantic_search
     
     def is_hierarchy_debug_enabled(self) -> bool:
         """Check if hierarchy debug is enabled."""

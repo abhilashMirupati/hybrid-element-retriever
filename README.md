@@ -5,12 +5,14 @@ Production-grade framework that turns **plain English** into **robust UI actions
 
 ## 🚀 **Key Features**
 
+- ✅ **Dual Retrieval Modes**: Semantic search (default) or exact DOM matching
 - ✅ **2-Stage Hybrid Search**: MiniLM (384-d) for fast shortlisting + MarkupLM (768-d) for precise reranking
 - ✅ **Real Model Integration**: Uses actual MiniLM and MarkupLM models (not mocks)
 - ✅ **CPU-friendly** (Windows 11 friendly)
 - ✅ **Cold / Warm / Delta** flows with SQLite caching
 - ✅ **Per-frame** vector stores (FAISS for performance)
 - ✅ **Promotion System**: Learns from successful actions
+- ✅ **Accessibility Fallback**: Handles icon-only elements
 - ✅ **Fail-fast** (no silent passes)
 - ✅ **Production Ready**: Tested with real Verizon.com flow
 
@@ -64,6 +66,24 @@ export HER_CACHE_DIR="$(pwd)/.her_cache"       # Cache directory
 #### Available Environment Variables
 See `config/.env.example` for a complete list of all available environment variables with descriptions and default values.
 
+#### Retrieval Mode Configuration
+```bash
+# Use semantic search (default)
+export HER_USE_SEMANTIC_SEARCH=true
+
+# Use exact DOM matching
+export HER_USE_SEMANTIC_SEARCH=false
+```
+
+#### CLI Mode Toggle
+```bash
+# Use semantic mode (default)
+her query "click submit button"
+
+# Use no-semantic mode
+her query "click submit button" --no-semantic
+```
+
 ## 📚 Documentation
 
 Complete documentation is available in the `docs/` directory:
@@ -75,7 +95,23 @@ Complete documentation is available in the `docs/` directory:
 
 ## 2) Key Concepts
 
-### 2-Stage Hybrid Search
+### Dual Retrieval Modes
+
+HER supports two retrieval modes that can be toggled via configuration:
+
+#### Semantic Mode (Default)
+- **MiniLM Shortlist (384-d)**: Fast text-based search to find top-K candidates
+- **MarkupLM Rerank (768-d)**: Precise structural understanding for final ranking
+- **Heuristics**: Apply clickable bonuses, tag biases, and text matching
+- **Use Case**: General-purpose UI automation with semantic understanding
+
+#### No-Semantic Mode (Strict/BRD)
+- **DOM Exact Matching**: Direct matching against DOM attributes (innerText, aria-label, title, placeholder, id, name)
+- **Rerank Only if Multiple**: Uses MarkupLM + heuristics when multiple exact matches found
+- **Accessibility Fallback**: Falls back to accessibility tree for icon-only elements
+- **Use Case**: Strict requirements where exact text matching is required
+
+### 2-Stage Hybrid Search (Semantic Mode)
 1. **MiniLM Shortlist (384-d)**: Fast text-based search to find top-K candidates
 2. **MarkupLM Rerank (768-d)**: Precise structural understanding for final ranking
 3. **Heuristics**: Apply clickable bonuses, tag biases, and text matching
@@ -93,6 +129,7 @@ After successful actions, the final selector is persisted (scoped by page_sig, f
 
 ## 3) Usage Example
 
+### Basic Usage (Semantic Mode)
 ```python
 from her.core.runner import run_steps
 
@@ -105,7 +142,26 @@ steps = [
     "Validate it landed on https://www.verizon.com/smartphones/apple-iphone-16-pro/"
 ]
 
-# Run with real models and hybrid search
+# Run with semantic search (default)
+run_steps(steps, headless=True)
+```
+
+### No-Semantic Mode Usage
+```python
+from her.core.runner import run_steps
+import os
+
+# Set no-semantic mode
+os.environ['HER_USE_SEMANTIC_SEARCH'] = 'false'
+
+# Run with exact DOM matching
+steps = [
+    "Open https://www.verizon.com/",
+    "Click on \"Phones\"",
+    "Click on \"Apple\"",
+    "Click on \"iPhone\""
+]
+
 run_steps(steps, headless=True)
 ```
 

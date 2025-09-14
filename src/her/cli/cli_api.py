@@ -104,7 +104,8 @@ class HybridElementRetrieverClient:
         cache_dir: Optional[Path] = None,
         use_enhanced: bool = True,
         enable_resilience: bool = True,
-        enable_pipeline: bool = True
+        enable_pipeline: bool = True,
+        use_semantic_search: bool = True
     ):
         """Initialize HER client with all features integrated.
         
@@ -118,6 +119,7 @@ class HybridElementRetrieverClient:
             use_enhanced: Use enhanced session manager
             enable_resilience: Enable resilience features
             enable_pipeline: Use new integrated pipeline
+            use_semantic_search: Use semantic search (vs exact DOM matching)
         """
         self.browser = browser
         self.headless = headless
@@ -125,6 +127,7 @@ class HybridElementRetrieverClient:
         self.auto_index = auto_index
         self.enable_resilience = enable_resilience
         self.enable_pipeline = enable_pipeline
+        self.use_semantic_search = use_semantic_search
         self.timeout_ms = 30000
         self.promotion_enabled = True
         
@@ -191,6 +194,21 @@ class HybridElementRetrieverClient:
         # Tracking
         self._last_action_result: Optional[Dict[str, Any]] = None
         self._snapshots: Dict[str, Any] = {}
+    
+    def set_semantic_mode(self, use_semantic: bool) -> None:
+        """Set semantic search mode.
+        
+        Args:
+            use_semantic: True for semantic search, False for exact DOM matching
+        """
+        self.use_semantic_search = use_semantic
+        # Update environment variable for pipeline to pick up
+        import os
+        os.environ['HER_USE_SEMANTIC_SEARCH'] = str(use_semantic).lower()
+        
+        # Reset config service to pick up new environment variable
+        from ..core.config_service import reset_config_service
+        reset_config_service()
     
     def _ensure_browser(self) -> Optional[Page]:
         """Ensure browser and page are available."""

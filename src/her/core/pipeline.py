@@ -27,6 +27,9 @@ except Exception:
 # Promotions (Step 6)
 from ..promotion.promotion_adapter import lookup_promotion
 
+# Target matcher for no-semantic mode
+from ..locator.target_matcher import TargetMatcher, AccessibilityFallbackMatcher, MatchResult
+
 log = logging.getLogger("her.pipeline")
 
 
@@ -59,6 +62,13 @@ class HybridPipeline:
         self.use_hierarchy = self.config.should_use_hierarchy()
         self.use_two_stage = self.config.should_use_two_stage()
         self.hierarchy_builder = HierarchyContextBuilder() if self.use_hierarchy else None
+        
+        # Semantic search mode
+        self.use_semantic_search = self.config.should_use_semantic_search()
+        
+        # Target matcher for no-semantic mode
+        self.target_matcher = TargetMatcher(case_sensitive=False)
+        self.ax_fallback_matcher = AccessibilityFallbackMatcher(case_sensitive=False)
 
         # Embedders - separate for hybrid approach
         model_root = str((self._models_root or Path("src/her/models").resolve()) / "e5-small-onnx")
@@ -579,17 +589,16 @@ class HybridPipeline:
         if not self._validate_query_inputs(query, elements):
             return {"results": [], "strategy": "hybrid-delta", "confidence": 0.0}
 
-        # Prepare elements for processing
-        E, meta = self._prepare_elements_for_query(elements, frame_hash)
-        if E.size == 0:
-            log.warning("No elements after preparation")
-            return {"results": [], "strategy": "hybrid-delta", "confidence": 0.0}
+        # Check if we should use semantic or no-semantic mode
+        config_service = get_config_service()
+        use_semantic = config_service.should_use_semantic_search()
         
-        # Clean up old stores to prevent memory leaks
-        self.cleanup_old_stores()
-        
-        # Choose and execute query strategy
-        return self._execute_query_strategy(query, meta, top_k, page_sig, frame_hash, label_key, user_intent, target)
+        if use_semantic:
+            # Use existing semantic pipeline
+            return self._query_semantic_mode(query, elements, top_k, page_sig, frame_hash, label_key, user_intent, target)
+        else:
+            # Use new no-semantic mode
+            return self._query_no_semantic_mode(query, elements, top_k, page_sig, frame_hash, label_key, user_intent, target)
     
     def _log_query_start(self, query: str, elements: List[Dict[str, Any]]) -> None:
         """Log query start information."""
@@ -615,16 +624,26 @@ class HybridPipeline:
         
         return E, meta
     
-    def _execute_query_strategy(self, query: str, meta: List[Dict[str, Any]], top_k: int, 
-                               page_sig: Optional[str], frame_hash: Optional[str], 
-                               label_key: Optional[str], user_intent: Optional[str], 
-                               target: Optional[str]) -> Dict[str, Any]:
-        """Execute the appropriate query strategy based on configuration."""
+    def _query_semantic_mode(self, query: str, elements: List[Dict[str, Any]], top_k: int, 
+                            page_sig: Optional[str], frame_hash: Optional[str], 
+                            label_key: Optional[str], user_intent: Optional[str], 
+                            target: Optional[str]) -> Dict[str, Any]:
+        """Execute semantic query strategy (existing pipeline)."""
+        # Prepare elements for processing
+        E, meta = self._prepare_elements_for_query(elements, frame_hash)
+        if E.size == 0:
+            log.warning("No elements after preparation")
+            return {"results": [], "strategy": "hybrid-delta", "confidence": 0.0}
+        
+        # Clean up old stores to prevent memory leaks
+        self.cleanup_old_stores()
+        
+        # Execute semantic strategy
         config_service = get_config_service()
         use_hierarchy = config_service.should_use_hierarchy()
         use_two_stage = config_service.should_use_two_stage()
         
-        log.debug(f"Dynamic config check - hierarchy: {use_hierarchy}, two_stage: {use_two_stage}")
+        log.debug(f"Semantic mode - hierarchy: {use_hierarchy}, two_stage: {use_two_stage}")
         
         if use_hierarchy and use_two_stage:
             log.debug("Using TWO-STAGE MarkupLM strategy")
@@ -632,6 +651,230 @@ class HybridPipeline:
         else:
             log.debug("Using STANDARD strategy")
             return self._query_standard(query, meta, top_k, page_sig, frame_hash, label_key, user_intent, target)
+
+    def _query_no_semantic_mode(self, query: str, elements: List[Dict[str, Any]], top_k: int, 
+                               page_sig: Optional[str], frame_hash: Optional[str], 
+                               label_key: Optional[str], user_intent: Optional[str], 
+                               target: Optional[str]) -> Dict[str, Any]:
+        """Execute no-semantic query strategy (exact DOM matching)."""
+        log.info(f"No-semantic mode query: '{query}' with {len(elements)} elements")
+        
+        # Extract target from query or use provided target
+        search_target = target or query
+        
+        # Use target matcher for exact DOM matching
+        matches = self.target_matcher.match_elements(elements, search_target)
+        
+        if not matches:
+            log.warning("No exact matches found in DOM, trying accessibility fallback")
+            # Try accessibility fallback for icon-only elements
+            ax_matches = self._try_accessibility_fallback(elements, search_target)
+            if ax_matches:
+                log.info(f"Found {len(ax_matches)} accessibility matches")
+                matches = ax_matches
+            else:
+                return {"results": [], "strategy": "no-semantic-exact", "confidence": 0.0}
+        
+        # If multiple matches, apply reranking with MarkupLM + heuristics
+        if len(matches) > 1:
+            log.info(f"Found {len(matches)} exact matches, applying reranking")
+            matches = self._rerank_no_semantic_matches(matches, query, user_intent, target)
+        
+        # Check for promotions (with mode-specific cache key)
+        promo_top: Optional[Dict[str, Any]] = None
+        if page_sig and frame_hash and label_key:
+            # Add mode to cache key for separation
+            mode_label_key = f"no-semantic:{label_key}"
+            sel = lookup_promotion(self.kv, page_sig=page_sig, frame_hash=frame_hash, label_key=mode_label_key)
+            if sel:
+                promo_top = {
+                    "selector": sel,
+                    "score": 1.0,
+                    "reasons": ["promotion-hit-no-semantic"],
+                    "meta": {"frame_hash": frame_hash, "promoted": True, "mode": "no-semantic"},
+                }
+        
+        # Build results
+        results = []
+        if promo_top:
+            results.append(promo_top)
+        
+        for match in matches[:top_k]:
+            # Generate XPath for the element
+            from ..utils.xpath_generator import generate_xpath_for_element
+            xpath = generate_xpath_for_element(match.element)
+            
+            results.append({
+                "selector": xpath,
+                "score": float(match.score),
+                "reasons": match.reasons + [f"no-semantic-{match.match_type}"],
+                "meta": {
+                    **match.element,
+                    "matched_attribute": match.matched_attribute,
+                    "matched_value": match.matched_value,
+                    "mode": "no-semantic"
+                },
+            })
+        
+        head_score = 1.0 if promo_top is not None else (matches[0].score if matches else 0.0)
+        confidence = max(0.0, min(1.0, float(head_score)))
+        
+        log.info(f"No-semantic query completed: {len(results)} results, confidence: {confidence:.3f}")
+        
+        return {
+            "results": results,
+            "strategy": "no-semantic-exact+promotion" if promo_top else "no-semantic-exact",
+            "confidence": confidence,
+        }
+    
+    def _rerank_no_semantic_matches(self, matches: List, query: str, user_intent: Optional[str], 
+                                   target: Optional[str]) -> List:
+        """Rerank no-semantic matches using MarkupLM + heuristics."""
+        if not matches or len(matches) <= 1:
+            return matches
+        
+        log.info(f"Reranking {len(matches)} no-semantic matches")
+        
+        # Convert matches to elements for MarkupLM processing
+        elements = [match.element for match in matches]
+        
+        # Use MarkupLM for reranking (if available)
+        if _MARKUP_IMPORT_OK:
+            try:
+                # Create query embedding
+                q_markup = self._embed_query_markup(query)
+                
+                # Create enhanced elements for MarkupLM
+                enhanced_elements = []
+                for element in elements:
+                    enhanced_meta = element.copy()
+                    
+                    # Convert to HTML structure for MarkupLM
+                    tag = element.get('tag', '').lower()
+                    text = element.get('text', '')
+                    attrs = element.get('attributes', {})
+                    
+                    # Build attribute string
+                    attr_str = ""
+                    for key, value in attrs.items():
+                        attr_str += f' {key}="{value}"'
+                    
+                    # Create HTML structure
+                    if tag in ['a', 'button', 'input', 'select', 'option']:
+                        if tag == 'a':
+                            html_text = f'<a{attr_str}>{text}</a>'
+                        elif tag == 'button':
+                            html_text = f'<button{attr_str}>{text}</button>'
+                        elif tag == 'input':
+                            html_text = f'<input{attr_str} value="{text}">'
+                        else:
+                            html_text = f'<{tag}{attr_str}>{text}</{tag}>'
+                    else:
+                        html_text = f'<{tag}{attr_str}>{text}</{tag}>'
+                    
+                    enhanced_meta["text"] = html_text
+                    enhanced_meta["tag"] = "html"
+                    enhanced_elements.append(enhanced_meta)
+                
+                # Get MarkupLM embeddings
+                markup_embeddings = self.element_embedder.batch_encode(enhanced_elements)
+                
+                # Compute similarity scores
+                for i, match in enumerate(matches):
+                    if i < markup_embeddings.shape[0]:
+                        markup_vec = markup_embeddings[i]
+                        markup_score = _cos(q_markup, markup_vec)
+                        
+                        # Apply intent scoring
+                        intent_score = 0.0
+                        if user_intent or target:
+                            intent_score = self._compute_intent_score(user_intent, target, query, match.element)
+                        
+                        # Combine scores (weighted average)
+                        final_score = (match.score * 0.7) + (markup_score * 0.2) + (intent_score * 0.1)
+                        match.score = final_score
+                        match.reasons.append(f"markup_rerank={markup_score:.3f}")
+                        match.reasons.append(f"intent_score={intent_score:.3f}")
+                
+                # Sort by new scores
+                matches.sort(key=lambda m: m.score, reverse=True)
+                
+            except Exception as e:
+                log.warning(f"MarkupLM reranking failed: {e}, using original order")
+        
+        return matches
+    
+    def _try_accessibility_fallback(self, elements: List[Dict[str, Any]], target: str) -> List:
+        """Try accessibility fallback when DOM matching fails.
+        
+        Args:
+            elements: List of element descriptors
+            target: Target string to match
+            
+        Returns:
+            List of MatchResults from accessibility tree
+        """
+        try:
+            # Extract accessibility elements from DOM elements
+            ax_elements = []
+            for element in elements:
+                # Look for elements that might be icon-only or have accessibility info
+                attrs = element.get('attributes', {})
+                
+                # Check if element has accessibility attributes
+                has_ax_info = any(attr in attrs for attr in [
+                    'aria-label', 'aria-labelledby', 'role', 'title', 'alt'
+                ])
+                
+                # Check if element might be icon-only (no text but has other attributes)
+                has_no_text = not element.get('text', '').strip()
+                has_other_attrs = any(attr in attrs for attr in [
+                    'class', 'id', 'data-testid', 'data-test-id', 'onclick'
+                ])
+                
+                if has_ax_info or (has_no_text and has_other_attrs):
+                    ax_element = {
+                        'name': attrs.get('aria-label') or attrs.get('title') or attrs.get('alt', ''),
+                        'role': attrs.get('role', ''),
+                        'element': element
+                    }
+                    if ax_element['name'] or ax_element['role']:
+                        ax_elements.append(ax_element)
+            
+            if not ax_elements:
+                log.debug("No accessibility elements found for fallback")
+                return []
+            
+            # Use accessibility fallback matcher
+            ax_matches = self.ax_fallback_matcher.match_accessibility_elements(ax_elements, target)
+            
+            # Convert back to MatchResult format
+            results = []
+            for ax_match in ax_matches:
+                # Get the original element from the accessibility match
+                original_element = None
+                for ax_el in ax_elements:
+                    if ax_el['name'] == ax_match.matched_value:
+                        original_element = ax_el['element']
+                        break
+                
+                if original_element:
+                    # Create MatchResult with original element
+                    match_result = MatchResult(
+                        element=original_element,
+                        score=ax_match.score * 0.8,  # Slightly lower score for AX fallback
+                        match_type=f"ax_{ax_match.match_type}",
+                        matched_attribute=ax_match.matched_attribute,
+                        matched_value=ax_match.matched_value,
+                        reasons=ax_match.reasons + ["accessibility_fallback"]
+                    )
+                    results.append(match_result)
+            
+            return results
+            
+        except Exception as e:
+            log.warning(f"Accessibility fallback failed: {e}")
+            return []
 
     def _query_standard(
         self,
