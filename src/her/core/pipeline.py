@@ -664,9 +664,9 @@ class HybridPipeline:
         
         return E, meta
     
-    def _query_semantic_mode(self, query: str, elements: List[Dict[str, Any]], top_k: int, 
+    def _query_semantic_mode(self, query: str, elements: List[Dict[str, Any]], top_k: int,
                             page_sig: Optional[str], frame_hash: Optional[str], 
-                            label_key: Optional[str], user_intent: Optional[str], 
+                            label_key: Optional[str], user_intent: Optional[str],
                             target: Optional[str]) -> Dict[str, Any]:
         """Execute semantic query strategy (existing pipeline)."""
         # Prepare elements for processing
@@ -735,17 +735,26 @@ class HybridPipeline:
         """Execute standard hybrid search strategy."""
         log.info(f"Standard hybrid search: '{query}' with {len(meta)} elements")
         
-        # Prepare elements for search
-        mini_embeddings, elements = self._prepare_elements_for_query(meta, frame_hash)
+        # Use the already prepared elements (meta contains the prepared elements)
+        elements = meta
         
-        # Get MiniLM store
+        # Get MiniLM store and perform search with the query
         mini_store = self._get_mini_store(frame_hash)
         
+        # We need to encode the query using TextEmbedder to get the query vector
+        from ..embeddings.text_embedder import TextEmbedder
+        text_embedder = TextEmbedder()
+        query_vector = text_embedder.encode_one(query)
+        
         # Perform MiniLM search
-        mini_scores, mini_indices = mini_store.search(mini_embeddings, top_k * 2)
+        search_results = mini_store.search(query_vector, top_k * 2)
+        
+        # Extract scores and indices
+        mini_indices = [result[0] for result in search_results]
+        mini_scores = [result[1] for result in search_results]
         
         # Get top elements from MiniLM
-        top_elements = [elements[i] for i in mini_indices[0]]
+        top_elements = [elements[i] for i in mini_indices]
         
         # Prepare for MarkupLM reranking
         if _MARKUP_IMPORT_OK:
