@@ -457,7 +457,8 @@ class Runner:
                     'below_fold': node.get('below_fold', False),
                     'interactive': interactive,
                     'backendNodeId': node.get('backendNodeId'),
-                    'accessibility': node.get('accessibility', {})
+                    'accessibility': node.get('accessibility', {}),
+                    'meta': {}  # Initialize meta field for frame_hash
                 }
                 
                 # Enhance with accessibility information
@@ -497,9 +498,15 @@ class Runner:
             # Return in expected format
             frame_url = getattr(self._page, "url", "")
             fh = compute_frame_hash(frame_url, elements)
+            
+            # Ensure frame_hash is properly set for all elements
             for it in elements:
-                (it.setdefault("meta", {}))["frame_hash"] = fh
+                # Create meta dict if it doesn't exist
+                if "meta" not in it:
+                    it["meta"] = {}
+                it["meta"]["frame_hash"] = fh
                 it["frame_url"] = frame_url
+                
             frames = [{"frame_url": frame_url, "elements": elements, "frame_hash": fh}]
             return {"elements": elements, "dom_hash": dom_hash(frames), "url": frame_url}
                 
@@ -509,11 +516,94 @@ class Runner:
             import traceback
             traceback.print_exc()
             
-            # Force fallback to JavaScript approach
-            # This will be handled by the fallback code below
+            # Fallback to JavaScript approach
+            return self._fallback_javascript_snapshot()
         
-        
-       
+    def _fallback_javascript_snapshot(self) -> Dict[str, Any]:
+        """Fallback JavaScript-based snapshot when CDP fails."""
+        try:
+            page = self._ensure_browser()
+            if not page:
+                return {"elements": [], "dom_hash": "", "url": ""}
+            
+            # Use JavaScript to get DOM elements
+            elements_js = page.evaluate("""
+                () => {
+                    const elements = [];
+                    const walker = document.createTreeWalker(
+                        document.body,
+                        NodeFilter.SHOW_ELEMENT,
+                        null,
+                        false
+                    );
+                    
+                    let node;
+                    while (node = walker.nextNode()) {
+                        if (node.nodeType === Node.ELEMENT_NODE) {
+                            const rect = node.getBoundingClientRect();
+                            const style = window.getComputedStyle(node);
+                            
+                            // Get text content
+                            let text = '';
+                            if (node.textContent) {
+                                text = node.textContent.trim().substring(0, 200);
+                            }
+                            
+                            // Get attributes
+                            const attrs = {};
+                            for (let attr of node.attributes) {
+                                attrs[attr.name] = attr.value;
+                            }
+                            
+                            // Determine if interactive
+                            const interactive = ['button', 'a', 'input', 'select', 'textarea'].includes(node.tagName.toLowerCase()) ||
+                                              node.onclick || node.getAttribute('onclick') ||
+                                              style.cursor === 'pointer' ||
+                                              node.getAttribute('role') === 'button';
+                            
+                            elements.push({
+                                text: text,
+                                tag: node.tagName.toUpperCase(),
+                                role: node.getAttribute('role') || '',
+                                attrs: attrs,
+                                bbox: {
+                                    x: Math.round(rect.x),
+                                    y: Math.round(rect.y),
+                                    width: Math.round(rect.width),
+                                    height: Math.round(rect.height),
+                                    w: Math.round(rect.width),
+                                    h: Math.round(rect.height)
+                                },
+                                visible: rect.width > 0 && rect.height > 0 && style.display !== 'none',
+                                below_fold: rect.y > window.innerHeight,
+                                interactive: interactive,
+                                backendNodeId: Math.random().toString(36).substr(2, 9),  // Generate fake ID
+                                meta: {}  // Initialize meta field for frame_hash
+                            });
+                        }
+                    }
+                    
+                    return elements;
+                }
+            """)
+            
+            # Convert to expected format and add frame_hash
+            elements = []
+            frame_url = getattr(page, "url", "")
+            fh = compute_frame_hash(frame_url, elements_js)
+            
+            for element in elements_js:
+                # Create meta dict
+                element["meta"] = {"frame_hash": fh}
+                element["frame_url"] = frame_url
+                elements.append(element)
+            
+            frames = [{"frame_url": frame_url, "elements": elements, "frame_hash": fh}]
+            return {"elements": elements, "dom_hash": dom_hash(frames), "url": frame_url}
+            
+        except Exception as e:
+            print(f"⚠️  JavaScript fallback also failed: {e}")
+            return {"elements": [], "dom_hash": "", "url": ""}
 
     def snapshot(self, url: Optional[str] = None) -> Dict[str, Any]:
         """Take a snapshot of the current page or navigate to a URL.
