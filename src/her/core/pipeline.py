@@ -711,12 +711,30 @@ class HybridPipeline:
             page = self._current_page
         
         # Execute enhanced no-semantic query
-        result = matcher.query(query, elements, page)
+        matcher_result = matcher.query(query, elements, page)
         
-        # Add performance metrics
-        result['performance'] = {
-            'elements_processed': len(elements),
-            'strategy': 'enhanced-no-semantic'
+        # Convert matcher result format to pipeline expected format
+        results = []
+        if matcher_result.get('selector'):
+            # Single result format from enhanced no-semantic matcher
+            element = matcher_result.get('element', {})
+            results.append({
+                'selector': matcher_result.get('selector', ''),
+                'score': float(matcher_result.get('confidence', 0.0)),
+                'meta': element,
+                'reasons': [f"Found via {matcher_result.get('strategy', 'no-semantic')}"],
+                'xpath': matcher_result.get('xpath', matcher_result.get('selector', ''))
+            })
+        
+        # Return in pipeline expected format
+        result = {
+            'results': results,
+            'confidence': matcher_result.get('confidence', 0.0),
+            'strategy': matcher_result.get('strategy', 'enhanced-no-semantic'),
+            'performance': {
+                'elements_processed': len(elements),
+                'strategy': 'enhanced-no-semantic'
+            }
         }
         
         return result

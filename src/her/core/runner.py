@@ -628,17 +628,42 @@ class Runner:
             return {"elements": [], "dom_hash": "", "url": url or ""}
         if url:
             try:
-                page.goto(url, wait_until="networkidle")
-                # Wait longer for dynamic content to load
-                page.wait_for_timeout(3000)
+                print(f"🔍 Loading page: {url}")
+                page.goto(url, wait_until="networkidle", timeout=30000)
+                
+                # Wait for page to be fully loaded
+                print("⏳ Waiting for page stability...")
+                page.wait_for_load_state("domcontentloaded", timeout=10000)
+                page.wait_for_load_state("networkidle", timeout=10000)
+                
+                # Additional wait for dynamic content
+                print("⏳ Waiting for dynamic content...")
+                page.wait_for_timeout(5000)
+                
                 # Try to dismiss any initial popups/overlays
+                print("🔧 Dismissing overlays...")
                 self._dismiss_overlays()
+                
                 # Universal dynamic content loading - works for any website
+                print("🔧 Loading dynamic content...")
                 self._load_dynamic_content(page)
-            except Exception:
-                print("Exception is " + str(Exception))
+                
+                # Final stability check
+                print("⏳ Final stability check...")
+                page.wait_for_timeout(2000)
+                
+                print("✅ Page loaded successfully")
+                
+            except Exception as e:
+                print(f"❌ Page loading exception: {e}")
                 pass
-        return self._inline_snapshot()
+        
+        print("📸 Taking snapshot...")
+        snapshot = self._inline_snapshot()
+        elements_count = len(snapshot.get('elements', []))
+        print(f"📊 Captured {elements_count} elements")
+        
+        return snapshot
 
     def resolve_selector(self, phrase: str, snapshot: Dict[str, Any]) -> Dict[str, Any]:
         """Resolve a natural language phrase to a CSS selector.
