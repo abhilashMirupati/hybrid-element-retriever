@@ -48,7 +48,7 @@ class DOMSnapshot:
         return hashlib.md5(content.encode()).hexdigest()
 
 
-def wait_for_dom_stable(page: Page, timeout_ms: int = 5000) -> bool:
+def wait_for_dom_stable(page: Page, timeout_ms: int = 10000) -> bool:
     """Wait for DOM to be stable (no mutations, network idle).
 
     Args:
@@ -62,13 +62,22 @@ def wait_for_dom_stable(page: Page, timeout_ms: int = 5000) -> bool:
         return False
 
     try:
+        print("🔄 Waiting for DOM stability...")
+        
         # Wait for document ready state
         page.wait_for_load_state("domcontentloaded", timeout=timeout_ms)
         page.wait_for_load_state("networkidle", timeout=timeout_ms)
 
         # Additional wait for any async rendering
-        page.wait_for_timeout(100)
-
+        page.wait_for_timeout(2000)
+        
+        # Force a re-render to ensure all elements are visible
+        page.evaluate("() => { document.body.offsetHeight; }")
+        
+        # Wait for any remaining dynamic content
+        page.wait_for_timeout(3000)
+        
+        print("✅ DOM is stable")
         return True
     except Exception as e:
         logger.warning(f"DOM not stable within timeout: {e}")
@@ -98,10 +107,17 @@ def get_flattened_document(
 
     try:
         # Create CDP session
+        print("🔧 Creating CDP session...")
         client = page.context.new_cdp_session(page)
 
         # Enable DOM domain
+        print("🔧 Enabling DOM domain...")
         client.send("DOM.enable")
+        
+        # Check if DOM is ready
+        print("🔧 Checking DOM readiness...")
+        doc_info = client.send("DOM.getDocument", {"depth": 0})
+        print(f"Document info: {doc_info.get('root', {}).get('nodeName', 'unknown')}")
 
         # Try getFlattenedDocument first (Chrome 86+)
         try:
@@ -110,6 +126,25 @@ def get_flattened_document(
             )
             nodes = response.get("nodes", [])
             print(f"Retrieved {len(nodes)} DOM nodes via getFlattenedDocument")
+            
+            # Debug: Check if we're getting the right nodes
+            if len(nodes) < 100:
+                print(f"⚠️  Low node count detected: {len(nodes)}")
+                print("First few nodes:")
+                for i, node in enumerate(nodes[:5]):
+                    print(f"  Node {i}: {node.get('nodeName', 'unknown')} - {node.get('nodeType', 'unknown')}")
+                    
+                # Try to force a re-render and retry
+                print("🔄 Forcing re-render and retrying...")
+                page.evaluate("() => { document.body.offsetHeight; }")
+                page.wait_for_timeout(1000)
+                
+                response = client.send(
+                    "DOM.getFlattenedDocument", {"depth": depth, "pierce": pierce}
+                )
+                nodes = response.get("nodes", [])
+                print(f"Retry: Retrieved {len(nodes)} DOM nodes")
+            
             return nodes
         except Exception as e:
             # Fall back to getDocument if getFlattenedDocument not available

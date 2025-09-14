@@ -115,6 +115,11 @@ class XPathValidator:
         tag = element.get('tag', 'div')
         text = element.get('text', '').strip()
         
+        # Fix invalid tag names for XPath
+        if tag.startswith('#'):
+            # For text nodes and comments, find the parent element instead
+            return f'//text()[contains(normalize-space(), "{text.replace('"', '\\"')}")]'
+        
         if text:
             # Escape quotes in text
             escaped_text = text.replace('"', '\\"')
@@ -127,6 +132,17 @@ class XPathValidator:
         """Generate XPath based on element attributes."""
         tag = element.get('tag', 'div')
         attrs = element.get('attributes', {})
+        
+        # Fix invalid tag names for XPath
+        if tag.startswith('#'):
+            # For text nodes and comments, use attribute-based selection on parent elements
+            if attrs.get('id'):
+                return f'//*[@id="{attrs["id"]}"]'
+            # Fall back to text-based selection
+            text = element.get('text', '').strip()
+            if text:
+                return f'//text()[contains(normalize-space(), "{text.replace('"', '\\"')}")]'
+            return ""
         
         # Try different attribute combinations
         if attrs.get('id'):
@@ -167,6 +183,14 @@ class XPathValidator:
         tag = element.get('tag', 'div')
         text = element.get('text', '').strip()
         attrs = element.get('attributes', {})
+        
+        # Fix invalid tag names for XPath
+        if tag.startswith('#'):
+            # For text nodes and comments, use text-based selection
+            if text:
+                escaped_text = text.replace('"', '\\"')
+                return f'//text()[contains(normalize-space(), "{escaped_text}")]'
+            return ""
         
         conditions = []
         
