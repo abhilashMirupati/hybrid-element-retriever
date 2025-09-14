@@ -3,7 +3,7 @@
     "step": 1,
     "description": "Navigate to Verizon page \"https://www.verizon.com/\"",
     "success": true,
-    "time": 19.009458303451538,
+    "time": 19.739277839660645,
     "debug_result": {
       "success": true,
       "url": "https://www.verizon.com/",
@@ -14,7 +14,7 @@
     "step": 2,
     "description": "Click on \"Phones\" button",
     "success": false,
-    "time": 0.33850932121276855,
+    "time": 0.3546772003173828,
     "debug_result": {
       "success": false,
       "error": "All approaches failed"
@@ -24,7 +24,7 @@
     "step": 3,
     "description": "Click on \"Apple\" filter",
     "success": false,
-    "time": 0.505591869354248,
+    "time": 0.47162771224975586,
     "debug_result": {
       "success": false,
       "error": "All approaches failed"
@@ -34,7 +34,7 @@
     "step": 4,
     "description": "Click on \"Apple IPhone 17\" device",
     "success": false,
-    "time": 0.30733346939086914,
+    "time": 0.30329275131225586,
     "debug_result": {
       "success": false,
       "error": "All approaches failed"
@@ -44,7 +44,7 @@
     "step": 5,
     "description": "Validate it landed on \"https://www.verizon.com/smartphones/apple-iphone-17/\"",
     "success": false,
-    "time": 2.312450647354126,
+    "time": 2.3139069080352783,
     "debug_result": {
       "success": false,
       "method": "validation"
@@ -54,7 +54,7 @@
     "step": 6,
     "description": "Validate \"Apple iPhone 17\" text on pdp page",
     "success": false,
-    "time": 0.2752518653869629,
+    "time": 0.29258275032043457,
     "debug_result": {
       "success": false,
       "method": "validation"
@@ -64,7 +64,7 @@
     "step": 7,
     "description": "Click on \"White\" color",
     "success": false,
-    "time": 0.4717264175415039,
+    "time": 0.4855632781982422,
     "debug_result": {
       "success": false,
       "error": "All approaches failed"
