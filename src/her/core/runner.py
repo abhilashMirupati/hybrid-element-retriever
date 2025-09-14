@@ -99,6 +99,11 @@ class Runner:
             self._page.set_default_timeout(15000)
         return self._page
 
+    def _generate_xpath_for_element(self, element: Dict[str, Any]) -> str:
+        """Generate XPath only for top candidates to save processing time."""
+        from ..utils.xpath_generator import generate_xpath_for_element
+        return generate_xpath_for_element(element)
+    
     def _is_element_interactive(self, tag: str, attrs: Dict[str, Any], role: str) -> bool:
         """
         Universal element interactivity detection - works for any website.
@@ -430,27 +435,15 @@ class Runner:
                 # Debug: Print element details
                 print(f"🔍 Processing element: tag='{tag}', text='{text[:50]}{'...' if len(text) > 50 else ''}', attrs={len(attrs)}")
                 
-                # Generate XPath if not present
-                xpath = node.get('xpath', '')
-                if not xpath:
-                    # Generate basic XPath from tag and attributes
-                    if tag and tag != '#text':
-                        if attrs.get('id'):
-                            xpath = f"//*[@id='{attrs['id']}']"
-                        elif attrs.get('data-testid'):
-                            xpath = f"//*[@data-testid='{attrs['data-testid']}']"
-                        elif attrs.get('aria-label'):
-                            xpath = f"//*[@aria-label='{attrs['aria-label']}']"
-                        elif text:
-                            xpath = f"//{tag.lower()}[normalize-space()='{text}']"
-                        else:
-                            xpath = f"//{tag.lower()}"
+                # Don't generate XPath here - will be generated only for top K candidates
+                # This saves processing time and memory
+                xpath = node.get('xpath', '')  # Keep existing if present
                 
                 # Determine if element is interactive
                 interactive = self._is_element_interactive(tag, attrs, role)
                 
-                # NO FILTERING - MiniLM should see ALL elements
-                # Let MiniLM and MarkupLM decide what's relevant based on text similarity
+                # NO FILTERING - Let AI models see ALL elements
+                # MiniLM and MarkupLM will decide relevance based on semantic similarity
                 
                 # Create element descriptor
                 element = {
@@ -478,10 +471,27 @@ class Runner:
                 try:
                     from ..descriptors.hierarchy import HierarchyContextBuilder
                     hierarchy_builder = HierarchyContextBuilder()
+                    
+                    # Debug: Show elements before adding context
+                    print(f"🔍 Adding hierarchical context to {len(elements)} elements")
+                    
+                    # Add context to elements
                     elements = hierarchy_builder.add_context_to_elements(elements)
-                    print(f"✅ Added hierarchical context to {len(elements)} elements")
+                    
+                    # Debug: Show context was added
+                    context_count = sum(1 for el in elements if el.get('context', {}).get('hierarchy_path', '') not in ['PENDING', 'ERROR', ''])
+                    print(f"✅ Added hierarchical context to {context_count}/{len(elements)} elements")
+                    
+                    # Show sample context
+                    for i, el in enumerate(elements[:3]):
+                        context = el.get('context', {})
+                        hierarchy_path = context.get('hierarchy_path', 'N/A')
+                        print(f"   Element {i+1}: {hierarchy_path}")
+                        
                 except Exception as e:
                     print(f"⚠️  Failed to add hierarchical context: {e}")
+                    import traceback
+                    traceback.print_exc()
                     # Continue without hierarchy context
             
             # Return in expected format

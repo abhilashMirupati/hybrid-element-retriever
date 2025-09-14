@@ -324,6 +324,7 @@ def extract_clean_text(text_value: Any) -> str:
 def extract_comprehensive_text(node: Dict[str, Any]) -> str:
     """
     Extract comprehensive text content from a node, trying multiple sources.
+    Enhanced to better capture text for AI model matching.
     
     Args:
         node: DOM or accessibility node
@@ -333,12 +334,12 @@ def extract_comprehensive_text(node: Dict[str, Any]) -> str:
     """
     text_parts = []
     
-    # 1. Direct text content
+    # 1. Direct text content (highest priority)
     node_value = node.get('nodeValue', '').strip()
     if node_value:
         text_parts.append(node_value)
     
-    # 2. Text from accessibility tree
+    # 2. Text from accessibility tree (very important for interactive elements)
     if 'accessibility' in node:
         ax_name = node['accessibility'].get('name', '')
         if ax_name:
@@ -352,7 +353,7 @@ def extract_comprehensive_text(node: Dict[str, Any]) -> str:
             if clean_value and clean_value != node_value and clean_value != clean_name:  # Avoid duplication
                 text_parts.append(clean_value)
     
-    # 3. Text from attributes
+    # 3. Text from attributes (critical for form elements)
     attrs = node.get('attributes', {})
     if isinstance(attrs, list):
         # Convert list format ['key1', 'value1', 'key2', 'value2'] to dict
@@ -364,12 +365,27 @@ def extract_comprehensive_text(node: Dict[str, Any]) -> str:
     
     if isinstance(attrs, dict):
         # Priority order for text content in attributes
-        text_attrs = ['aria-label', 'data-placeholder-text', 'title', 'value', 'alt', 'placeholder']
+        text_attrs = [
+            'aria-label',      # Highest priority for accessibility
+            'placeholder',     # Very important for inputs
+            'value',          # Important for inputs with values
+            'title',          # Good for tooltips
+            'alt',            # Important for images
+            'data-placeholder-text',  # Custom placeholder
+            'data-label',     # Custom label
+            'data-text',      # Custom text
+            'name',           # Form field names
+            'id'              # Element IDs can be meaningful
+        ]
+        
         for attr in text_attrs:
             if attr in attrs and attrs[attr]:
-                text_parts.append(str(attrs[attr]).strip())
+                attr_value = str(attrs[attr]).strip()
+                # Avoid adding empty or very short values
+                if attr_value and len(attr_value) > 0:
+                    text_parts.append(attr_value)
     
-    # 4. Text from children (if available)
+    # 4. Text from children (recursive for nested elements)
     children = node.get('children', [])
     if children:
         for child in children:
@@ -377,19 +393,31 @@ def extract_comprehensive_text(node: Dict[str, Any]) -> str:
                 child_text = child.get('nodeValue', '').strip()
                 if child_text:
                     text_parts.append(child_text)
+                # Also check child attributes
+                child_attrs = child.get('attributes', {})
+                if isinstance(child_attrs, dict) and child_attrs.get('aria-label'):
+                    text_parts.append(str(child_attrs['aria-label']).strip())
     
-    # 5. Text from computed properties (skip to avoid circular reference)
-    # computed_text = node.get('text', '').strip()
-    # if computed_text:
-    #     text_parts.append(computed_text)
+    # 5. Combine and deduplicate
+    # Remove duplicates while preserving order
+    seen = set()
+    unique_texts = []
+    for text in text_parts:
+        if text and text not in seen:
+            seen.add(text)
+            unique_texts.append(text)
     
-    # Return the longest meaningful text
-    meaningful_texts = [t for t in text_parts if t and len(t) > 1]
-    if meaningful_texts:
-        # Return the longest text, or the first one if they're similar length
-        return max(meaningful_texts, key=len)
+    # Return the most meaningful text
+    if unique_texts:
+        # For interactive elements, prefer longer text (more descriptive)
+        # For non-interactive, prefer shorter text (less noise)
+        if node.get('interactive', False):
+            return max(unique_texts, key=len)
+        else:
+            # Return the first meaningful text for non-interactive elements
+            return unique_texts[0] if unique_texts else ''
     
-    return ' '.join(text_parts).strip()
+    return ''
 
 def convert_accessibility_to_element(ax_node: Dict[str, Any]) -> Dict[str, Any]:
     """

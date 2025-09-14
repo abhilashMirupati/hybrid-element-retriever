@@ -39,10 +39,8 @@ TEST_CONFIG = {
     "test_name": "Google Search Test",
     "start_url": "https://www.google.com/",
     "steps": [
-        "Go to Google",
-        "Click on search box", 
-        "Type Python programming",
-        "Press Enter"
+        "Navigate to \"https://www.google.com/\"",
+        "Click on \"search\""
     ],
     "headless": True
 }

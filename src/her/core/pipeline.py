@@ -935,7 +935,13 @@ class HybridPipeline:
                 print(f"❌ Promoted element not clickable, skipping")
 
         for score, md, reasons in ranked:
+            # Generate XPath only for top candidates to save processing time
             sel = md.get("xpath") or ""
+            if not sel:
+                # Generate XPath for this top candidate
+                from ..utils.xpath_generator import generate_xpath_for_element
+                sel = generate_xpath_for_element(md)
+            
             results.append({
                 "selector": sel,
                 "score": float(score),
@@ -1186,7 +1192,13 @@ class HybridPipeline:
             results.append(promo_top)
         
         for score, md, reasons in ranked:
+            # Generate XPath only for top candidates to save processing time
             sel = md.get("xpath") or ""
+            if not sel:
+                # Generate XPath for this top candidate
+                from ..utils.xpath_generator import generate_xpath_for_element
+                sel = generate_xpath_for_element(md)
+            
             results.append({
                 "selector": sel,
                 "score": float(score),

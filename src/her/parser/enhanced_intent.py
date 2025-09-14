@@ -52,16 +52,16 @@ class EnhancedIntentParser:
         from .intent import IntentParser
         self.original_parser = IntentParser()
         
-        # Structured patterns for high accuracy
+        # Structured patterns for high accuracy - optimized for UI dropdown integration
         self.structured_patterns = [
             # Click actions: Click on "target" or Click "target" (allow words between "on" and quotes)
-            (re.compile(r'^(click|press|tap|push|hit|select)\s+(?:on\s+)?(?:the\s+)?["\']([^"\']+)["\']', re.I), "click", None),
+            (re.compile(r'^(click|press|tap|push|hit|select|choose|pick)\s+(?:on\s+)?(?:the\s+)?["\']([^"\']+)["\']', re.I), "click", None),
             
-            # Type actions: Enter $value in "target" field
-            (re.compile(r'^(type|enter|input|write|fill)\s+\$([^\s]+)\s+(?:in|into|to)\s+["\']([^"\']+)["\']', re.I), "type", "value"),
+            # Type actions: Enter $value in "target" field (supports multi-word values)
+            (re.compile(r'^(type|enter|input|write|fill)\s+\$([^"]+?)\s+(?:in|into|to)\s+["\']([^"\']+)["\']', re.I), "type", "value"),
             
             # Validate actions: Validate "target"
-            (re.compile(r'^(validate|verify|check|assert|ensure)\s+["\']([^"\']+)["\']', re.I), "assert", None),
+            (re.compile(r'^(validate|verify|check|assert|ensure|confirm)\s+["\']([^"\']+)["\']', re.I), "assert", None),
             
             # Hover actions: Hover over "target"
             (re.compile(r'^(hover|mouse\s+over)\s+(?:over\s+)?["\']([^"\']+)["\']', re.I), "hover", None),
@@ -70,14 +70,30 @@ class EnhancedIntentParser:
             (re.compile(r'^(wait|pause|delay)\s+(?:for\s+)?["\']?([^"\']+)["\']?', re.I), "wait", None),
             
             # Navigate actions: Navigate to "target"
-            (re.compile(r'^(navigate|go|open|visit)\s+(?:to\s+)?["\']([^"\']+)["\']', re.I), "navigate", None),
+            (re.compile(r'^(navigate|go|open|visit|browse)\s+(?:to\s+)?["\']([^"\']+)["\']', re.I), "navigate", None),
             
             # Submit actions: Submit "target"
             (re.compile(r'^(submit|send|post|confirm)\s+["\']([^"\']+)["\']', re.I), "submit", None),
             
             # Clear actions: Clear "target"
             (re.compile(r'^(clear|empty|reset)\s+["\']([^"\']+)["\']', re.I), "clear", None),
+            
+            # Scroll actions: Scroll "target"
+            (re.compile(r'^(scroll|scroll\s+(?:up|down))\s+["\']([^"\']+)["\']', re.I), "scroll", None),
         ]
+        
+        # Intent mapping for UI dropdown (no MiniLM needed)
+        self.intent_mapping = {
+            "click": ["click", "press", "tap", "push", "hit", "select", "choose", "pick"],
+            "type": ["type", "enter", "input", "write", "fill"],
+            "validate": ["validate", "verify", "check", "assert", "ensure", "confirm"],
+            "hover": ["hover", "mouse over"],
+            "wait": ["wait", "pause", "delay"],
+            "navigate": ["navigate", "go", "open", "visit", "browse"],
+            "submit": ["submit", "send", "post", "confirm"],
+            "clear": ["clear", "empty", "reset"],
+            "scroll": ["scroll", "scroll up", "scroll down"]
+        }
     
     def parse(self, step: str) -> EnhancedIntent:
         """Parse step with structured format support and fallback to original parser."""
@@ -120,19 +136,36 @@ class EnhancedIntentParser:
         )
     
     def validate_structured_format(self, step: str) -> Tuple[bool, str]:
-        """Validate if step follows structured format."""
+        """Validate if step follows structured format with strict quote and $value requirements."""
         if not step.strip():
             return False, "Empty step"
         
-        # Check for quotes (mandatory for targets)
-        if '"' not in step and "'" not in step:
-            return False, f'Missing quotes around target. Use: {step.split()[0]} "target"'
+        step_lower = step.lower().strip()
         
-        # Check for $ for input values
-        if any(word in step.lower() for word in ["type", "enter", "input", "fill"]) and "$" not in step:
-            return False, f'Missing $ for value. Use: {step.split()[0]} $value in "target"'
+        # Extract action (first word)
+        action = step_lower.split()[0] if step_lower.split() else ""
         
-        return True, "Valid structured format"
+        # Check for quotes (mandatory for targets in all actions)
+        has_quotes = '"' in step or "'" in step
+        if not has_quotes:
+            return False, f'❌ MISSING QUOTES: Target must be in quotes. Use: {action} "target"'
+        
+        # Check for $ for input values (mandatory for type/enter/input/fill actions)
+        input_actions = ["type", "enter", "input", "fill", "write"]
+        is_input_action = any(word in step_lower for word in input_actions)
+        
+        if is_input_action:
+            has_dollar = "$" in step
+            if not has_dollar:
+                return False, f'❌ MISSING $VALUE: Input actions require $value. Use: {action} $value in "target"'
+        
+        # Additional validation for specific patterns
+        if is_input_action and has_quotes and has_dollar:
+            # Check if it follows the pattern: action $value in "target"
+            if not re.search(r'\$[^\s]+\s+(?:in|into|to)\s+["\'][^"\']+["\']', step):
+                return False, f'❌ INVALID PATTERN: Use: {action} $value in "target"'
+        
+        return True, "✅ Valid structured format"
     
     def get_format_examples(self) -> List[str]:
         """Get example structured steps."""
