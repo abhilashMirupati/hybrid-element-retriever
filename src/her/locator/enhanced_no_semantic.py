@@ -20,6 +20,13 @@ from dataclasses import dataclass
 from enum import Enum
 
 from .intent_parser import IntentParser, ParsedIntent, IntentType
+from .core_no_semantic import CoreNoSemanticMatcher, ExactMatch
+from .hierarchical_context import HierarchicalContextBuilder, HierarchicalContext
+from .navigation_handler import NavigationHandler
+from .xpath_validator import XPathValidator, XPathCandidate
+from .intent_integration import IntentIntegration, IntentScoredMatch
+from .critical_fixes import CriticalFixes
+from .search_target_handler import SearchTargetHandler, SearchTarget
 
 log = logging.getLogger("her.enhanced_no_semantic")
 
@@ -56,6 +63,13 @@ class EnhancedNoSemanticMatcher:
     
     def __init__(self):
         self.intent_parser = IntentParser()
+        self.core_matcher = CoreNoSemanticMatcher()
+        self.context_builder = HierarchicalContextBuilder()
+        self.navigation_handler = NavigationHandler()
+        self.xpath_validator = XPathValidator()
+        self.intent_integration = IntentIntegration()
+        self.critical_fixes = CriticalFixes()
+        self.search_target_handler = SearchTargetHandler()
         self.markup_ranker = None  # Will be set if MarkupLM is available
     
     def query(self, query: str, elements: List[Dict[str, Any]], page=None) -> Dict[str, Any]:
@@ -67,35 +81,49 @@ class EnhancedNoSemanticMatcher:
             parsed_intent = self.intent_parser.parse_step(query)
             log.info(f"Parsed intent: {parsed_intent.intent.value}, target: '{parsed_intent.target_text}', value: '{parsed_intent.value}'")
             
-            # Step 2: Handle navigation queries
-            if self._is_navigation_query(parsed_intent):
-                return self._handle_navigation(parsed_intent, page)
+            # Step 2: Apply critical fixes
+            elements = self.critical_fixes.apply_all_fixes(elements, parsed_intent)
             
-            # Step 3: Find matching nodes (exact matching only)
-            matches = self._find_matching_nodes(elements, parsed_intent)
-            log.info(f"Found {len(matches)} matching nodes")
+            # Step 3: Handle navigation queries
+            if self.navigation_handler.is_navigation_query(parsed_intent):
+                nav_result = self.navigation_handler.handle_navigation(parsed_intent, page)
+                return self.navigation_handler.create_navigation_result(nav_result)
             
-            if not matches:
+            # Step 4: Handle search targets
+            search_target = self.search_target_handler.extract_search_target(parsed_intent)
+            if search_target:
+                search_inputs = self.search_target_handler.find_search_inputs(elements, search_target)
+                if search_inputs:
+                    # Use search inputs as primary elements
+                    elements = [self.search_target_handler.enhance_search_input(elem, search_target) for elem in search_inputs]
+            
+            # Step 5: Find exact matches using core matcher
+            exact_matches = self.core_matcher.find_exact_matches(elements, parsed_intent)
+            log.info(f"Found {len(exact_matches)} exact matches")
+            
+            if not exact_matches:
                 return self._create_no_match_result(query, start_time)
             
-            # Step 4: Build hierarchical context for matches
-            contexts = self._build_hierarchical_context(matches, elements)
+            # Step 6: Apply intent-specific heuristics
+            heuristically_scored_matches = self.core_matcher.apply_intent_heuristics(exact_matches, parsed_intent)
+            
+            # Step 7: Apply intent integration scoring
+            intent_scored_matches = self.intent_integration.apply_intent_scoring(heuristically_scored_matches, parsed_intent)
+            
+            # Step 8: Build hierarchical context for top matches
+            top_matches = intent_scored_matches[:5]  # Limit to top 5 for performance
+            contexts = self.context_builder.build_contexts([m.match for m in top_matches], elements)
             log.info(f"Built hierarchical context for {len(contexts)} matches")
             
-            # Step 5: Generate XPath candidates
-            xpath_candidates = self._generate_xpath_candidates(contexts)
-            log.info(f"Generated {len(xpath_candidates)} XPath candidates")
-            
-            # Step 6: Validate XPath candidates
-            validated_candidates = self._validate_xpath_candidates(xpath_candidates, page)
+            # Step 9: Generate and validate XPath candidates
+            xpath_candidates = self.xpath_validator.generate_candidates(contexts)
+            validated_candidates = self.xpath_validator.validate_candidates(xpath_candidates, page)
             log.info(f"Validated {len([c for c in validated_candidates if c.is_valid])} valid XPath candidates")
             
-            # Step 7: Rank candidates (with optional MarkupLM)
-            ranked_candidates = self._rank_candidates(validated_candidates, query, parsed_intent)
+            # Step 10: Select best candidate
+            best_candidate = self.xpath_validator.select_best_candidate(validated_candidates)
             
-            # Step 8: Select best candidate
-            if ranked_candidates:
-                best_candidate = ranked_candidates[0]
+            if best_candidate:
                 return self._create_success_result(best_candidate, query, start_time)
             else:
                 return self._create_no_valid_result(query, start_time)
