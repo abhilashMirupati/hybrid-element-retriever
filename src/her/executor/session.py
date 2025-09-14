@@ -129,9 +129,12 @@ class SessionManager:
     
     def index_page(self, session_id: str, page: Any) -> tuple[list, str]:
         """Index a page and return descriptors and DOM hash."""
+        import time
+        start_time = time.time()
+        
         try:
             if not hasattr(page, 'evaluate'):
-                return [], "0" * 64
+                raise RuntimeError("Page object missing evaluate method - not a real browser page")
             
             # Extract all interactive and visible elements from the page
             elements_script = """
@@ -229,9 +232,14 @@ class SessionManager:
             dom_content = ''.join([f"{el['tag']}{el['text']}{str(el['attributes'])}" for el in elements])
             dom_hash = hashlib.md5(dom_content.encode()).hexdigest()
             
+            # Calculate timing
+            snapshot_time = (time.time() - start_time) * 1000
+            print(f"📸 SNAPSHOT TIMING: {snapshot_time:.1f}ms for {len(descriptors)} elements")
+            
             return descriptors, dom_hash
             
         except Exception as e:
-            print(f"Error indexing page: {e}")
-            return [], "0" * 64
+            snapshot_time = (time.time() - start_time) * 1000
+            print(f"❌ SNAPSHOT FAILED after {snapshot_time:.1f}ms: {e}")
+            raise RuntimeError(f"Page indexing failed: {e}")
 

@@ -72,13 +72,7 @@ def main(argv: list[str] | None = None) -> int:
         if '--no-semantic' in args:
             use_semantic = False
         import os
-        if os.environ.get('HER_DRY_RUN'):
-            # Dry run mode for testing without browser
-            if cmd == 'query':
-                out = {'element': {'tag': 'button', 'text': cmd}, 'xpath': '//button', 'confidence': 0.8, 'strategy': 'mock', 'metadata': {}}
-            else:
-                out = {'status': 'success', 'method': 'click', 'confidence': 0.9, 'xpath': '//button', 'metadata': {}}
-        else:
+        # Real implementation only - no mocks allowed
             try:
                 hc = HybridClient()
                 # Set semantic mode based on CLI flag

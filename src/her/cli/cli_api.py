@@ -434,6 +434,21 @@ class HybridElementRetrieverClient:
                             page
                         )
                         
+                        # Validate XPath exists in DOM before returning
+                        if not self._validate_xpath_exists(unique_xpath, page):
+                            print(f"⚠️  XPath validation failed: {unique_xpath}")
+                            return {
+                                'selector': None,
+                                'xpath': None,
+                                'confidence': 0.0,
+                                'element': {},
+                                'context': {},
+                                'fallbacks': [],
+                                'strategy': 'validation-failed',
+                                'elements_found': 0,
+                                'error': f'XPath not found in DOM: {unique_xpath}'
+                            }
+                        
                         # Return in expected format
                         return {
                             'selector': unique_xpath,
@@ -580,6 +595,20 @@ class HybridElementRetrieverClient:
         except Exception as e:
             logger.error(f"Type failed: {e}")
             return {"ok": False, "error": str(e)}
+    
+    def _validate_xpath_exists(self, xpath: str, page: Optional[Page]) -> bool:
+        """Validate that XPath actually exists in the DOM."""
+        if not page or not xpath:
+            return False
+        
+        try:
+            # Use Playwright's locator to check if element exists
+            elements = page.locator(xpath)
+            count = elements.count()
+            return count > 0
+        except Exception as e:
+            print(f"XPath validation error: {e}")
+            return False
     
     def _ensure_unique_xpath(
         self,

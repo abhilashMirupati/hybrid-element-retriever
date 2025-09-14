@@ -174,7 +174,21 @@ class IntentParser:
         Returns:
             Contextual target text
         """
-        # Remove intent words and common prepositions
+        # For click operations, try to extract the specific target before generic words
+        if intent == IntentType.CLICK:
+            # Look for patterns like "click on X color", "click on X button", etc.
+            patterns = [
+                r'click\s+on\s+([^\s]+)\s+(?:color|button|link|element|option)',  # click on X color
+                r'click\s+on\s+([^\s]+)',  # click on X
+                r'click\s+([^\s]+)',  # click X
+            ]
+            
+            for pattern in patterns:
+                match = re.search(pattern, step, re.IGNORECASE)
+                if match:
+                    return match.group(1).strip()
+        
+        # Fallback to general extraction
         step_clean = step.lower()
         intent_words = [intent.value, 'button', 'field', 'input', 'link', 'element']
         

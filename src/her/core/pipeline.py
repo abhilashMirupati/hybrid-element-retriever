@@ -1318,7 +1318,7 @@ class HybridPipeline:
                 mini_hits.append((score, md))
         
         # For click actions, prioritize interactive elements in MiniLM shortlist
-        if user_intent and any(word in (user_intent or "").lower() for word in ["click", "select", "press", "choose", "pick"]):
+        if parsed_intent and any(word in (parsed_intent.intent.value or "").lower() for word in ["click", "select", "press", "choose", "pick"]):
             print(f"🔍 Filtering MiniLM results for click action - prioritizing interactive elements")
             interactive_hits = []
             non_interactive_hits = []
