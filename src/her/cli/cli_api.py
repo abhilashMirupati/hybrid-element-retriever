@@ -132,24 +132,21 @@ class HybridElementRetrieverClient:
         self.promotion_enabled = True
         
         # Initialize pipeline if enabled
-        if enable_pipeline and PipelineConfig is not None and HERPipeline is not None:
-            config = PipelineConfig(
-                use_minilm=False,  # Use fallback embeddings
-                use_e5_small=True,
-                use_markuplm=True,
-                enable_cold_start_detection=True,
-                enable_incremental_updates=True,
-                enable_spa_tracking=True,
-                verify_url=True,
-                verify_dom_state=True,
-                verify_value=True,
-                max_retry_attempts=3,
-                wait_for_idle=True,
-                handle_frames=True,
-                handle_shadow_dom=True,
-                auto_dismiss_overlays=True
-            )
-            self.pipeline = HERPipeline(config)
+        if enable_pipeline and HERPipeline is not None:
+            # Set environment variables for pipeline configuration
+            import os
+            os.environ['HER_USE_SEMANTIC_SEARCH'] = str(use_semantic_search).lower()
+            os.environ['HER_USE_HIERARCHY'] = 'true'
+            os.environ['HER_HEADLESS'] = str(headless).lower()
+            os.environ['HER_BROWSER_TIMEOUT'] = '30000'
+            
+            # Initialize pipeline with models root
+            if cache_dir is None:
+                models_root = Path("src/her/models")
+            else:
+                cache_path = Path(cache_dir) if isinstance(cache_dir, str) else cache_dir
+                models_root = cache_path.parent / "models"
+            self.pipeline = HERPipeline(models_root=models_root)
         else:
             self.pipeline = None
         
@@ -164,14 +161,13 @@ class HybridElementRetrieverClient:
             self.session_manager = EnhancedSessionManager(
                 auto_index=auto_index,
                 reindex_on_change=reindex_on_change,
-                cache_dir=cache_dir,
-                enable_incremental=True,
-                enable_spa_tracking=True
+                cache_dir=str(cache_dir) if cache_dir else None
             )
         else:
             self.session_manager = SessionManager(
                 auto_index=auto_index,
-                reindex_on_change=reindex_on_change
+                reindex_on_change=reindex_on_change,
+                cache_dir=str(cache_dir) if cache_dir else None
             )
         
         # Legacy components (kept for compatibility)
@@ -217,25 +213,29 @@ class HybridElementRetrieverClient:
             return None
         
         if not self.page:
-            if not self.browser:
-                if not self.playwright:
-                    self.playwright = sync_playwright().start()
-                self.browser = self.playwright.chromium.launch(
-                    headless=self.headless,
-                    slow_mo=self.slow_mo
+            try:
+                if not self.browser:
+                    if not self.playwright:
+                        self.playwright = sync_playwright().start()
+                    self.browser = self.playwright.chromium.launch(
+                        headless=self.headless,
+                        slow_mo=self.slow_mo
+                    )
+                
+                self.page = self.browser.new_page()
+                
+                # Setup session
+                session = self.session_manager.create_session(
+                    self.current_session_id,
+                    self.page
                 )
-            
-            self.page = self.browser.new_page()
-            
-            # Setup session
-            session = self.session_manager.create_session(
-                self.current_session_id,
-                self.page
-            )
-            
-            # Setup SPA tracking if available
-            if hasattr(self.session_manager, '_setup_spa_tracking'):
-                self.session_manager._setup_spa_tracking(self.current_session_id, self.page)
+                
+                # Setup SPA tracking if available
+                if hasattr(self.session_manager, '_setup_spa_tracking'):
+                    self.session_manager._setup_spa_tracking(self.current_session_id, self.page)
+            except Exception as e:
+                logger.warning(f"Browser initialization failed: {e}")
+                return None
         
         return self.page
     
@@ -383,24 +383,18 @@ class HybridElementRetrieverClient:
                 # Support both legacy compat signature (dom=...) and newer
                 # experimental signatures. Prefer the stable compat surface.
                 try:
-                    result = self.pipeline.process(
+                    result = self.pipeline.query(
                         query=phrase,
-                        dom={"elements": descriptors},
-                        page=page,
-                        session_id=self.current_session_id,
+                        elements=descriptors,
+                        top_k=5
                     )
                 except TypeError:
-                    # Fallback to descriptors kwarg if present in custom impls
+                    # Fallback to positional arguments
                     try:
-                        result = self.pipeline.process(
-                            query=phrase,
-                            descriptors=descriptors,
-                            page=page,
-                            session_id=self.current_session_id,
-                        )
+                        result = self.pipeline.query(phrase, descriptors)
                     except TypeError:
-                        # Ultimate fallback: positional minimal call
-                        result = self.pipeline.process(phrase, {"elements": descriptors})
+                        # Ultimate fallback: minimal call
+                        result = self.pipeline.query(phrase)
                 
                 # Check for unique XPath
                 if result['xpath']:

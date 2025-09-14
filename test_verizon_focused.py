@@ -163,7 +163,16 @@ class VerizonTestRunner:
             print(f"✅ Client initialized in {mode} mode")
         except Exception as e:
             print(f"❌ Failed to initialize client: {e}")
-            return {'error': str(e)}
+            return {
+                'error': str(e),
+                'summary': {
+                    'mode': mode,
+                    'total_time': '0.0ms',
+                    'success_rate': '0.0%',
+                    'avg_confidence': '0.000',
+                    'avg_step_time': '0.0ms'
+                }
+            }
         
         # Test steps
         test_steps = [

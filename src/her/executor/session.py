@@ -126,4 +126,32 @@ class SessionManager:
 
     def create_session(self, session_id: str, page: Any) -> Session:
         return Session(page, cache_dir=self.cache_dir, max_memory_items=self.max_memory_items)
+    
+    def index_page(self, session_id: str, page: Any) -> tuple[list, str]:
+        """Index a page and return descriptors and DOM hash."""
+        # This is a simplified implementation for testing
+        # In a real implementation, this would extract DOM elements
+        try:
+            if hasattr(page, 'evaluate'):
+                # Get basic page info
+                title = page.evaluate("document.title") or ""
+                url = page.evaluate("window.location.href") or ""
+                
+                # Create a simple descriptor
+                descriptors = [{
+                    'tag': 'html',
+                    'text': title,
+                    'attributes': {'title': title, 'url': url},
+                    'visible': True,
+                    'interactive': False
+                }]
+                
+                # Generate a simple hash
+                dom_hash = hashlib.md5(f"{title}{url}".encode()).hexdigest()
+                
+                return descriptors, dom_hash
+            else:
+                return [], "0" * 64
+        except Exception:
+            return [], "0" * 64
 

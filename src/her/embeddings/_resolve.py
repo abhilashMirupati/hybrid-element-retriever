@@ -43,7 +43,10 @@ def resolve_element_embedding(models_root: Path | None = None) -> ResolvedElemen
     Matches tests that call resolve_element_embedding() with no args and
     expect attributes and ResolverError.
     """
-    root = models_root or _models_root_from_env()
+    if models_root is None:
+        root = _models_root_from_env()
+    else:
+        root = Path(models_root) if isinstance(models_root, str) else models_root
 
     # Try ONNX
     onnx_dir = root / "markuplm-base-onnx"
@@ -77,7 +80,10 @@ def resolve_text_embedding(models_root: Path | None = None) -> dict:
     Must include tokenizer + an ONNX model file.
     Returns a dict with 'model_dir'.
     """
-    root = models_root or _models_root_from_env()
+    if models_root is None:
+        root = _models_root_from_env()
+    else:
+        root = Path(models_root) if isinstance(models_root, str) else models_root
     e5_dir = root / "e5-small-onnx"
     if e5_dir.is_dir():
         return {"model_dir": e5_dir}

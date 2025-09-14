@@ -122,7 +122,7 @@ class HybridPipeline:
             raise RuntimeError("Transformers MarkupLM is not available. Install transformers and run model installer.")
         model_dir: Optional[str] = None
         if self._models_root:
-            candidate = Path(self._models_root) / "markuplm-base"
+            candidate = self._models_root / "markuplm-base"
             if candidate.exists():
                 model_dir = str(candidate)
         else:
@@ -309,7 +309,7 @@ class HybridPipeline:
             return 0.0
         
         # Combine all parameters for comprehensive scoring
-        all_intent_text = " ".join(filter(None, [user_intent, target, query])).lower()
+        all_intent_text = " ".join(filter(None, [user_intent or "", target or "", query or ""])).lower()
         text = (meta.get("text") or "").lower()
         tag = (meta.get("tag") or "").lower()
         role = (meta.get("attributes", {}).get("role") or "").lower()
@@ -382,7 +382,7 @@ class HybridPipeline:
         
         # 3. User intent matching (action user wants to perform)
         if user_intent:
-            intent_lower = user_intent.lower()
+            intent_lower = (user_intent or "").lower()
             is_interactive = meta.get('interactive', False)
             attrs = meta.get('attributes', {})
             
@@ -463,7 +463,7 @@ class HybridPipeline:
             attrs = md.get("attributes", {})
             
             # 1. Element type scoring based on user intent
-            if any(word in user_intent.lower() for word in ["click", "select", "press", "choose", "pick"]):
+            if any(word in (user_intent or "").lower() for word in ["click", "select", "press", "choose", "pick"]):
                 # For click actions, heavily prioritize interactive elements
                 if is_interactive:
                     bonus += 0.5  # HIGH bonus for interactive elements
@@ -502,24 +502,24 @@ class HybridPipeline:
             # 4. Element type specific bonuses (universal)
             if tag == 'input':
                 input_type = attrs.get('type', '')
-                if input_type == 'radio' and any(word in user_intent.lower() for word in ['select', 'choose', 'pick']):
+                if input_type == 'radio' and any(word in (user_intent or "").lower() for word in ['select', 'choose', 'pick']):
                     bonus += 0.3
                     reasons.append("+radio_button=0.300")
                 elif input_type in ['checkbox', 'button', 'submit']:
                     bonus += 0.2
                     reasons.append("+input_button=0.200")
-            elif tag == 'button' and any(word in user_intent.lower() for word in ['click', 'select', 'press']):
+            elif tag == 'button' and any(word in (user_intent or "").lower() for word in ['click', 'select', 'press']):
                 bonus += 0.2
                 reasons.append("+button=0.200")
-            elif tag == 'a' and any(word in user_intent.lower() for word in ['click', 'select']):
+            elif tag == 'a' and any(word in (user_intent or "").lower() for word in ['click', 'select']):
                 bonus += 0.1
                 reasons.append("+link=0.100")
             
             # 5. Content relevance (universal)
-            if 'filter' in user_intent.lower() and 'filter' in text:
+            if 'filter' in (user_intent or "").lower() and 'filter' in text:
                 bonus += 0.2
                 reasons.append("+filter_content=0.200")
-            elif 'search' in user_intent.lower() and 'search' in text:
+            elif 'search' in (user_intent or "").lower() and 'search' in text:
                 bonus += 0.2
                 reasons.append("+search_content=0.200")
             
@@ -1318,7 +1318,7 @@ class HybridPipeline:
                 mini_hits.append((score, md))
         
         # For click actions, prioritize interactive elements in MiniLM shortlist
-        if user_intent and any(word in user_intent.lower() for word in ["click", "select", "press", "choose", "pick"]):
+        if user_intent and any(word in (user_intent or "").lower() for word in ["click", "select", "press", "choose", "pick"]):
             print(f"🔍 Filtering MiniLM results for click action - prioritizing interactive elements")
             interactive_hits = []
             non_interactive_hits = []
