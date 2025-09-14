@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -29,6 +30,14 @@ from ..promotion.promotion_adapter import lookup_promotion
 
 # Target matcher for no-semantic mode
 from ..locator.target_matcher import TargetMatcher, AccessibilityFallbackMatcher, MatchResult
+
+# Enhanced handlers
+from ..locator.frame_handler import FrameHandler, FrameAwareTargetMatcher
+from ..locator.shadow_dom_handler import ShadowDOMHandler
+from ..locator.dynamic_handler import DynamicHandler
+
+# Performance metrics
+from ..monitoring.performance_metrics import get_metrics, record_query_timing, record_cache_metrics, record_memory_usage, PerformanceTimer
 
 log = logging.getLogger("her.pipeline")
 
@@ -69,6 +78,14 @@ class HybridPipeline:
         # Target matcher for no-semantic mode
         self.target_matcher = TargetMatcher(case_sensitive=False)
         self.ax_fallback_matcher = AccessibilityFallbackMatcher(case_sensitive=False)
+        
+        # Enhanced handlers
+        self.frame_handler = FrameHandler()
+        self.shadow_dom_handler = ShadowDOMHandler()
+        self.dynamic_handler = DynamicHandler()
+        
+        # Performance metrics
+        self.metrics = get_metrics()
 
         # Embedders - separate for hybrid approach
         model_root = str((self._models_root or Path("src/her/models").resolve()) / "e5-small-onnx")
@@ -659,11 +676,53 @@ class HybridPipeline:
         """Execute no-semantic query strategy (exact DOM matching)."""
         log.info(f"No-semantic mode query: '{query}' with {len(elements)} elements")
         
+        # Record query start time
+        query_start_time = time.time()
+        
         # Extract target from query or use provided target
         search_target = target or query
         
-        # Use target matcher for exact DOM matching
-        matches = self.target_matcher.match_elements(elements, search_target)
+        # Detect and handle frames
+        frames = self.frame_handler.detect_frames(elements)
+        log.info(f"Detected {len(frames)} frames")
+        
+        # Detect and handle shadow DOM
+        shadow_roots = self.shadow_dom_handler.detect_shadow_roots(elements)
+        log.info(f"Detected {len(shadow_roots)} shadow DOM roots")
+        
+        # Detect and handle dynamic content
+        dynamic_elements = self.dynamic_handler.detect_dynamic_elements(elements)
+        log.info(f"Detected {len(dynamic_elements)} dynamic elements")
+        
+        # Use enhanced target matcher with frame awareness
+        frame_aware_matcher = FrameAwareTargetMatcher(self.frame_handler, self.target_matcher)
+        
+        # Match elements across all contexts
+        all_matches = []
+        
+        # 1. Match in main frame
+        main_elements = [e for e in elements if not e.get('meta', {}).get('frame_hash')]
+        main_matches = self.target_matcher.match_elements(main_elements, search_target)
+        all_matches.extend(main_matches)
+        
+        # 2. Match in frames
+        frame_matches = frame_aware_matcher.match_elements_in_frames(elements, search_target)
+        for frame_context, matches in frame_matches:
+            for match in matches:
+                match.element['frame_context'] = frame_context.frame_id
+                all_matches.append(match)
+        
+        # 3. Match in shadow DOM
+        shadow_matches = self.shadow_dom_handler.find_elements_in_shadow_dom(elements, search_target, self.target_matcher)
+        all_matches.extend(shadow_matches)
+        
+        # 4. Match in dynamic content
+        dynamic_matches = self.dynamic_handler.handle_dynamic_loading(elements, self.target_matcher, search_target)
+        all_matches.extend(dynamic_matches)
+        
+        # Sort all matches by score
+        all_matches.sort(key=lambda m: m.score, reverse=True)
+        matches = all_matches
         
         if not matches:
             log.warning("No exact matches found in DOM, trying accessibility fallback")
@@ -719,12 +778,30 @@ class HybridPipeline:
         head_score = 1.0 if promo_top is not None else (matches[0].score if matches else 0.0)
         confidence = max(0.0, min(1.0, float(head_score)))
         
-        log.info(f"No-semantic query completed: {len(results)} results, confidence: {confidence:.3f}")
+        # Record performance metrics
+        query_duration = time.time() - query_start_time
+        record_query_timing("no-semantic", query_duration, len(results) > 0)
+        record_memory_usage("no-semantic")
+        
+        # Record cache metrics
+        if promo_top:
+            record_cache_metrics("no-semantic", True)
+        else:
+            record_cache_metrics("no-semantic", False)
+        
+        log.info(f"No-semantic query completed: {len(results)} results, confidence: {confidence:.3f}, duration: {query_duration:.3f}s")
         
         return {
             "results": results,
             "strategy": "no-semantic-exact+promotion" if promo_top else "no-semantic-exact",
             "confidence": confidence,
+            "performance": {
+                "duration": query_duration,
+                "frames_detected": len(frames),
+                "shadow_roots_detected": len(shadow_roots),
+                "dynamic_elements_detected": len(dynamic_elements),
+                "total_matches": len(all_matches)
+            }
         }
     
     def _rerank_no_semantic_matches(self, matches: List, query: str, user_intent: Optional[str], 
