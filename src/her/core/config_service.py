@@ -31,6 +31,10 @@ class ConfigService:
         """Check if two-stage processing should be used."""
         return self._config.should_use_two_stage()
     
+    def should_use_semantic_search(self) -> bool:
+        """Check if semantic search should be used (vs exact DOM matching)."""
+        return self._config.should_use_semantic_search()
+    
     def should_disable_heuristics(self) -> bool:
         """Check if heuristics should be disabled."""
         return self._config.should_disable_heuristics()

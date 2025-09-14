@@ -132,9 +132,9 @@ def get_flattened_document(
             logger.debug(f"Retrieved {len(nodes)} DOM nodes via getDocument")
             return nodes
 
-    except Exception:
-        # Swallow any mock/driver errors and return empty list
-        return []
+    except Exception as e:
+        # Real error handling - fail hard if CDP bridge fails
+        raise RuntimeError(f"CDP bridge failed: {e}")
 
 
 def _flatten_dom_tree(node: Dict[str, Any], result: List[Dict[str, Any]]) -> None:
@@ -406,9 +406,9 @@ def get_frame_tree(page: Optional[Page]) -> Dict[str, Any]:
         client = page.context.new_cdp_session(page)
         response = client.send("Page.getFrameTree")
         return response.get("frameTree", {})
-    except Exception:
-        # Return empty on any mock errors
-        return {}
+    except Exception as e:
+        # Real error handling - fail hard if frame tree retrieval fails
+        raise RuntimeError(f"Frame tree retrieval failed: {e}")
 
 
 def execute_cdp_command(

@@ -104,7 +104,8 @@ class HybridElementRetrieverClient:
         cache_dir: Optional[Path] = None,
         use_enhanced: bool = True,
         enable_resilience: bool = True,
-        enable_pipeline: bool = True
+        enable_pipeline: bool = True,
+        use_semantic_search: bool = True
     ):
         """Initialize HER client with all features integrated.
         
@@ -118,6 +119,7 @@ class HybridElementRetrieverClient:
             use_enhanced: Use enhanced session manager
             enable_resilience: Enable resilience features
             enable_pipeline: Use new integrated pipeline
+            use_semantic_search: Use semantic search (vs exact DOM matching)
         """
         self.browser = browser
         self.headless = headless
@@ -125,28 +127,26 @@ class HybridElementRetrieverClient:
         self.auto_index = auto_index
         self.enable_resilience = enable_resilience
         self.enable_pipeline = enable_pipeline
+        self.use_semantic_search = use_semantic_search
         self.timeout_ms = 30000
         self.promotion_enabled = True
         
         # Initialize pipeline if enabled
-        if enable_pipeline and PipelineConfig is not None and HERPipeline is not None:
-            config = PipelineConfig(
-                use_minilm=False,  # Use fallback embeddings
-                use_e5_small=True,
-                use_markuplm=True,
-                enable_cold_start_detection=True,
-                enable_incremental_updates=True,
-                enable_spa_tracking=True,
-                verify_url=True,
-                verify_dom_state=True,
-                verify_value=True,
-                max_retry_attempts=3,
-                wait_for_idle=True,
-                handle_frames=True,
-                handle_shadow_dom=True,
-                auto_dismiss_overlays=True
-            )
-            self.pipeline = HERPipeline(config)
+        if enable_pipeline and HERPipeline is not None:
+            # Set environment variables for pipeline configuration
+            import os
+            os.environ['HER_USE_SEMANTIC_SEARCH'] = str(use_semantic_search).lower()
+            os.environ['HER_USE_HIERARCHY'] = 'true'
+            os.environ['HER_HEADLESS'] = str(headless).lower()
+            os.environ['HER_BROWSER_TIMEOUT'] = '30000'
+            
+            # Initialize pipeline with models root
+            if cache_dir is None:
+                models_root = Path("src/her/models")
+            else:
+                cache_path = Path(cache_dir) if isinstance(cache_dir, str) else cache_dir
+                models_root = cache_path.parent / "models"
+            self.pipeline = HERPipeline(models_root=models_root)
         else:
             self.pipeline = None
         
@@ -161,14 +161,13 @@ class HybridElementRetrieverClient:
             self.session_manager = EnhancedSessionManager(
                 auto_index=auto_index,
                 reindex_on_change=reindex_on_change,
-                cache_dir=cache_dir,
-                enable_incremental=True,
-                enable_spa_tracking=True
+                cache_dir=str(cache_dir) if cache_dir else None
             )
         else:
             self.session_manager = SessionManager(
                 auto_index=auto_index,
-                reindex_on_change=reindex_on_change
+                reindex_on_change=reindex_on_change,
+                cache_dir=str(cache_dir) if cache_dir else None
             )
         
         # Legacy components (kept for compatibility)
@@ -192,32 +191,64 @@ class HybridElementRetrieverClient:
         self._last_action_result: Optional[Dict[str, Any]] = None
         self._snapshots: Dict[str, Any] = {}
     
+    def set_semantic_mode(self, use_semantic: bool) -> None:
+        """Set semantic search mode.
+        
+        Args:
+            use_semantic: True for semantic search, False for exact DOM matching
+        """
+        self.use_semantic_search = use_semantic
+        # Update environment variable for pipeline to pick up
+        import os
+        os.environ['HER_USE_SEMANTIC_SEARCH'] = str(use_semantic).lower()
+        
+        # Reset config service to pick up new environment variable
+        from ..core.config_service import reset_config_service
+        reset_config_service()
+    
     def _ensure_browser(self) -> Optional[Page]:
         """Ensure browser and page are available."""
         if not PLAYWRIGHT_AVAILABLE:
-            logger.warning("Playwright not available")
-            return None
+            raise RuntimeError("Playwright not available. Install with: pip install playwright && python -m playwright install chromium")
         
         if not self.page:
-            if not self.browser:
-                if not self.playwright:
-                    self.playwright = sync_playwright().start()
-                self.browser = self.playwright.chromium.launch(
-                    headless=self.headless,
-                    slow_mo=self.slow_mo
+            try:
+                if not self.browser:
+                    if not self.playwright:
+                        self.playwright = sync_playwright().start()
+                    self.browser = self.playwright.chromium.launch(
+                        headless=self.headless,
+                        slow_mo=self.slow_mo,
+                        args=[
+                            '--no-sandbox',
+                            '--disable-dev-shm-usage',
+                            '--disable-gpu',
+                            '--disable-web-security',
+                            '--disable-features=VizDisplayCompositor'
+                        ]
+                    )
+                
+                self.page = self.browser.new_page()
+                
+                # Set realistic viewport and user agent
+                self.page.set_viewport_size({"width": 1920, "height": 1080})
+                self.page.set_extra_http_headers({
+                    'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                })
+                
+                # Setup session
+                session = self.session_manager.create_session(
+                    self.current_session_id,
+                    self.page
                 )
-            
-            self.page = self.browser.new_page()
-            
-            # Setup session
-            session = self.session_manager.create_session(
-                self.current_session_id,
-                self.page
-            )
-            
-            # Setup SPA tracking if available
-            if hasattr(self.session_manager, '_setup_spa_tracking'):
-                self.session_manager._setup_spa_tracking(self.current_session_id, self.page)
+                
+                # Setup SPA tracking if available
+                if hasattr(self.session_manager, '_setup_spa_tracking'):
+                    self.session_manager._setup_spa_tracking(self.current_session_id, self.page)
+                    
+                logger.info("Browser initialized successfully")
+            except Exception as e:
+                raise RuntimeError(f"Browser initialization failed: {e}. Check Playwright installation and system dependencies.")
         
         return self.page
     
@@ -330,18 +361,29 @@ class HybridElementRetrieverClient:
             # Navigate if URL provided
             if url and page:
                 valid_url, sanitized_url, url_error = InputValidator.validate_url(url)
-                if valid_url:
-                    try:
-                        page.goto(sanitized_url)
+                if not valid_url:
+                    raise ValueError(f"Invalid URL: {url_error}")
+                
+                try:
+                    logger.info(f"Navigating to: {sanitized_url}")
+                    response = page.goto(sanitized_url, wait_until='domcontentloaded', timeout=30000)
+                    
+                    if not response or response.status >= 400:
+                        raise RuntimeError(f"Navigation failed with status: {response.status if response else 'No response'}")
+                    
+                    # Wait for page to be ready
+                    if self.resilience:
+                        self.resilience.wait_for_idle(page, WaitStrategy.LOAD_COMPLETE)
                         
-                        # Wait for page to be ready
-                        if self.resilience:
-                            self.resilience.wait_for_idle(page, WaitStrategy.LOAD_COMPLETE)
-                            
-                            # Handle overlays
-                            self.resilience.detect_and_handle_overlay(page)
-                    except Exception as e:
-                        logger.debug(f"Navigation failed: {e}")
+                        # Handle overlays
+                        self.resilience.detect_and_handle_overlay(page)
+                    
+                    # Additional wait for dynamic content
+                    page.wait_for_timeout(2000)
+                    logger.info(f"Successfully navigated to: {sanitized_url}")
+                    
+                except Exception as e:
+                    raise RuntimeError(f"Navigation to {sanitized_url} failed: {e}")
             
             # Get descriptors (allow operation without a live page for tests)
             if page:
@@ -365,43 +407,59 @@ class HybridElementRetrieverClient:
                 # Support both legacy compat signature (dom=...) and newer
                 # experimental signatures. Prefer the stable compat surface.
                 try:
-                    result = self.pipeline.process(
+                    result = self.pipeline.query(
                         query=phrase,
-                        dom={"elements": descriptors},
-                        page=page,
-                        session_id=self.current_session_id,
+                        elements=descriptors,
+                        top_k=5
                     )
                 except TypeError:
-                    # Fallback to descriptors kwarg if present in custom impls
+                    # Fallback to positional arguments
                     try:
-                        result = self.pipeline.process(
-                            query=phrase,
-                            descriptors=descriptors,
-                            page=page,
-                            session_id=self.current_session_id,
-                        )
+                        result = self.pipeline.query(phrase, descriptors)
                     except TypeError:
-                        # Ultimate fallback: positional minimal call
-                        result = self.pipeline.process(phrase, {"elements": descriptors})
+                        # Ultimate fallback: minimal call
+                        result = self.pipeline.query(phrase)
                 
-                # Check for unique XPath
-                if result['xpath']:
-                    # Verify uniqueness
-                    unique_xpath = self._ensure_unique_xpath(
-                        result['xpath'],
-                        descriptors,
-                        page
-                    )
-                    result['xpath'] = unique_xpath
+                # Extract the best result from the pipeline response
+                if result and 'results' in result and len(result['results']) > 0:
+                    best_result = result['results'][0]  # Get the top result
                     
-                    # Return in expected format
-                    return {
-                        'selector': unique_xpath,
-                        'confidence': result['confidence'],
-                        'element': result['element'],
-                        'context': result['context'],
-                        'fallbacks': result.get('fallbacks', [])
-                    }
+                    # Extract XPath from the best result
+                    xpath = best_result.get('xpath') or best_result.get('selector')
+                    if xpath:
+                        # Verify uniqueness
+                        unique_xpath = self._ensure_unique_xpath(
+                            xpath,
+                            descriptors,
+                            page
+                        )
+                        
+                        # Validate XPath exists in DOM before returning
+                        if not self._validate_xpath_exists(unique_xpath, page):
+                            print(f"⚠️  XPath validation failed: {unique_xpath}")
+                            return {
+                                'selector': None,
+                                'xpath': None,
+                                'confidence': 0.0,
+                                'element': {},
+                                'context': {},
+                                'fallbacks': [],
+                                'strategy': 'validation-failed',
+                                'elements_found': 0,
+                                'error': f'XPath not found in DOM: {unique_xpath}'
+                            }
+                        
+                        # Return in expected format
+                        return {
+                            'selector': unique_xpath,
+                            'xpath': unique_xpath,
+                            'confidence': result.get('confidence', 0.0),
+                            'element': best_result.get('element', {}),
+                            'context': best_result.get('context', {}),
+                            'fallbacks': result.get('fallbacks', []),
+                            'strategy': result.get('strategy', 'unknown'),
+                            'elements_found': len(result.get('results', []))
+                        }
                 else:
                     # Try fallback methods
                     return self._fallback_query(phrase, descriptors, page)
@@ -537,6 +595,20 @@ class HybridElementRetrieverClient:
         except Exception as e:
             logger.error(f"Type failed: {e}")
             return {"ok": False, "error": str(e)}
+    
+    def _validate_xpath_exists(self, xpath: str, page: Optional[Page]) -> bool:
+        """Validate that XPath actually exists in the DOM."""
+        if not page or not xpath:
+            return False
+        
+        try:
+            # Use Playwright's locator to check if element exists
+            elements = page.locator(xpath)
+            count = elements.count()
+            return count > 0
+        except Exception as e:
+            print(f"XPath validation error: {e}")
+            return False
     
     def _ensure_unique_xpath(
         self,

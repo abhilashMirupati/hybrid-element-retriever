@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -26,6 +27,21 @@ except Exception:
 
 # Promotions (Step 6)
 from ..promotion.promotion_adapter import lookup_promotion
+
+# Target matcher for no-semantic mode
+from ..locator.target_matcher import TargetMatcher, AccessibilityFallbackMatcher, MatchResult
+
+# Enhanced handlers
+from ..locator.frame_handler import FrameHandler, FrameAwareTargetMatcher
+from ..locator.shadow_dom_handler import ShadowDOMHandler
+from ..locator.dynamic_handler import DynamicHandler
+
+# New explicit no-semantic components
+from ..locator.intent_parser import IntentParser, ParsedIntent, IntentType
+from ..locator.dom_target_binder import DOMTargetBinder, DOMMatch
+
+# Performance metrics
+from ..monitoring.performance_metrics import get_metrics, record_query_timing, record_cache_metrics, record_memory_usage, PerformanceTimer
 
 log = logging.getLogger("her.pipeline")
 
@@ -59,6 +75,27 @@ class HybridPipeline:
         self.use_hierarchy = self.config.should_use_hierarchy()
         self.use_two_stage = self.config.should_use_two_stage()
         self.hierarchy_builder = HierarchyContextBuilder() if self.use_hierarchy else None
+        
+        # Semantic search mode
+        self.use_semantic_search = self.config.should_use_semantic_search()
+        
+        # Target matcher for no-semantic mode
+        self.target_matcher = TargetMatcher(case_sensitive=False)
+        self.ax_fallback_matcher = AccessibilityFallbackMatcher(case_sensitive=False)
+        
+        # Enhanced handlers
+        self.frame_handler = FrameHandler()
+        self.shadow_dom_handler = ShadowDOMHandler()
+        self.dynamic_handler = DynamicHandler()
+        
+        # New explicit no-semantic components
+        self.intent_parser = IntentParser()
+        self.dom_target_binder = DOMTargetBinder(
+            case_sensitive=self.config.no_semantic_case_sensitive
+        )
+        
+        # Performance metrics
+        self.metrics = get_metrics()
 
         # Embedders - separate for hybrid approach
         model_root = str((self._models_root or Path("src/her/models").resolve()) / "e5-small-onnx")
@@ -85,7 +122,7 @@ class HybridPipeline:
             raise RuntimeError("Transformers MarkupLM is not available. Install transformers and run model installer.")
         model_dir: Optional[str] = None
         if self._models_root:
-            candidate = Path(self._models_root) / "markuplm-base"
+            candidate = self._models_root / "markuplm-base"
             if candidate.exists():
                 model_dir = str(candidate)
         else:
@@ -272,7 +309,7 @@ class HybridPipeline:
             return 0.0
         
         # Combine all parameters for comprehensive scoring
-        all_intent_text = " ".join(filter(None, [user_intent, target, query])).lower()
+        all_intent_text = " ".join(filter(None, [user_intent or "", target or "", query or ""])).lower()
         text = (meta.get("text") or "").lower()
         tag = (meta.get("tag") or "").lower()
         role = (meta.get("attributes", {}).get("role") or "").lower()
@@ -345,7 +382,7 @@ class HybridPipeline:
         
         # 3. User intent matching (action user wants to perform)
         if user_intent:
-            intent_lower = user_intent.lower()
+            intent_lower = (user_intent or "").lower()
             is_interactive = meta.get('interactive', False)
             attrs = meta.get('attributes', {})
             
@@ -426,7 +463,7 @@ class HybridPipeline:
             attrs = md.get("attributes", {})
             
             # 1. Element type scoring based on user intent
-            if any(word in user_intent.lower() for word in ["click", "select", "press", "choose", "pick"]):
+            if any(word in (user_intent or "").lower() for word in ["click", "select", "press", "choose", "pick"]):
                 # For click actions, heavily prioritize interactive elements
                 if is_interactive:
                     bonus += 0.5  # HIGH bonus for interactive elements
@@ -465,24 +502,24 @@ class HybridPipeline:
             # 4. Element type specific bonuses (universal)
             if tag == 'input':
                 input_type = attrs.get('type', '')
-                if input_type == 'radio' and any(word in user_intent.lower() for word in ['select', 'choose', 'pick']):
+                if input_type == 'radio' and any(word in (user_intent or "").lower() for word in ['select', 'choose', 'pick']):
                     bonus += 0.3
                     reasons.append("+radio_button=0.300")
                 elif input_type in ['checkbox', 'button', 'submit']:
                     bonus += 0.2
                     reasons.append("+input_button=0.200")
-            elif tag == 'button' and any(word in user_intent.lower() for word in ['click', 'select', 'press']):
+            elif tag == 'button' and any(word in (user_intent or "").lower() for word in ['click', 'select', 'press']):
                 bonus += 0.2
                 reasons.append("+button=0.200")
-            elif tag == 'a' and any(word in user_intent.lower() for word in ['click', 'select']):
+            elif tag == 'a' and any(word in (user_intent or "").lower() for word in ['click', 'select']):
                 bonus += 0.1
                 reasons.append("+link=0.100")
             
             # 5. Content relevance (universal)
-            if 'filter' in user_intent.lower() and 'filter' in text:
+            if 'filter' in (user_intent or "").lower() and 'filter' in text:
                 bonus += 0.2
                 reasons.append("+filter_content=0.200")
-            elif 'search' in user_intent.lower() and 'search' in text:
+            elif 'search' in (user_intent or "").lower() and 'search' in text:
                 bonus += 0.2
                 reasons.append("+search_content=0.200")
             
@@ -579,17 +616,16 @@ class HybridPipeline:
         if not self._validate_query_inputs(query, elements):
             return {"results": [], "strategy": "hybrid-delta", "confidence": 0.0}
 
-        # Prepare elements for processing
-        E, meta = self._prepare_elements_for_query(elements, frame_hash)
-        if E.size == 0:
-            log.warning("No elements after preparation")
-            return {"results": [], "strategy": "hybrid-delta", "confidence": 0.0}
+        # Check if we should use semantic or no-semantic mode
+        config_service = get_config_service()
+        use_semantic = config_service.should_use_semantic_search()
         
-        # Clean up old stores to prevent memory leaks
-        self.cleanup_old_stores()
-        
-        # Choose and execute query strategy
-        return self._execute_query_strategy(query, meta, top_k, page_sig, frame_hash, label_key, user_intent, target)
+        if use_semantic:
+            # Use existing semantic pipeline
+            return self._query_semantic_mode(query, elements, top_k, page_sig, frame_hash, label_key, user_intent, target)
+        else:
+            # Use new no-semantic mode
+            return self._query_no_semantic_mode(query, elements, top_k, page_sig, frame_hash, label_key, user_intent, target)
     
     def _log_query_start(self, query: str, elements: List[Dict[str, Any]]) -> None:
         """Log query start information."""
@@ -615,16 +651,26 @@ class HybridPipeline:
         
         return E, meta
     
-    def _execute_query_strategy(self, query: str, meta: List[Dict[str, Any]], top_k: int, 
-                               page_sig: Optional[str], frame_hash: Optional[str], 
-                               label_key: Optional[str], user_intent: Optional[str], 
-                               target: Optional[str]) -> Dict[str, Any]:
-        """Execute the appropriate query strategy based on configuration."""
+    def _query_semantic_mode(self, query: str, elements: List[Dict[str, Any]], top_k: int, 
+                            page_sig: Optional[str], frame_hash: Optional[str], 
+                            label_key: Optional[str], user_intent: Optional[str], 
+                            target: Optional[str]) -> Dict[str, Any]:
+        """Execute semantic query strategy (existing pipeline)."""
+        # Prepare elements for processing
+        E, meta = self._prepare_elements_for_query(elements, frame_hash)
+        if E.size == 0:
+            log.warning("No elements after preparation")
+            return {"results": [], "strategy": "hybrid-delta", "confidence": 0.0}
+        
+        # Clean up old stores to prevent memory leaks
+        self.cleanup_old_stores()
+        
+        # Execute semantic strategy
         config_service = get_config_service()
         use_hierarchy = config_service.should_use_hierarchy()
         use_two_stage = config_service.should_use_two_stage()
         
-        log.debug(f"Dynamic config check - hierarchy: {use_hierarchy}, two_stage: {use_two_stage}")
+        log.debug(f"Semantic mode - hierarchy: {use_hierarchy}, two_stage: {use_two_stage}")
         
         if use_hierarchy and use_two_stage:
             log.debug("Using TWO-STAGE MarkupLM strategy")
@@ -633,6 +679,35 @@ class HybridPipeline:
             log.debug("Using STANDARD strategy")
             return self._query_standard(query, meta, top_k, page_sig, frame_hash, label_key, user_intent, target)
 
+    def _query_no_semantic_mode(self, query: str, elements: List[Dict[str, Any]], top_k: int, 
+                               page_sig: Optional[str], frame_hash: Optional[str], 
+                               label_key: Optional[str], parsed_intent: Optional[ParsedIntent], 
+                               target: Optional[str]) -> Dict[str, Any]:
+        """Execute enhanced no-semantic query strategy with hierarchical context."""
+        log.info(f"Enhanced no-semantic mode query: '{query}' with {len(elements)} elements")
+        
+        # Import enhanced no-semantic matcher
+        from ..locator.enhanced_no_semantic import EnhancedNoSemanticMatcher
+        
+        # Create matcher instance
+        matcher = EnhancedNoSemanticMatcher()
+        
+        # Get page object for validation (if available)
+        page = None
+        if hasattr(self, '_current_page'):
+            page = self._current_page
+        
+        # Execute enhanced no-semantic query
+        result = matcher.query(query, elements, page)
+        
+        # Add performance metrics
+        result['performance'] = {
+            'elements_processed': len(elements),
+            'strategy': 'enhanced-no-semantic'
+        }
+        
+        return result
+    
     def _query_standard(
         self,
         query: str,
@@ -642,348 +717,81 @@ class HybridPipeline:
         frame_hash: Optional[str],
         label_key: Optional[str],
         user_intent: Optional[str],
-        target: Optional[str],
+        target: Optional[str]
     ) -> Dict[str, Any]:
-        """Standard query processing (backward compatible)."""
-        print(f"\n🔍 STEP 1: MiniLM Shortlist (384-d) - Standard Mode")
-        print(f"MiniLM Query Embedding: Using '{query}' for vector search")
+        """Execute standard hybrid search strategy."""
+        log.info(f"Standard hybrid search: '{query}' with {len(meta)} elements")
         
-        # STEP 1: MiniLM shortlist (384-d)
-        q_mini = self.embed_query(query)  # 384-d query
-        print(f"✅ Query embedded with MiniLM, vector shape: {q_mini.shape}")
-        print(f"🔍 MiniLM Query Vector (first 10 dims): {q_mini[:10]}")
+        # Prepare elements for search
+        mini_embeddings, elements = self._prepare_elements_for_query(meta, frame_hash)
         
-        # Search using MiniLM stores for shortlisting
-        mini_hits: List[Tuple[float, Dict[str, Any]]] = []
-        for fh, mini_store in self._mini_stores.items():
-            k = max(20, int(top_k * 3))  # Get more candidates for filtering
-            raw = mini_store.search(q_mini.tolist(), k=k)
-            for idx, _dist, md in raw:
-                vec = np.array(mini_store.vectors[idx], dtype=np.float32)
-                score = _cos(q_mini, vec)
-                mini_hits.append((score, md))
+        # Get MiniLM store
+        mini_store = self._get_mini_store(frame_hash)
         
-        # For click actions, prioritize interactive elements in MiniLM shortlist
-        if user_intent and any(word in user_intent.lower() for word in ["click", "select", "press", "choose", "pick"]):
-            print(f"🔍 Filtering MiniLM results for click action - prioritizing interactive elements")
-            interactive_hits = []
-            non_interactive_hits = []
-            
-            for score, md in mini_hits:
-                is_interactive = md.get('interactive', False)
-                tag = (md.get('tag') or '').lower()
-                
-                if is_interactive or tag in ('button', 'a', 'input', 'select', 'option'):
-                    interactive_hits.append((score, md))
-                else:
-                    non_interactive_hits.append((score, md))
-            
-            # Prioritize interactive elements, but keep some non-interactive for fallback
-            mini_hits = interactive_hits + non_interactive_hits[:5]
-            print(f"   Found {len(interactive_hits)} interactive elements, {len(non_interactive_hits)} non-interactive")
-            print(f"   Using {len(mini_hits)} total candidates for MarkupLM reranking")
-
-        print(f"🔍 MiniLM found {len(mini_hits)} candidates")
-        print(f"🔍 Top {min(5, len(mini_hits))} MiniLM candidates:")
-        for i, (score, meta) in enumerate(mini_hits[:5]):
-            print(f"  {i+1}. Score: {score:.3f} | Tag: {meta.get('tag', '')} | Text: '{meta.get('text', '')[:50]}...'")
-            print(f"      XPath: {meta.get('xpath', '')[:80]}...")
-
-        if not mini_hits:
-            print("❌ No hits from MiniLM shortlist")
-            return {"results": [], "strategy": "hybrid-delta", "confidence": 0.0}
-
-        # STEP 2: MarkupLM rerank (768-d)
-        print(f"\n🎯 STEP 2: MarkupLM Rerank (768-d) - Standard Mode")
+        # Perform MiniLM search
+        mini_scores, mini_indices = mini_store.search(mini_embeddings, top_k * 2)
         
-        # Get top candidates from MiniLM shortlist (already sorted by interactive priority)
-        # Don't re-sort here as we already prioritized interactive elements
-        shortlist = mini_hits[:min(5, len(mini_hits))]  # Top 5 for reranking (respect 512 token limit)
+        # Get top elements from MiniLM
+        top_elements = [elements[i] for i in mini_indices[0]]
         
-        # Additional safety check for token limits
-        if len(shortlist) > 5:
-            print(f"⚠️  WARNING: Processing {len(shortlist)} elements may exceed token limits")
-            shortlist = shortlist[:5]  # Force limit to 5
-        
-        print(f"🔍 Reranking {len(shortlist)} candidates with MarkupLM")
-        print(f"🔍 MarkupLM Processing Details:")
-        print(f"   Query: '{query}' (type: {type(query)})")
-        print(f"   User Intent: '{user_intent}' (type: {type(user_intent)})")
-        print(f"   Target: '{target}' (type: {type(target)})")
-        print(f"   Shortlist elements: {len(shortlist)}")
-        
-        # Debug: Check if parameters are being passed to intent scoring
-        print(f"\\n🔍 Parameter Validation:")
-        print(f"   Query is None: {query is None}")
-        print(f"   User Intent is None: {user_intent is None}")
-        print(f"   Target is None: {target is None}")
-        print(f"   Will call _compute_intent_score: {bool(user_intent or target)}")
-        
-        # Re-embed query and shortlist with MarkupLM (limit to top 10 for performance)
-        q_markup = self._embed_query_markup(query)  # 768-d query
-        print(f"✅ Query embedded with MarkupLM, vector shape: {q_markup.shape}")
-        print(f"🔍 MarkupLM Query Vector (first 10 dims): {q_markup[:10]}")
-        
-        # Create enhanced elements with proper HTML structure for MarkupLM
-        shortlist_elements = []
-        for (_, meta) in shortlist[:10]:  # Limit to top 10
-            # Create enhanced element with proper HTML structure for MarkupLM
-            enhanced_meta = meta.copy()
-            
-            # Convert element to proper HTML structure
-            tag = meta.get('tag', '').lower()
-            text = meta.get('text', '')
-            attrs = meta.get('attributes', {})
-            
-            # Build attribute string
-            attr_str = ""
-            for key, value in attrs.items():
-                attr_str += f' {key}="{value}"'
-            
-            # Create HTML structure based on element type
-            if tag in ['a', 'button', 'input', 'select', 'option']:
-                if tag == 'a':
-                    html_text = f'<a{attr_str}>{text}</a>'
-                elif tag == 'button':
-                    html_text = f'<button{attr_str}>{text}</button>'
-                elif tag == 'input':
-                    html_text = f'<input{attr_str} value="{text}">'
-                else:
-                    html_text = f'<{tag}{attr_str}>{text}</{tag}>'
-            else:
-                html_text = f'<{tag}{attr_str}>{text}</{tag}>'
-            
-            # Add hierarchy context if enabled
-            config_service = get_config_service()
-            if config_service.should_use_hierarchy() and "context" in meta:
-                context = meta["context"]
-                hierarchy_path = context.get("hierarchy_path", "")
-                if hierarchy_path and hierarchy_path != "PENDING" and hierarchy_path != "ERROR":
-                    # Prepend hierarchy context to HTML for MarkupLM
-                    html_text = f"{hierarchy_path} | {html_text}"
-            
-            enhanced_meta["text"] = html_text
-            enhanced_meta["tag"] = "html"  # Mark as HTML for MarkupLM
-            shortlist_elements.append(enhanced_meta)
-        
-        print(f"🔍 MarkupLM Processing {len(shortlist_elements)} shortlisted elements")
-        print(f"🔍 Enhanced elements with hierarchy context:")
-        for i, el in enumerate(shortlist_elements[:3]):
-            print(f"   {i+1}. Text: '{el.get('text', '')[:80]}...'")
-            print(f"      Tag: {el.get('tag', '')}")
-            print(f"      Context: {el.get('context', {}).get('hierarchy_path', 'N/A')}")
-        
-        shortlist_embeddings = self.element_embedder.batch_encode(shortlist_elements)  # 768-d
-        print(f"✅ Shortlist elements embedded with MarkupLM, shape: {shortlist_embeddings.shape}")
-        
-        # Compute cosine similarity in 768-d space with user intent awareness
-        markup_scores: List[Tuple[float, Dict[str, Any]]] = []
-        for i, (mini_score, meta) in enumerate(shortlist):
-            if i < shortlist_embeddings.shape[0]:
-                markup_vec = shortlist_embeddings[i]
-                markup_score = _cos(q_markup, markup_vec)
-                
-                # Apply multi-parameter scoring to MarkupLM results
-                intent_score = 0.0
-                if user_intent or target:
-                    intent_score = self._compute_intent_score(user_intent, target, query, meta)
-                    markup_score += intent_score
-                
-                # Debug each element
-                print(f"   Element {i+1}:")
-                print(f"     Text: '{meta.get('text', '')[:50]}...'")
-                print(f"     Tag: {meta.get('tag', '')}")
-                print(f"     XPath: {meta.get('xpath', '')[:80]}...")
-                print(f"     MiniLM Score: {mini_score:.3f}")
-                print(f"     MarkupLM Cosine: {_cos(q_markup, markup_vec):.3f}")
-                print(f"     Intent Score: {intent_score:.3f}")
-                print(f"     Final Score: {markup_score:.3f}")
-                
-                markup_scores.append((markup_score, meta))
-        
-        print(f"✅ MarkupLM reranking completed")
-        print(f"🔍 Top {min(3, len(markup_scores))} MarkupLM candidates:")
-        for i, (score, meta) in enumerate(markup_scores[:3]):
-            print(f"  {i+1}. Score: {score:.3f} | Tag: {meta.get('tag', '')} | Text: '{meta.get('text', '')[:50]}...'")
-
-        # Check for promotions
-        promo_top: Optional[Dict[str, Any]] = None
-        if page_sig and frame_hash and label_key:
-            sel = lookup_promotion(self.kv, page_sig=page_sig, frame_hash=frame_hash, label_key=label_key)
-            if sel:
-                promo_top = {
-                    "selector": sel,
-                    "score": 1.0,
-                    "reasons": ["promotion-hit"],
-                    "meta": {"frame_hash": frame_hash, "promoted": True},
-                }
-
-        if not markup_scores and not promo_top:
-            print("❌ No hits after MarkupLM reranking")
-            return {"results": [], "strategy": "hybrid-delta", "confidence": 0.0}
-
-        # Apply universal UI automation heuristics (minimal bias, let MarkupLM + user intent dominate)
-        def _tag_bias(tag: str) -> float:
-            """Minimal tag bias - only for essential UI automation elements"""
-            tag = (tag or "").lower()
-            # Only give minimal bias to essential interactive elements
-            if tag in ("input", "textarea", "select"):  # Form elements
-                return 0.005
-            if tag in ("button", "a"):  # Action elements
-                return 0.003
-            return 0.0
-
-        def _role_bonus(role: str) -> float:
-            """Minimal role bonus - only for essential accessibility roles"""
-            role = (role or "").lower()
-            if role in ("button", "link", "tab", "menuitem", "option"):
-                return 0.002
-            return 0.0
-        
-        def _clickable_bonus(meta: Dict[str, Any]) -> float:
-            """Universal clickable bonus - works for all websites and use cases"""
-            tag = (meta.get("tag") or "").lower()
-            attrs = meta.get("attributes", {})
-            text = (meta.get("text") or "").strip()
-
-            # Universal clickable indicators (works across all websites)
-            clickable_indicators = [
-                "onclick", "href", "data-href", "data-link", "data-click",
-                "data-action", "data-testid", "data-test-id", "role", "tabindex",
-                "aria-label", "aria-labelledby", "title", "alt"
-            ]
-
-            score = 0.0
-
-            # Bonus for interactive tags
-            if tag in ("button", "a", "input", "select", "textarea", "label"):
-                score += 0.02
-
-            # Bonus for clickable attributes
-            if any(attr in attrs for attr in clickable_indicators):
-                score += 0.01
-
-            # Bonus for elements with meaningful text (likely interactive)
-            if text and len(text) > 0 and len(text) < 100:
-                score += 0.01
-
-            # Bonus for elements with data attributes (modern web apps)
-            if any(attr.startswith("data-") for attr in attrs.keys()):
-                score += 0.005
-
-            return score
-
-        # Show MarkupLM scores and decide whether to trust them
-        print(f"🎯 STEP 3: MarkupLM Analysis & Smart Selection")
-        print(f"🔍 MarkupLM ranking for {len(markup_scores)} candidates:")
-        for i, (base_score, md) in enumerate(markup_scores):
-            print(f"   {i+1}. MarkupLM Score: {base_score:.3f} | Tag: {md.get('tag', '')} | Text: '{md.get('text', '')[:50]}...'")
-            print(f"       XPath: {md.get('xpath', '')[:80]}...")
-        
-        # Check if MarkupLM has a clear winner (score gap > threshold)
-        if len(markup_scores) >= 2:
-            top_score = markup_scores[0][0]
-            second_score = markup_scores[1][0]
-            score_gap = top_score - second_score
-            print(f"\\n🔍 MarkupLM Analysis:")
-            print(f"   Top Score: {top_score:.3f}")
-            print(f"   Second Score: {second_score:.3f}")
-            print(f"   Score Gap: {score_gap:.3f}")
-            
-            # Trust MarkupLM if score gap is significant (>0.1)
-            if score_gap > 0.1:
-                print(f"   ✅ Trusting MarkupLM - clear winner (gap > 0.1)")
-                ranked = [(score, meta, [f"markup_cosine={score:.3f}", "trusted_markup"]) for score, meta in markup_scores]
-            else:
-                # Check if heuristics are disabled
-                config_service = get_config_service()
-                if config_service.should_disable_heuristics():
-                    print(f"   ⚠️  Close scores - heuristics disabled, trusting MarkupLM")
-                    ranked = [(score, meta, [f"markup_cosine={score:.3f}", "trusted_markup"]) for score, meta in markup_scores]
-                else:
-                    print(f"   ⚠️  Close scores - applying basic heuristics")
-                    ranked = self._apply_basic_heuristics(markup_scores, user_intent, target)
-        else:
-            # Check if heuristics are disabled
-            config_service = get_config_service()
-            if config_service.should_disable_heuristics():
-                print(f"   ⚠️  Only {len(markup_scores)} candidates - heuristics disabled, trusting MarkupLM")
-                ranked = [(score, meta, [f"markup_cosine={score:.3f}", "trusted_markup"]) for score, meta in markup_scores]
-            else:
-                print(f"   ⚠️  Only {len(markup_scores)} candidates - applying basic heuristics")
-                ranked = self._apply_basic_heuristics(markup_scores, user_intent, target)
-
-        ranked.sort(key=lambda t: t[0], reverse=True)
-        ranked = ranked[:top_k]
-
-        print(f"Top {min(3, len(ranked))} final candidates:")
-        for i, (score, meta, reasons) in enumerate(ranked[:3]):
-            print(f"  {i+1}. Final Score: {score:.3f} | Tag: {meta.get('tag', '')} | Text: '{meta.get('text', '')[:50]}...'")
-            print(f"      XPath: {meta.get('xpath', '')[:100]}...")
-            print(f"      Reasons: {reasons}")
-
-        results = []
-        # Only add promotion if it's actually a good match
-        if promo_top is not None:
-            # Check if promoted element is clickable
-            promo_meta = promo_top.get("meta", {})
-            if _clickable_bonus(promo_meta) > 0 or promo_meta.get("tag", "").lower() in ("button", "a", "input", "select"):
-                results.append(promo_top)
-                print(f"✅ Using promoted element: {promo_top.get('selector', '')}")
-            else:
-                # If promotion is not clickable, don't use it
-                print(f"❌ Promoted element not clickable, skipping")
-
-        for score, md, reasons in ranked:
-            # Generate XPath only for top candidates to save processing time
-            sel = md.get("xpath") or ""
-            if not sel:
-                # Generate XPath for this top candidate
-                from ..utils.xpath_generator import generate_xpath_for_element
-                sel = generate_xpath_for_element(md)
-            
-            results.append({
-                "selector": sel,
-                "score": float(score),
-                "reasons": reasons,
-                "meta": md,
-            })
-
-        head_score = 1.0 if promo_top is not None else (ranked[0][0] if ranked else 0.0)
-        confidence = max(0.0, min(1.0, float(head_score)))
-
-        # Debug final selection
-        if results:
-            selected = results[0]
-            print(f"\n🎯 FINAL SELECTION:")
-            print(f"   Selected XPath: {selected['selector']}")
-            print(f"   Confidence: {confidence:.3f}")
-            print(f"   Strategy: {'hybrid-minilm-markuplm+promotion' if promo_top else 'hybrid-minilm-markuplm'}")
-            print(f"   Element Text: '{selected['meta'].get('text', '')[:50]}...'")
-            print(f"   Element Tag: {selected['meta'].get('tag', '')}")
-            
-            # Check how many elements this XPath matches (if we have access to page)
+        # Prepare for MarkupLM reranking
+        if _MARKUP_IMPORT_OK:
             try:
-                # This will be checked later in the runner when we actually try to click
-                print(f"   📋 XPath will be validated during click execution")
+                # Create query embedding
+                q_markup = self._embed_query_markup(query)
+                
+                # Get MarkupLM store
+                markup_store = self._get_markup_store(frame_hash)
+                
+                # Perform MarkupLM search on top elements
+                markup_scores, markup_indices = markup_store.search(
+                    self.element_embedder.batch_encode(top_elements), top_k
+                )
+                
+                # Get final results
+                final_elements = [top_elements[i] for i in markup_indices[0]]
+                final_scores = markup_scores[0]
+                
+                # Apply heuristics
+                heuristically_scored = self._apply_basic_heuristics(
+                    list(zip(final_scores, final_elements)), 
+                    user_intent or "", 
+                    target or ""
+                )
+                
+                # Build results
+                results = []
+                for score, element, reasons in heuristically_scored:
+                    results.append({
+                        "selector": f"//{element.get('tag', 'div')}[@id='{element.get('attributes', {}).get('id', '')}']",
+                        "score": float(score),
+                        "reasons": reasons,
+                        "meta": element
+                    })
+                
+                return {
+                    "results": results[:top_k],
+                    "strategy": "hybrid-minilm-markuplm",
+                    "confidence": float(final_scores[0]) if final_scores else 0.0
+                }
+                
             except Exception as e:
-                print(f"   ⚠️  Could not validate XPath: {e}")
-            
-            # Universal filter selection analysis
-            if 'filter' in query.lower():
-                print(f"\n🔍 FILTER SELECTION ANALYSIS:")
-                print(f"   Query: '{query}'")
-                print(f"   Selected XPath: {selected['selector']}")
-                print(f"   Element ID: {selected['meta'].get('attributes', {}).get('id', 'None')}")
-                print(f"   Element Class: {selected['meta'].get('attributes', {}).get('class', 'None')}")
-                print(f"   Element Role: {selected['meta'].get('role', 'None')}")
-                print(f"   Element Aria Label: {selected['meta'].get('attributes', {}).get('aria-label', 'None')}")
-                print(f"   Element Text: '{selected['meta'].get('text', '')[:50]}...'")
-
+                log.warning(f"MarkupLM search failed: {e}, falling back to MiniLM only")
+        
+        # Fallback to MiniLM only
+        results = []
+        for i, element in enumerate(top_elements[:top_k]):
+            results.append({
+                "selector": f"//{element.get('tag', 'div')}[@id='{element.get('attributes', {}).get('id', '')}']",
+                "score": float(mini_scores[0][i]),
+                "reasons": ["minilm-only"],
+                "meta": element
+            })
+        
         return {
-            "results": results[:top_k],
-            "strategy": "hybrid-minilm-markuplm+promotion" if promo_top else "hybrid-minilm-markuplm",
-            "confidence": confidence,
+            "results": results,
+            "strategy": "minilm-only",
+            "confidence": float(mini_scores[0][0]) if mini_scores[0] else 0.0
         }
 
     def _query_two_stage(
@@ -997,236 +805,55 @@ class HybridPipeline:
         user_intent: Optional[str],
         target: Optional[str],
     ) -> Dict[str, Any]:
-        """Two-stage MarkupLM query processing with hierarchy support."""
-        print(f"\n🔍 PHASE 3: Two-Stage MarkupLM Query Processing")
-        print(f"Query: '{query}'")
-        print(f"Total elements: {len(meta)}")
+        """Execute two-stage hybrid search strategy."""
+        log.info(f"Two-stage hybrid search: '{query}' with {len(meta)} elements")
         
-        # Stage 1: Process containers (divs, sections, etc.) with hierarchy context
-        print(f"\n🎯 STAGE 1: Container Processing")
-        container_elements = []
-        interactive_elements = []
+        # Stage 1: MiniLM search
+        mini_embeddings, elements = self._prepare_elements_for_query(meta, frame_hash)
+        mini_store = self._get_mini_store(frame_hash)
+        mini_scores, mini_indices = mini_store.search(mini_embeddings, top_k * 3)
         
-        for element in meta:
-            tag = element.get('tag', '').lower()
-            context = element.get('context', {})
-            
-            # Separate containers from interactive elements
-            if tag in ['div', 'section', 'main', 'article', 'aside', 'nav', 'header', 'footer']:
-                container_elements.append(element)
-            elif tag in ['button', 'a', 'input', 'textarea', 'select', 'option', 'li']:
-                interactive_elements.append(element)
-        
-        print(f"   Found {len(container_elements)} containers")
-        print(f"   Found {len(interactive_elements)} interactive elements")
-        
-        # Process containers with hierarchy context
-        container_scores = []
-        if container_elements:
-            print(f"   Processing containers with hierarchy context...")
-            q_markup = self._embed_query_markup(query)
-            
-            for container in container_elements:
-                # Use hierarchy context for container scoring
-                context = container.get('context', {})
-                hierarchy_path = context.get('hierarchy_path', '')
+        # Stage 2: MarkupLM reranking
+        if _MARKUP_IMPORT_OK:
+            try:
+                top_elements = [elements[i] for i in mini_indices[0]]
+                markup_scores, markup_indices = self._get_markup_store(frame_hash).search(
+                    self.element_embedder.batch_encode(top_elements), top_k
+                )
                 
-                # Create enhanced text with hierarchy context
-                enhanced_text = container.get('text', '')
-                if hierarchy_path and hierarchy_path != 'PENDING' and hierarchy_path != 'ERROR':
-                    enhanced_text = f"{hierarchy_path} | {enhanced_text}" if enhanced_text else hierarchy_path
+                final_elements = [top_elements[i] for i in markup_indices[0]]
+                final_scores = markup_scores[0]
                 
-                # Create temporary element for embedding
-                temp_element = container.copy()
-                temp_element['text'] = enhanced_text
+                results = []
+                for i, element in enumerate(final_elements):
+                    results.append({
+                        "selector": f"//{element.get('tag', 'div')}[@id='{element.get('attributes', {}).get('id', '')}']",
+                        "score": float(final_scores[i]),
+                        "reasons": ["two-stage-hybrid"],
+                        "meta": element
+                    })
                 
-                # Get embedding
-                container_embedding = self.element_embedder.batch_encode([temp_element])
-                if container_embedding.size > 0:
-                    score = _cos(q_markup, container_embedding[0])
-                    container_scores.append((score, container))
-        
-        # Stage 2: Process interactive elements within top containers
-        print(f"\n🎯 STAGE 2: Interactive Element Processing")
-        
-        # Get top containers
-        container_scores.sort(key=lambda x: x[0], reverse=True)
-        top_containers = container_scores[:3]  # Top 3 containers
-        
-        print(f"   Top {len(top_containers)} containers selected for element processing")
-        for i, (score, container) in enumerate(top_containers):
-            context = container.get('context', {})
-            hierarchy_path = context.get('hierarchy_path', '')
-            print(f"     {i+1}. Score: {score:.3f} | Path: {hierarchy_path} | Text: '{container.get('text', '')[:50]}...'")
-        
-        # Process interactive elements within top containers
-        interactive_scores = []
-        if interactive_elements:
-            print(f"   Processing {len(interactive_elements)} interactive elements...")
-            q_markup = self._embed_query_markup(query)
-            
-            for element in interactive_elements:
-                # Use hierarchy context for element scoring
-                context = element.get('context', {})
-                hierarchy_path = context.get('hierarchy_path', '')
-                
-                # Create enhanced text with hierarchy context
-                enhanced_text = element.get('text', '')
-                if hierarchy_path and hierarchy_path != 'PENDING' and hierarchy_path != 'ERROR':
-                    enhanced_text = f"{hierarchy_path} | {enhanced_text}" if enhanced_text else hierarchy_path
-                
-                # Create temporary element for embedding
-                temp_element = element.copy()
-                temp_element['text'] = enhanced_text
-                
-                # Get embedding
-                element_embedding = self.element_embedder.batch_encode([temp_element])
-                if element_embedding.size > 0:
-                    score = _cos(q_markup, element_embedding[0])
-                    
-                    # Apply multi-parameter scoring
-                    intent_score = 0.0
-                    if user_intent or target:
-                        intent_score = self._compute_intent_score(user_intent, target, query, element)
-                        score += intent_score
-                    
-                    interactive_scores.append((score, element))
-        
-        # Combine and rank results
-        print(f"\n🎯 FINAL RANKING")
-        all_scores = container_scores + interactive_scores
-        all_scores.sort(key=lambda x: x[0], reverse=True)
-        
-        print(f"   Total candidates: {len(all_scores)}")
-        print(f"   Top {min(5, len(all_scores))} candidates:")
-        for i, (score, element) in enumerate(all_scores[:5]):
-            context = element.get('context', {})
-            hierarchy_path = context.get('hierarchy_path', '')
-            print(f"     {i+1}. Score: {score:.3f} | Tag: {element.get('tag', '')} | Path: {hierarchy_path} | Text: '{element.get('text', '')[:50]}...'")
-        
-        if not all_scores:
-            print("❌ No hits from two-stage processing")
-            return {"results": [], "strategy": "two-stage-markuplm", "confidence": 0.0}
-        
-        # Check for promotions
-        promo_top: Optional[Dict[str, Any]] = None
-        if page_sig and frame_hash and label_key:
-            sel = lookup_promotion(self.kv, page_sig=page_sig, frame_hash=frame_hash, label_key=label_key)
-            if sel:
-                promo_top = {
-                    "selector": sel,
-                    "score": 1.0,
-                    "reasons": ["promotion-hit"],
-                    "meta": {"frame_hash": frame_hash, "promoted": True},
+                return {
+                    "results": results,
+                    "strategy": "two-stage-hybrid",
+                    "confidence": float(final_scores[0]) if final_scores else 0.0
                 }
+                
+            except Exception as e:
+                log.warning(f"Two-stage search failed: {e}, falling back to MiniLM only")
         
-        if not all_scores and not promo_top:
-            print("❌ No hits after two-stage processing")
-            return {"results": [], "strategy": "two-stage-markuplm", "confidence": 0.0}
-        
-        # Apply universal UI automation heuristics
-        def _tag_bias(tag: str) -> float:
-            """Minimal tag bias - only for essential UI automation elements"""
-            tag = (tag or "").lower()
-            if tag in ("input", "textarea", "select"):
-                return 0.005
-            if tag in ("button", "a"):
-                return 0.003
-            return 0.0
-
-        def _role_bonus(role: str) -> float:
-            """Minimal role bonus - only for essential accessibility roles"""
-            role = (role or "").lower()
-            if role in ("button", "link", "tab", "menuitem", "option"):
-                return 0.002
-            return 0.0
-        
-        def _clickable_bonus(meta: Dict[str, Any]) -> float:
-            """Universal clickable bonus - works for all websites and use cases"""
-            tag = (meta.get("tag") or "").lower()
-            attrs = meta.get("attributes", {})
-            text = (meta.get("text") or "").strip()
-
-            clickable_indicators = [
-                "onclick", "href", "data-href", "data-link", "data-click",
-                "data-action", "data-testid", "data-test-id", "role", "tabindex",
-                "aria-label", "aria-labelledby", "title", "alt"
-            ]
-            
-            has_clickable_attr = any(attr in attrs for attr in clickable_indicators)
-            has_clickable_text = any(word in text.lower() for word in ["click", "tap", "press", "select", "choose", "go", "open", "view", "show", "hide"])
-            
-            if has_clickable_attr or has_clickable_text:
-                return 0.01
-            return 0.0
-
-        # Apply heuristics to final scores
-        ranked = []
-        for score, meta in all_scores:
-            tag = meta.get("tag", "")
-            attrs = meta.get("attributes", {})
-            role = attrs.get("role", "")
-            
-            # Apply minimal heuristics
-            final_score = score
-            final_score += _tag_bias(tag)
-            final_score += _role_bonus(role)
-            final_score += _clickable_bonus(meta)
-            
-            reasons = []
-            if _tag_bias(tag) > 0:
-                reasons.append(f"tag-{tag}")
-            if _role_bonus(role) > 0:
-                reasons.append(f"role-{role}")
-            if _clickable_bonus(meta) > 0:
-                reasons.append("clickable")
-            
-            ranked.append((final_score, meta, reasons))
-        
-        # Sort by final score
-        ranked.sort(key=lambda x: x[0], reverse=True)
-        
-        # Build results
+        # Fallback to MiniLM only
         results = []
-        if promo_top:
-            results.append(promo_top)
-        
-        for score, md, reasons in ranked:
-            # Generate XPath only for top candidates to save processing time
-            sel = md.get("xpath") or ""
-            if not sel:
-                # Generate XPath for this top candidate
-                from ..utils.xpath_generator import generate_xpath_for_element
-                sel = generate_xpath_for_element(md)
-            
+        for i, element in enumerate([elements[i] for i in mini_indices[0]][:top_k]):
             results.append({
-                "selector": sel,
-                "score": float(score),
-                "reasons": reasons,
-                "meta": md,
+                "selector": f"//{element.get('tag', 'div')}[@id='{element.get('attributes', {}).get('id', '')}']",
+                "score": float(mini_scores[0][i]),
+                "reasons": ["minilm-only"],
+                "meta": element
             })
-
-        head_score = 1.0 if promo_top is not None else (ranked[0][0] if ranked else 0.0)
-        confidence = max(0.0, min(1.0, float(head_score)))
-
-        # Debug final selection
-        if results:
-            selected = results[0]
-            print(f"\n🎯 FINAL SELECTION (Two-Stage):")
-            print(f"   Selected XPath: {selected['selector']}")
-            print(f"   Confidence: {confidence:.3f}")
-            print(f"   Strategy: {'two-stage-markuplm+promotion' if promo_top else 'two-stage-markuplm'}")
-            print(f"   Element Text: '{selected['meta'].get('text', '')[:50]}...'")
-            print(f"   Element Tag: {selected['meta'].get('tag', '')}")
-            
-            # Show hierarchy context if available
-            context = selected['meta'].get('context', {})
-            if context:
-                hierarchy_path = context.get('hierarchy_path', '')
-                print(f"   Hierarchy Path: {hierarchy_path}")
-
+        
         return {
-            "results": results[:top_k],
-            "strategy": "two-stage-markuplm+promotion" if promo_top else "two-stage-markuplm",
-            "confidence": confidence,
+            "results": results,
+            "strategy": "minilm-only",
+            "confidence": float(mini_scores[0][0]) if mini_scores[0] else 0.0
         }

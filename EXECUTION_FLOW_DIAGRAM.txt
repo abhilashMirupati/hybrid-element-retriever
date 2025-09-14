@@ -1,0 +1,117 @@
+HER EXECUTION FLOW DIAGRAM
+==========================
+
+CLI Entry Point (cli.py)
+    │
+    ├─ Parse --no-semantic flag
+    │   ├─ Default: use_semantic = True
+    │   └─ --no-semantic: use_semantic = False
+    │
+    └─ HybridClient.set_semantic_mode() (cli_api.py)
+        │
+        └─ Pipeline.query() (pipeline.py)
+            │
+            ├─ config_service.should_use_semantic_search()
+            │
+            ├─ SEMANTIC MODE ──────────────────────────────────────────────┐
+            │   │                                                         │
+            │   ├─ _query_semantic_mode()                                 │
+            │   │   │                                                     │
+            │   │   ├─ Element Preparation                                │
+            │   │   │   └─ _prepare_elements_for_query()                 │
+            │   │   │                                                     │
+            │   │   ├─ MiniLM Shortlist (384-d)                          │
+            │   │   │   ├─ embed_query()                                  │
+            │   │   │   ├─ mini_store.search() (FAISS)                   │
+            │   │   │   └─ Interactive element filtering                  │
+            │   │   │                                                     │
+            │   │   ├─ MarkupLM Rerank (768-d)                           │
+            │   │   │   ├─ _embed_query_markup()                         │
+            │   │   │   ├─ element_embedder.batch_encode()               │
+            │   │   │   └─ Cosine similarity calculation                  │
+            │   │   │                                                     │
+            │   │   ├─ Heuristics Application                            │
+            │   │   │   └─ _apply_basic_heuristics()                     │
+            │   │   │                                                     │
+            │   │   ├─ Promotion Check                                   │
+            │   │   │   └─ lookup_promotion()                            │
+            │   │   │                                                     │
+            │   │   ├─ XPath Generation                                  │
+            │   │   │   └─ generate_xpath_for_element()                  │
+            │   │   │                                                     │
+            │   │   └─ Executor (Playwright)                             │
+            │   │                                                         │
+            │   └─ _query_standard() or _query_two_stage()               │
+            │                                                             │
+            └─ NO-SEMANTIC MODE ──────────────────────────────────────────┐
+                │                                                         │
+                ├─ _query_no_semantic_mode()                              │
+                │   │                                                     │
+                │   ├─ Enhanced Context Detection                         │
+                │   │   ├─ frame_handler.detect_frames()                 │
+                │   │   ├─ shadow_dom_handler.detect_shadow_roots()      │
+                │   │   └─ dynamic_handler.detect_dynamic_elements()     │
+                │   │                                                     │
+                │   ├─ Target Extraction                                  │
+                │   │   └─ target_matcher.extract_quoted_target()        │
+                │   │                                                     │
+                │   ├─ Multi-Context Matching                             │
+                │   │   ├─ Main frame: target_matcher.match_elements()   │
+                │   │   ├─ Frames: frame_aware_matcher.match_elements()  │
+                │   │   ├─ Shadow DOM: shadow_dom_handler.find_elements()│
+                │   │   └─ Dynamic: dynamic_handler.handle_dynamic()     │
+                │   │                                                     │
+                │   ├─ Accessibility Fallback (if no matches)            │
+                │   │   └─ _try_accessibility_fallback()                 │
+                │   │                                                     │
+                │   ├─ Optional Reranking (if multiple matches)          │
+                │   │   └─ _rerank_no_semantic_matches()                 │
+                │   │       ├─ MarkupLM embedding (if available)         │
+                │   │       ├─ Intent scoring                            │
+                │   │       └─ Score combination                         │
+                │   │                                                     │
+                │   ├─ Heuristics Application                            │
+                │   │   └─ _apply_basic_heuristics()                     │
+                │   │                                                     │
+                │   ├─ Promotion Check (mode-specific)                   │
+                │   │   └─ lookup_promotion() with "no-semantic:" key    │
+                │   │                                                     │
+                │   ├─ XPath Generation                                  │
+                │   │   └─ generate_xpath_for_element()                  │
+                │   │                                                     │
+                │   └─ Executor (Playwright)                             │
+                │                                                         │
+                └─ Enhanced handlers (FrameHandler, ShadowDOMHandler, etc.)│
+                                                                         │
+SHARED COMPONENTS ────────────────────────────────────────────────────────┘
+    │
+    ├─ Heuristics Application (_apply_basic_heuristics)
+    ├─ XPath Generation (generate_xpath_for_element)
+    ├─ Executor (Playwright)
+    └─ Performance Metrics (get_metrics, record_query_timing)
+
+KEY DIFFERENCES:
+================
+
+SEMANTIC MODE:
+- Uses MiniLM (384-d) + MarkupLM (768-d) embeddings
+- FAISS vector search for shortlisting
+- Always applies MarkupLM reranking
+- Standard promotion cache key
+- Basic frame handling
+
+NO-SEMANTIC MODE:
+- Uses exact DOM attribute matching
+- No embeddings (direct pattern matching)
+- Optional MarkupLM reranking (only if multiple matches)
+- Mode-specific promotion cache key ("no-semantic:")
+- Enhanced frame, shadow DOM, and dynamic content handling
+- Accessibility fallback for icon-only elements
+
+BRANCHING ISOLATION:
+===================
+
+✅ Semantic path: Completely untouched, uses existing methods
+✅ No-semantic path: Completely isolated, uses new methods
+✅ Single branching point: config_service.should_use_semantic_search()
+✅ Zero regression risk: No changes to existing API

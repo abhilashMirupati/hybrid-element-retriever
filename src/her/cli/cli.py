@@ -60,21 +60,28 @@ def main(argv: list[str] | None = None) -> int:
             return _print({"ok": False, "error": f"{cmd} requires an argument"})
         text = args[1]
         url = None
+        use_semantic = True  # Default to semantic mode
+        
+        # Parse CLI arguments
         if '--url' in args:
             try:
                 url = args[args.index('--url') + 1]
             except Exception:
                 url = None
+        
+        if '--no-semantic' in args:
+            use_semantic = False
         import os
-        if os.environ.get('HER_DRY_RUN'):
-            # Dry run mode for testing without browser
-            if cmd == 'query':
-                out = {'element': {'tag': 'button', 'text': cmd}, 'xpath': '//button', 'confidence': 0.8, 'strategy': 'mock', 'metadata': {}}
-            else:
-                out = {'status': 'success', 'method': 'click', 'confidence': 0.9, 'xpath': '//button', 'metadata': {}}
-        else:
+        # Real implementation only - no mocks allowed
             try:
                 hc = HybridClient()
+                # Set semantic mode based on CLI flag
+                if hasattr(hc, 'set_semantic_mode'):
+                    hc.set_semantic_mode(use_semantic)
+                elif hasattr(hc, 'pipeline') and hc.pipeline:
+                    # Set environment variable for pipeline to pick up
+                    os.environ['HER_USE_SEMANTIC_SEARCH'] = str(use_semantic).lower()
+                
                 if cmd == 'query':
                     res = hc.query(text, url=url)
                     if isinstance(res, dict) and ('selector' in res or 'xpath' in res) and 'element' in res:
