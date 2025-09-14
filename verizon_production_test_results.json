@@ -1,0 +1,218 @@
+{
+  "semantic": {
+    "steps": [
+      {
+        "step_number": 1,
+        "query": "Navigate to \"https://www.verizon.com/\"",
+        "mode": "semantic",
+        "execution_time_ms": 8158.010005950928,
+        "success": true,
+        "xpath": "//a[normalize-space()='Switch to Verizon']",
+        "element_canonical": "N/A",
+        "confidence": 1.0,
+        "strategy": "hybrid-minilm-markuplm",
+        "error": null,
+        "element_details": {},
+        "elements_found": 5
+      },
+      {
+        "step_number": 2,
+        "query": "Click on \"Phones\" button",
+        "mode": "semantic",
+        "execution_time_ms": 5533.8075160980225,
+        "success": true,
+        "xpath": "//a[normalize-space()='Phones']",
+        "element_canonical": "N/A",
+        "confidence": 1.0,
+        "strategy": "hybrid-minilm-markuplm",
+        "error": null,
+        "element_details": {},
+        "elements_found": 5
+      },
+      {
+        "step_number": 3,
+        "query": "Click on \"Apple\" filter",
+        "mode": "semantic",
+        "execution_time_ms": 5090.259313583374,
+        "success": true,
+        "xpath": "//a[normalize-space()='Apple']",
+        "element_canonical": "N/A",
+        "confidence": 1.0,
+        "strategy": "hybrid-minilm-markuplm",
+        "error": null,
+        "element_details": {},
+        "elements_found": 5
+      },
+      {
+        "step_number": 4,
+        "query": "Click on \"Apple iPhone 17\" device",
+        "mode": "semantic",
+        "execution_time_ms": 4886.462688446045,
+        "success": true,
+        "xpath": "//a[normalize-space()='Apple iPhone 17']",
+        "element_canonical": "N/A",
+        "confidence": 1.0,
+        "strategy": "hybrid-minilm-markuplm",
+        "error": null,
+        "element_details": {},
+        "elements_found": 5
+      },
+      {
+        "step_number": 5,
+        "query": "Validate it landed on \"https://www.verizon.com/smartphones/apple-iphone-17/\"",
+        "mode": "semantic",
+        "execution_time_ms": 15173.234462738037,
+        "success": true,
+        "xpath": "//a[normalize-space()='Apple iPhone 17']",
+        "element_canonical": "N/A",
+        "confidence": 1.0,
+        "strategy": "hybrid-minilm-markuplm",
+        "error": null,
+        "element_details": {},
+        "elements_found": 5
+      },
+      {
+        "step_number": 6,
+        "query": "Validate \"Apple iPhone 17\" text on pdp page",
+        "mode": "semantic",
+        "execution_time_ms": 11733.889818191528,
+        "success": true,
+        "xpath": "//a[normalize-space()='Apple iPhone 17']",
+        "element_canonical": "N/A",
+        "confidence": 1.0,
+        "strategy": "hybrid-minilm-markuplm",
+        "error": null,
+        "element_details": {},
+        "elements_found": 5
+      },
+      {
+        "step_number": 7,
+        "query": "Click on \"White\" color",
+        "mode": "semantic",
+        "execution_time_ms": 11742.02275276184,
+        "success": true,
+        "xpath": "//div[normalize-space()='Colors']",
+        "element_canonical": "N/A",
+        "confidence": 0.9909287095069885,
+        "strategy": "hybrid-minilm-markuplm",
+        "error": null,
+        "element_details": {},
+        "elements_found": 5
+      }
+    ],
+    "summary": {
+      "mode": "semantic",
+      "total_time": "62317.7ms",
+      "success_rate": "100.0%",
+      "avg_time": "8902.5ms"
+    }
+  },
+  "no_semantic": {
+    "steps": [
+      {
+        "step_number": 1,
+        "query": "Navigate to \"https://www.verizon.com/\"",
+        "mode": "no_semantic",
+        "execution_time_ms": 7727.72741317749,
+        "success": true,
+        "xpath": "//a[normalize-space()='Switch to Verizon']",
+        "element_canonical": "N/A",
+        "confidence": 1.0,
+        "strategy": "hybrid-minilm-markuplm",
+        "error": null,
+        "element_details": {},
+        "elements_found": 5
+      },
+      {
+        "step_number": 2,
+        "query": "Click on \"Phones\" button",
+        "mode": "no_semantic",
+        "execution_time_ms": 5273.479700088501,
+        "success": true,
+        "xpath": "//a[normalize-space()='Phones']",
+        "element_canonical": "N/A",
+        "confidence": 1.0,
+        "strategy": "hybrid-minilm-markuplm",
+        "error": null,
+        "element_details": {},
+        "elements_found": 5
+      },
+      {
+        "step_number": 3,
+        "query": "Click on \"Apple\" filter",
+        "mode": "no_semantic",
+        "execution_time_ms": 4807.100296020508,
+        "success": true,
+        "xpath": "//a[normalize-space()='Apple']",
+        "element_canonical": "N/A",
+        "confidence": 1.0,
+        "strategy": "hybrid-minilm-markuplm",
+        "error": null,
+        "element_details": {},
+        "elements_found": 5
+      },
+      {
+        "step_number": 4,
+        "query": "Click on \"Apple iPhone 17\" device",
+        "mode": "no_semantic",
+        "execution_time_ms": 4931.330680847168,
+        "success": true,
+        "xpath": "//a[normalize-space()='Apple iPhone 17']",
+        "element_canonical": "N/A",
+        "confidence": 1.0,
+        "strategy": "hybrid-minilm-markuplm",
+        "error": null,
+        "element_details": {},
+        "elements_found": 5
+      },
+      {
+        "step_number": 5,
+        "query": "Validate it landed on \"https://www.verizon.com/smartphones/apple-iphone-17/\"",
+        "mode": "no_semantic",
+        "execution_time_ms": 14533.995628356934,
+        "success": true,
+        "xpath": "//a[normalize-space()='Apple iPhone 17']",
+        "element_canonical": "N/A",
+        "confidence": 1.0,
+        "strategy": "hybrid-minilm-markuplm",
+        "error": null,
+        "element_details": {},
+        "elements_found": 5
+      },
+      {
+        "step_number": 6,
+        "query": "Validate \"Apple iPhone 17\" text on pdp page",
+        "mode": "no_semantic",
+        "execution_time_ms": 11908.185005187988,
+        "success": true,
+        "xpath": "//a[normalize-space()='Apple iPhone 17']",
+        "element_canonical": "N/A",
+        "confidence": 1.0,
+        "strategy": "hybrid-minilm-markuplm",
+        "error": null,
+        "element_details": {},
+        "elements_found": 5
+      },
+      {
+        "step_number": 7,
+        "query": "Click on \"White\" color",
+        "mode": "no_semantic",
+        "execution_time_ms": 11596.485614776611,
+        "success": true,
+        "xpath": "//div[normalize-space()='Colors']",
+        "element_canonical": "N/A",
+        "confidence": 0.9909287095069885,
+        "strategy": "hybrid-minilm-markuplm",
+        "error": null,
+        "element_details": {},
+        "elements_found": 5
+      }
+    ],
+    "summary": {
+      "mode": "no_semantic",
+      "total_time": "60778.3ms",
+      "success_rate": "100.0%",
+      "avg_time": "8682.6ms"
+    }
+  }
+}

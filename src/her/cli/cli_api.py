@@ -209,8 +209,7 @@ class HybridElementRetrieverClient:
     def _ensure_browser(self) -> Optional[Page]:
         """Ensure browser and page are available."""
         if not PLAYWRIGHT_AVAILABLE:
-            logger.warning("Playwright not available")
-            return None
+            raise RuntimeError("Playwright not available. Install with: pip install playwright && python -m playwright install chromium")
         
         if not self.page:
             try:
@@ -219,10 +218,23 @@ class HybridElementRetrieverClient:
                         self.playwright = sync_playwright().start()
                     self.browser = self.playwright.chromium.launch(
                         headless=self.headless,
-                        slow_mo=self.slow_mo
+                        slow_mo=self.slow_mo,
+                        args=[
+                            '--no-sandbox',
+                            '--disable-dev-shm-usage',
+                            '--disable-gpu',
+                            '--disable-web-security',
+                            '--disable-features=VizDisplayCompositor'
+                        ]
                     )
                 
                 self.page = self.browser.new_page()
+                
+                # Set realistic viewport and user agent
+                self.page.set_viewport_size({"width": 1920, "height": 1080})
+                self.page.set_extra_http_headers({
+                    'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                })
                 
                 # Setup session
                 session = self.session_manager.create_session(
@@ -233,9 +245,10 @@ class HybridElementRetrieverClient:
                 # Setup SPA tracking if available
                 if hasattr(self.session_manager, '_setup_spa_tracking'):
                     self.session_manager._setup_spa_tracking(self.current_session_id, self.page)
+                    
+                logger.info("Browser initialized successfully")
             except Exception as e:
-                logger.warning(f"Browser initialization failed: {e}")
-                return None
+                raise RuntimeError(f"Browser initialization failed: {e}. Check Playwright installation and system dependencies.")
         
         return self.page
     
@@ -348,18 +361,29 @@ class HybridElementRetrieverClient:
             # Navigate if URL provided
             if url and page:
                 valid_url, sanitized_url, url_error = InputValidator.validate_url(url)
-                if valid_url:
-                    try:
-                        page.goto(sanitized_url)
+                if not valid_url:
+                    raise ValueError(f"Invalid URL: {url_error}")
+                
+                try:
+                    logger.info(f"Navigating to: {sanitized_url}")
+                    response = page.goto(sanitized_url, wait_until='domcontentloaded', timeout=30000)
+                    
+                    if not response or response.status >= 400:
+                        raise RuntimeError(f"Navigation failed with status: {response.status if response else 'No response'}")
+                    
+                    # Wait for page to be ready
+                    if self.resilience:
+                        self.resilience.wait_for_idle(page, WaitStrategy.LOAD_COMPLETE)
                         
-                        # Wait for page to be ready
-                        if self.resilience:
-                            self.resilience.wait_for_idle(page, WaitStrategy.LOAD_COMPLETE)
-                            
-                            # Handle overlays
-                            self.resilience.detect_and_handle_overlay(page)
-                    except Exception as e:
-                        logger.debug(f"Navigation failed: {e}")
+                        # Handle overlays
+                        self.resilience.detect_and_handle_overlay(page)
+                    
+                    # Additional wait for dynamic content
+                    page.wait_for_timeout(2000)
+                    logger.info(f"Successfully navigated to: {sanitized_url}")
+                    
+                except Exception as e:
+                    raise RuntimeError(f"Navigation to {sanitized_url} failed: {e}")
             
             # Get descriptors (allow operation without a live page for tests)
             if page:
@@ -396,24 +420,31 @@ class HybridElementRetrieverClient:
                         # Ultimate fallback: minimal call
                         result = self.pipeline.query(phrase)
                 
-                # Check for unique XPath
-                if result['xpath']:
-                    # Verify uniqueness
-                    unique_xpath = self._ensure_unique_xpath(
-                        result['xpath'],
-                        descriptors,
-                        page
-                    )
-                    result['xpath'] = unique_xpath
+                # Extract the best result from the pipeline response
+                if result and 'results' in result and len(result['results']) > 0:
+                    best_result = result['results'][0]  # Get the top result
                     
-                    # Return in expected format
-                    return {
-                        'selector': unique_xpath,
-                        'confidence': result['confidence'],
-                        'element': result['element'],
-                        'context': result['context'],
-                        'fallbacks': result.get('fallbacks', [])
-                    }
+                    # Extract XPath from the best result
+                    xpath = best_result.get('xpath') or best_result.get('selector')
+                    if xpath:
+                        # Verify uniqueness
+                        unique_xpath = self._ensure_unique_xpath(
+                            xpath,
+                            descriptors,
+                            page
+                        )
+                        
+                        # Return in expected format
+                        return {
+                            'selector': unique_xpath,
+                            'xpath': unique_xpath,
+                            'confidence': result.get('confidence', 0.0),
+                            'element': best_result.get('element', {}),
+                            'context': best_result.get('context', {}),
+                            'fallbacks': result.get('fallbacks', []),
+                            'strategy': result.get('strategy', 'unknown'),
+                            'elements_found': len(result.get('results', []))
+                        }
                 else:
                     # Try fallback methods
                     return self._fallback_query(phrase, descriptors, page)

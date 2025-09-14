@@ -129,29 +129,109 @@ class SessionManager:
     
     def index_page(self, session_id: str, page: Any) -> tuple[list, str]:
         """Index a page and return descriptors and DOM hash."""
-        # This is a simplified implementation for testing
-        # In a real implementation, this would extract DOM elements
         try:
-            if hasattr(page, 'evaluate'):
-                # Get basic page info
-                title = page.evaluate("document.title") or ""
-                url = page.evaluate("window.location.href") or ""
-                
-                # Create a simple descriptor
-                descriptors = [{
-                    'tag': 'html',
-                    'text': title,
-                    'attributes': {'title': title, 'url': url},
-                    'visible': True,
-                    'interactive': False
-                }]
-                
-                # Generate a simple hash
-                dom_hash = hashlib.md5(f"{title}{url}".encode()).hexdigest()
-                
-                return descriptors, dom_hash
-            else:
+            if not hasattr(page, 'evaluate'):
                 return [], "0" * 64
-        except Exception:
+            
+            # Extract all interactive and visible elements from the page
+            elements_script = """
+            (() => {
+                const elements = [];
+                const allElements = document.querySelectorAll('*');
+                
+                for (const el of allElements) {
+                    const rect = el.getBoundingClientRect();
+                    const style = window.getComputedStyle(el);
+                    
+                    // Skip hidden elements
+                    if (style.display === 'none' || style.visibility === 'hidden' || 
+                        rect.width === 0 || rect.height === 0) {
+                        continue;
+                    }
+                    
+                    // Get element properties
+                    const tag = el.tagName.toLowerCase();
+                    const text = el.innerText?.trim() || '';
+                    const id = el.id || '';
+                    const className = el.className || '';
+                    const type = el.type || '';
+                    const role = el.getAttribute('role') || '';
+                    const ariaLabel = el.getAttribute('aria-label') || '';
+                    const title = el.getAttribute('title') || '';
+                    const placeholder = el.getAttribute('placeholder') || '';
+                    const name = el.getAttribute('name') || '';
+                    const dataTestId = el.getAttribute('data-testid') || '';
+                    const value = el.value || '';
+                    
+                    // Determine if element is interactive
+                    const interactive = ['button', 'input', 'select', 'textarea', 'a'].includes(tag) ||
+                                      el.onclick !== null ||
+                                      role === 'button' ||
+                                      el.getAttribute('tabindex') !== null;
+                    
+                    // Get hierarchy path
+                    const hierarchy = [];
+                    let current = el;
+                    while (current && current !== document.body) {
+                        const parent = current.parentElement;
+                        if (parent) {
+                            const siblings = Array.from(parent.children);
+                            const index = siblings.indexOf(current);
+                            hierarchy.unshift(`${current.tagName.toLowerCase()}:nth-child(${index + 1})`);
+                        }
+                        current = parent;
+                    }
+                    
+                    elements.push({
+                        tag: tag,
+                        text: text,
+                        attributes: {
+                            id: id,
+                            class: className,
+                            type: type,
+                            role: role,
+                            'aria-label': ariaLabel,
+                            title: title,
+                            placeholder: placeholder,
+                            name: name,
+                            'data-testid': dataTestId,
+                            value: value
+                        },
+                        visible: true,
+                        interactive: interactive,
+                        hierarchy: hierarchy,
+                        rect: {
+                            x: rect.x,
+                            y: rect.y,
+                            width: rect.width,
+                            height: rect.height
+                        }
+                    });
+                }
+                
+                return elements;
+            })();
+            """
+            
+            elements = page.evaluate(elements_script) or []
+            
+            # Add meta information to each element
+            descriptors = []
+            for element in elements:
+                element['meta'] = {
+                    'frame_hash': 'main',
+                    'session_id': session_id,
+                    'indexed_at': time.time()
+                }
+                descriptors.append(element)
+            
+            # Generate DOM hash
+            dom_content = ''.join([f"{el['tag']}{el['text']}{str(el['attributes'])}" for el in elements])
+            dom_hash = hashlib.md5(dom_content.encode()).hexdigest()
+            
+            return descriptors, dom_hash
+            
+        except Exception as e:
+            print(f"Error indexing page: {e}")
             return [], "0" * 64
 
