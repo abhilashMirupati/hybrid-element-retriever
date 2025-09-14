@@ -741,7 +741,7 @@ class HybridPipeline:
         # Get MiniLM store and perform search with the query
         mini_store = self._get_mini_store(frame_hash)
         
-        # We need to encode the query using TextEmbedder to get the query vector
+        # We need to encode the query using MiniLM to get the query vector
         from ..embeddings.text_embedder import TextEmbedder
         text_embedder = TextEmbedder()
         query_vector = text_embedder.encode_one(query)
@@ -805,7 +805,7 @@ class HybridPipeline:
         for i, element in enumerate(top_elements[:top_k]):
             results.append({
                 "selector": f"//{element.get('tag', 'div')}[@id='{element.get('attributes', {}).get('id', '')}']",
-                "score": float(mini_scores[0][i]),
+                "score": float(mini_scores[i]) if i < len(mini_scores) else 0.0,
                 "reasons": ["minilm-only"],
                 "meta": element
             })
@@ -813,7 +813,7 @@ class HybridPipeline:
         return {
             "results": results,
             "strategy": "minilm-only",
-            "confidence": float(mini_scores[0][0]) if mini_scores[0] else 0.0
+            "confidence": float(mini_scores[0]) if mini_scores else 0.0
         }
 
     def _query_two_stage(

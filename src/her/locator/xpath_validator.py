@@ -14,6 +14,8 @@ import logging
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 
+from .hierarchical_context import HierarchicalContext
+
 log = logging.getLogger("her.xpath_validator")
 
 @dataclass
@@ -116,7 +118,8 @@ class XPathValidator:
         if text:
             # Escape quotes in text
             escaped_text = text.replace('"', '\\"')
-            return f'//{tag}[normalize-space()="{escaped_text}"]'
+            # Use contains() for more flexible matching
+            return f'//{tag}[contains(normalize-space(), "{escaped_text}")]'
         
         return ""
     
@@ -133,8 +136,13 @@ class XPathValidator:
             return f'//{tag}[@data-testid="{attrs["data-testid"]}"]'
         
         if attrs.get('class'):
-            class_name = attrs['class'].split()[0]  # Use first class
-            return f'//{tag}[@class="{class_name}"]'
+            # Use the full class string, not just the first part
+            class_value = attrs['class']
+            return f'//{tag}[contains(@class, "{class_value.split()[0]}")]'
+        
+        # Try aria-label as fallback
+        if attrs.get('aria-label'):
+            return f'//{tag}[@aria-label="{attrs["aria-label"]}"]'
         
         return ""
     
@@ -164,13 +172,17 @@ class XPathValidator:
         
         if text:
             escaped_text = text.replace('"', '\\"')
-            conditions.append(f'normalize-space()="{escaped_text}"')
-        
-        if attrs.get('class'):
-            conditions.append(f'@class="{attrs["class"]}"')
+            conditions.append(f'contains(normalize-space(), "{escaped_text}")')
         
         if attrs.get('id'):
             conditions.append(f'@id="{attrs["id"]}"')
+        
+        if attrs.get('class'):
+            class_value = attrs['class']
+            conditions.append(f'contains(@class, "{class_value.split()[0]}")')
+        
+        if attrs.get('aria-label'):
+            conditions.append(f'@aria-label="{attrs["aria-label"]}"')
         
         if conditions:
             return f'//{tag}[{" and ".join(conditions)}]'

@@ -184,8 +184,8 @@ def run_debug_verizon_test():
     print("🔍 Starting Debug Verizon Test")
     print("=" * 80)
     
-    # Set environment
-    os.environ["HER_USE_SEMANTIC_SEARCH"] = "true"
+    # Set environment - Test with semantic mode OFF (no-semantic mode)
+    os.environ["HER_USE_SEMANTIC_SEARCH"] = "false"
     os.environ["HER_CACHE_DIR"] = str(Path(".her_cache").resolve())
     
     # Initialize runner
