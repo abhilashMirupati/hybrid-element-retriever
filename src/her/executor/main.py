@@ -34,13 +34,133 @@ class Executor:
         self.page = page
         self.action_timeout_ms = int(action_timeout_ms)
         self.kv = get_default_kv()
+        self._current_frame = None
 
     # ---------------- internal helpers ----------------
     def _query_element(self, xpath: str):
         if not xpath or not isinstance(xpath, str):
             raise ValueError("Executor: invalid XPath selector")
-        handle = self.page.locator(f"xpath={xpath}")
-        return handle
+        
+        # Enhanced frame and shadow DOM support
+        return self._locate_element_with_frames_and_shadow(xpath)
+    
+    def _locate_element_with_frames_and_shadow(self, xpath: str):
+        """Locate element with enhanced frame switching and shadow DOM support."""
+        # Try main frame first
+        try:
+            handle = self.page.locator(f"xpath={xpath}")
+            if handle.count() > 0:
+                return handle
+        except Exception:
+            pass
+        
+        # Try all frames
+        frames = getattr(self.page, 'frames', [])
+        for frame in frames:
+            try:
+                # Skip main frame (already tried)
+                if frame == getattr(self.page, 'main_frame', None):
+                    continue
+                
+                # Switch to frame context
+                frame_handle = frame.locator(f"xpath={xpath}")
+                if frame_handle.count() > 0:
+                    self._current_frame = frame
+                    return frame_handle
+            except Exception:
+                continue
+        
+        # Try shadow DOM elements
+        try:
+            shadow_handle = self._locate_in_shadow_dom(xpath)
+            if shadow_handle:
+                return shadow_handle
+        except Exception:
+            pass
+        
+        # Fallback to main frame
+        return self.page.locator(f"xpath={xpath}")
+    
+    def _locate_in_shadow_dom(self, xpath: str):
+        """Locate element within shadow DOM."""
+        try:
+            # Find all shadow root hosts
+            shadow_hosts = self.page.query_selector_all('*')
+            
+            for host in shadow_hosts:
+                try:
+                    # Check if element has shadow root
+                    has_shadow = host.evaluate("element => element.shadowRoot !== null")
+                    if not has_shadow:
+                        continue
+                    
+                    # Look for element in shadow DOM
+                    shadow_element = host.evaluate(f"""
+                        (element, xpath) => {{
+                            try {{
+                                const shadowRoot = element.shadowRoot;
+                                const result = document.evaluate(xpath, shadowRoot, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+                                return result.singleNodeValue;
+                            }} catch (e) {{
+                                return null;
+                            }}
+                        }}
+                    """, xpath)
+                    
+                    if shadow_element:
+                        # Return a locator for the shadow element
+                        return self.page.locator(f"xpath={xpath}")
+                        
+                except Exception:
+                    continue
+                    
+        except Exception:
+            pass
+        
+        return None
+    
+    def _switch_to_frame(self, frame_name_or_url: str = None):
+        """Switch to a specific frame."""
+        try:
+            frames = getattr(self.page, 'frames', [])
+            
+            if frame_name_or_url:
+                for frame in frames:
+                    if (frame_name_or_url in getattr(frame, 'name', '') or 
+                        frame_name_or_url in getattr(frame, 'url', '')):
+                        self._current_frame = frame
+                        return frame
+            
+            # If no specific frame requested, use main frame
+            self._current_frame = getattr(self.page, 'main_frame', None)
+            return self._current_frame
+            
+        except Exception:
+            self._current_frame = None
+            return None
+    
+    def _ensure_element_in_view(self, element):
+        """Ensure element is in view with enhanced scrolling."""
+        try:
+            # Try standard scroll into view
+            element.scroll_into_view_if_needed(timeout=2000)
+        except Exception:
+            try:
+                # Fallback: manual scroll calculation
+                bbox = element.bounding_box()
+                if bbox:
+                    viewport = self.page.viewport_size
+                    if viewport:
+                        # Calculate scroll position to center element
+                        center_x = bbox['x'] + bbox['width'] / 2
+                        center_y = bbox['y'] + bbox['height'] / 2
+                        
+                        scroll_x = max(0, center_x - viewport['width'] / 2)
+                        scroll_y = max(0, center_y - viewport['height'] / 2)
+                        
+                        self.page.evaluate(f"window.scrollTo({scroll_x}, {scroll_y})")
+            except Exception:
+                pass
 
     def _record(self, ok: bool, *, page_sig: Optional[str], frame_hash: Optional[str], label_key: Optional[str], selector: Optional[str]) -> None:
         if not page_sig or not frame_hash or not label_key or not selector:
@@ -66,9 +186,12 @@ class Executor:
         h = self._query_element(selector)
         ok = False
         try:
-            # First try to scroll element into view
+            # Enhanced frame and shadow DOM handling
+            self._switch_to_frame()
+            
+            # First try to scroll element into view with enhanced support
             try:
-                h.first.scroll_into_view_if_needed(timeout=2000)
+                self._ensure_element_in_view(h.first)
             except Exception:
                 pass
             
@@ -87,7 +210,7 @@ class Executor:
             except Exception:
                 pass
             
-            # Now try the actual click with retries
+            # Now try the actual click with retries and enhanced frame support
             clicked = False
             for attempt in range(3):
                 try:
@@ -96,8 +219,17 @@ class Executor:
                         h.first.wait_for(state="visible", timeout=self.action_timeout_ms // 2)
                         h.first.click(timeout=self.action_timeout_ms // 2, force=False)
                     elif attempt == 1:
-                        # Second attempt: try with JavaScript click
-                        self.page.evaluate("(el) => el.click()", h.first.element_handle())
+                        # Second attempt: try with JavaScript click (works in frames/shadow DOM)
+                        try:
+                            if self._current_frame:
+                                # Click in frame context
+                                self._current_frame.evaluate("(el) => el.click()", h.first.element_handle())
+                            else:
+                                # Click in main context
+                                self.page.evaluate("(el) => el.click()", h.first.element_handle())
+                        except Exception:
+                            # Fallback to force click
+                            h.first.click(force=True, timeout=self.action_timeout_ms // 2)
                     else:
                         # Third attempt: force click
                         h.first.click(force=True, timeout=self.action_timeout_ms // 2)

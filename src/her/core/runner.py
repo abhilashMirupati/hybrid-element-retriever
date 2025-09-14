@@ -795,7 +795,7 @@ class Runner:
                 continue
 
     def _scroll_into_view(self, target) -> None:
-        """Scroll element into view if it's not visible."""
+        """Scroll element into view with enhanced off-screen detection."""
         if not _PLAYWRIGHT or not self._page:
             return
         
@@ -804,28 +804,150 @@ class Runner:
             if isinstance(target, str):
                 # If it's a selector string, get the element first
                 element = self._page.locator(f"xpath={target}").first
-                element.scroll_into_view_if_needed(timeout=2000)
+                self._enhanced_scroll_to_element(element)
             else:
-                # If it's an element object, check if it's in viewport
-                if not hasattr(target, 'bounding_box'):
-                    return
-                    
-                bbox = target.bounding_box()
-                if not bbox:
-                    return
+                # If it's an element object, use enhanced scrolling
+                self._enhanced_scroll_to_element(target)
+        except Exception:
+            pass
+    
+    def _enhanced_scroll_to_element(self, element) -> None:
+        """Enhanced scrolling with comprehensive off-screen detection."""
+        if not element:
+            return
+        
+        try:
+            # First, check if element exists
+            if element.count() == 0:
+                return
+            
+            # Get element bounding box
+            bbox = element.bounding_box()
+            if not bbox:
+                # Try to scroll into view using Playwright's method
+                element.scroll_into_view_if_needed(timeout=2000)
+                return
+            
+            # Get viewport dimensions
+            viewport = self._page.viewport_size
+            if not viewport:
+                # Fallback to scroll into view
+                element.scroll_into_view_if_needed(timeout=2000)
+                return
+            
+            # Enhanced off-screen detection
+            is_off_screen = self._is_element_off_screen(bbox, viewport)
+            
+            if is_off_screen:
+                # Calculate optimal scroll position
+                scroll_position = self._calculate_optimal_scroll_position(bbox, viewport)
                 
-                viewport = self._page.viewport_size
-                if not viewport:
-                    return
+                # Perform smooth scroll
+                self._smooth_scroll_to_position(scroll_position)
                 
-                # Check if element is already in viewport
-                if (bbox['x'] >= 0 and bbox['y'] >= 0 and 
-                    bbox['x'] + bbox['width'] <= viewport['width'] and 
-                    bbox['y'] + bbox['height'] <= viewport['height']):
-                    return
+                # Wait for scroll to complete
+                self._page.wait_for_timeout(500)
                 
-                # Scroll element into view
-                target.scroll_into_view_if_needed(timeout=2000)
+                # Final check - ensure element is visible
+                final_bbox = element.bounding_box()
+                if final_bbox:
+                    final_off_screen = self._is_element_off_screen(final_bbox, viewport)
+                    if final_off_screen:
+                        # Fallback to Playwright's scroll into view
+                        element.scroll_into_view_if_needed(timeout=2000)
+            else:
+                # Element is already visible, but try to center it
+                self._center_element_if_possible(bbox, viewport)
+                
+        except Exception:
+            # Ultimate fallback
+            try:
+                element.scroll_into_view_if_needed(timeout=2000)
+            except Exception:
+                pass
+    
+    def _is_element_off_screen(self, bbox: dict, viewport: dict) -> bool:
+        """Check if element is off-screen with enhanced detection."""
+        if not bbox or not viewport:
+            return True
+        
+        # Element is off-screen if:
+        # 1. Completely above viewport
+        # 2. Completely below viewport  
+        # 3. Completely left of viewport
+        # 4. Completely right of viewport
+        # 5. Has zero or negative dimensions
+        
+        element_top = bbox['y']
+        element_bottom = bbox['y'] + bbox['height']
+        element_left = bbox['x']
+        element_right = bbox['x'] + bbox['width']
+        
+        viewport_top = 0
+        viewport_bottom = viewport['height']
+        viewport_left = 0
+        viewport_right = viewport['width']
+        
+        # Check for zero/negative dimensions
+        if bbox['width'] <= 0 or bbox['height'] <= 0:
+            return True
+        
+        # Check if completely off-screen
+        completely_above = element_bottom < viewport_top
+        completely_below = element_top > viewport_bottom
+        completely_left = element_right < viewport_left
+        completely_right = element_left > viewport_right
+        
+        return completely_above or completely_below or completely_left or completely_right
+    
+    def _calculate_optimal_scroll_position(self, bbox: dict, viewport: dict) -> dict:
+        """Calculate optimal scroll position to center element."""
+        element_center_x = bbox['x'] + bbox['width'] / 2
+        element_center_y = bbox['y'] + bbox['height'] / 2
+        
+        viewport_center_x = viewport['width'] / 2
+        viewport_center_y = viewport['height'] / 2
+        
+        # Calculate scroll offset to center element
+        scroll_x = max(0, element_center_x - viewport_center_x)
+        scroll_y = max(0, element_center_y - viewport_center_y)
+        
+        return {'x': scroll_x, 'y': scroll_y}
+    
+    def _smooth_scroll_to_position(self, position: dict) -> None:
+        """Perform smooth scroll to position."""
+        try:
+            # Use smooth scrolling if available
+            self._page.evaluate(f"""
+                window.scrollTo({{
+                    left: {position['x']},
+                    top: {position['y']},
+                    behavior: 'smooth'
+                }});
+            """)
+        except Exception:
+            # Fallback to instant scroll
+            try:
+                self._page.evaluate(f"window.scrollTo({position['x']}, {position['y']})")
+            except Exception:
+                pass
+    
+    def _center_element_if_possible(self, bbox: dict, viewport: dict) -> None:
+        """Center element in viewport if it's already visible."""
+        try:
+            element_center_x = bbox['x'] + bbox['width'] / 2
+            element_center_y = bbox['y'] + bbox['height'] / 2
+            
+            viewport_center_x = viewport['width'] / 2
+            viewport_center_y = viewport['height'] / 2
+            
+            # Only center if element is significantly off-center
+            x_offset = abs(element_center_x - viewport_center_x)
+            y_offset = abs(element_center_y - viewport_center_y)
+            
+            if x_offset > viewport['width'] * 0.3 or y_offset > viewport['height'] * 0.3:
+                scroll_position = self._calculate_optimal_scroll_position(bbox, viewport)
+                self._smooth_scroll_to_position(scroll_position)
         except Exception:
             pass
 
