@@ -57,8 +57,8 @@ class EnhancedIntentParser:
             # Click actions: Click on "target" or Click "target" (allow words between "on" and quotes)
             (re.compile(r'^(click|press|tap|push|hit|select|choose|pick)\s+(?:on\s+)?(?:the\s+)?["\']([^"\']+)["\']', re.I), "click", None),
             
-            # Type actions: Enter $value in "target" field (supports multi-word values)
-            (re.compile(r'^(type|enter|input|write|fill)\s+\$([^"]+?)\s+(?:in|into|to)\s+["\']([^"\']+)["\']', re.I), "type", "value"),
+            # Type actions: Enter $"value" in "target" field (STRICT: $value must be quoted)
+            (re.compile(r'^(type|enter|input|write|fill)\s+\$"([^"]+)"\s+(?:in|into|to)\s+["\']([^"\']+)["\']', re.I), "type", "value"),
             
             # Validate actions: Validate "target"
             (re.compile(r'^(validate|verify|check|assert|ensure|confirm)\s+["\']([^"\']+)["\']', re.I), "assert", None),
@@ -145,39 +145,72 @@ class EnhancedIntentParser:
         # Extract action (first word)
         action = step_lower.split()[0] if step_lower.split() else ""
         
-        # Check for quotes (mandatory for targets in all actions)
+        # STRICT VALIDATION 1: Check for quotes (mandatory for targets in all actions)
         has_quotes = '"' in step or "'" in step
         if not has_quotes:
             return False, f'❌ MISSING QUOTES: Target must be in quotes. Use: {action} "target"'
         
-        # Check for $ for input values (mandatory for type/enter/input/fill actions)
+        # STRICT VALIDATION 2: Check for $ for input values (mandatory for type/enter/input/fill actions)
         input_actions = ["type", "enter", "input", "fill", "write"]
         is_input_action = any(word in step_lower for word in input_actions)
         
         if is_input_action:
             has_dollar = "$" in step
             if not has_dollar:
-                return False, f'❌ MISSING $VALUE: Input actions require $value. Use: {action} $value in "target"'
+                return False, f'❌ MISSING $VALUE: Input actions require $value. Use: {action} $"value" in "target"'
+            
+            # STRICT VALIDATION 3: Check $value is properly quoted
+            dollar_match = re.search(r'\$"([^"]+)"', step)
+            if not dollar_match:
+                return False, f'❌ INVALID $VALUE FORMAT: Use $"value" not $value. Example: {action} $"John123" in "Username"'
         
-        # Additional validation for specific patterns
-        if is_input_action and has_quotes and has_dollar:
-            # Check if it follows the pattern: action $value in "target"
-            if not re.search(r'\$[^\s]+\s+(?:in|into|to)\s+["\'][^"\']+["\']', step):
-                return False, f'❌ INVALID PATTERN: Use: {action} $value in "target"'
+        # STRICT VALIDATION 4: Additional pattern validation for input actions
+        if is_input_action and has_quotes and "$" in step:
+            # Check if it follows the strict pattern: action $"value" in "target"
+            if not re.search(r'\$"([^"]+)"\s+(?:in|into|to)\s+["\'][^"\']+["\']', step):
+                return False, f'❌ INVALID PATTERN: Use: {action} $"value" in "target"'
+        
+        # STRICT VALIDATION 5: Ensure quotes are properly balanced
+        single_quotes = step.count("'")
+        double_quotes = step.count('"')
+        if single_quotes % 2 != 0:
+            return False, f'❌ UNBALANCED QUOTES: Single quotes not properly closed'
+        if double_quotes % 2 != 0:
+            return False, f'❌ UNBALANCED QUOTES: Double quotes not properly closed'
+        
+        # STRICT VALIDATION 6: Check for valid action verbs
+        valid_actions = [
+            "click", "press", "tap", "push", "hit", "select", "choose", "pick",
+            "type", "enter", "input", "write", "fill",
+            "validate", "verify", "check", "assert", "ensure", "confirm",
+            "hover", "mouse over",
+            "wait", "pause", "delay",
+            "navigate", "go", "open", "visit", "browse",
+            "submit", "send", "post", "confirm",
+            "clear", "empty", "reset",
+            "scroll"
+        ]
+        
+        if action not in valid_actions:
+            return False, f'❌ INVALID ACTION: "{action}" not recognized. Valid actions: {", ".join(valid_actions[:10])}...'
         
         return True, "✅ Valid structured format"
     
     def get_format_examples(self) -> List[str]:
-        """Get example structured steps."""
+        """Get example structured steps with strict format requirements."""
         return [
-            'Click on "Login" button',
-            'Enter $test123 in "password" field',
+            'Click "Login"',
+            'Type $"John123" into "Username"',
             'Validate "User successfully logged in"',
             'Hover over "product image"',
             'Wait for "page to load"',
             'Navigate to "about page"',
             'Submit "contact form"',
             'Clear "search field"',
+            'Enter $"password123" in "Password"',
+            'Select "iPhone 16 Pro"',
+            'Choose "Apple" from "Brand filter"',
+            'Press "Submit" button',
         ]
 
 # Backward compatibility
