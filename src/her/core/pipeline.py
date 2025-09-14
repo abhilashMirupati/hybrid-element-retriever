@@ -193,12 +193,20 @@ class HybridPipeline:
         # Add hierarchical context if enabled (check dynamically)
         config_service = get_config_service()
         if config_service.should_use_hierarchy() and self.hierarchy_builder:
-            try:
-                elements = self.hierarchy_builder.add_context_to_elements(elements)
-                log.info(f"Added hierarchical context to {len(elements)} elements")
-            except Exception as e:
-                log.warning(f"Failed to add hierarchical context: {e}")
-                # Continue without hierarchy context
+            # Check if elements already have hierarchy context
+            has_context = any(el.get('context', {}).get('hierarchy_path') for el in elements[:10])
+            if not has_context:
+                try:
+                    # Create a deep copy to avoid modifying original elements
+                    import copy
+                    elements_copy = copy.deepcopy(elements)
+                    elements = self.hierarchy_builder.add_context_to_elements(elements_copy)
+                    log.info(f"Added hierarchical context to {len(elements)} elements")
+                except Exception as e:
+                    log.warning(f"Failed to add hierarchical context: {e}")
+                    # Continue without hierarchy context
+            else:
+                log.info(f"Elements already have hierarchical context, skipping")
 
         by_frame: Dict[str, List[Tuple[int, Dict[str, Any]]]] = {}
         for idx, el in enumerate(elements):
@@ -643,6 +651,11 @@ class HybridPipeline:
     def _prepare_elements_for_query(self, elements: List[Dict[str, Any]], frame_hash: Optional[str]) -> Tuple[np.ndarray, List[Dict[str, Any]]]:
         """Prepare elements for query processing."""
         log.debug(f"Caching analysis - MiniLM stores: {len(self._mini_stores)}, MarkupLM stores: {len(self._markup_stores)}, frame_hash: {frame_hash}")
+        
+        # Debug: Check first few elements before processing
+        print(f"🔍 DEBUG: First 3 elements before _prepare_elements:")
+        for i, el in enumerate(elements[:3]):
+            print(f"  Element {i}: has_meta={el.get('meta') is not None}, meta={el.get('meta')}")
         
         E, meta = self._prepare_elements(elements)
         
