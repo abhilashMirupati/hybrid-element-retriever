@@ -36,6 +36,10 @@ from ..locator.frame_handler import FrameHandler, FrameAwareTargetMatcher
 from ..locator.shadow_dom_handler import ShadowDOMHandler
 from ..locator.dynamic_handler import DynamicHandler
 
+# New explicit no-semantic components
+from ..locator.intent_parser import IntentParser, ParsedIntent, IntentType
+from ..locator.dom_target_binder import DOMTargetBinder, DOMMatch
+
 # Performance metrics
 from ..monitoring.performance_metrics import get_metrics, record_query_timing, record_cache_metrics, record_memory_usage, PerformanceTimer
 
@@ -83,6 +87,12 @@ class HybridPipeline:
         self.frame_handler = FrameHandler()
         self.shadow_dom_handler = ShadowDOMHandler()
         self.dynamic_handler = DynamicHandler()
+        
+        # New explicit no-semantic components
+        self.intent_parser = IntentParser()
+        self.dom_target_binder = DOMTargetBinder(
+            case_sensitive=self.config.no_semantic_case_sensitive
+        )
         
         # Performance metrics
         self.metrics = get_metrics()
@@ -673,76 +683,57 @@ class HybridPipeline:
                                page_sig: Optional[str], frame_hash: Optional[str], 
                                label_key: Optional[str], user_intent: Optional[str], 
                                target: Optional[str]) -> Dict[str, Any]:
-        """Execute no-semantic query strategy (exact DOM matching)."""
-        log.info(f"No-semantic mode query: '{query}' with {len(elements)} elements")
+        """Execute explicit no-semantic query strategy with deterministic DOM-to-target binding."""
+        log.info(f"Explicit no-semantic mode query: '{query}' with {len(elements)} elements")
         
         # Record query start time
         query_start_time = time.time()
         
-        # Extract target from query or use provided target
-        search_target = target or query
+        # Step 1: Parse test step → extract intent, target_text, value
+        parsed_intent = self.intent_parser.parse_step(query)
+        log.info(f"Parsed intent: {parsed_intent.intent.value}, target: '{parsed_intent.target_text}', value: '{parsed_intent.value}'")
         
-        # Detect and handle frames
-        frames = self.frame_handler.detect_frames(elements)
-        log.info(f"Detected {len(frames)} frames")
+        # Step 2: Retrieve all DOM nodes whose innerText or accessibility attributes == target_text
+        dom_matches = self.dom_target_binder.bind_target_to_dom(
+            elements, 
+            parsed_intent.target_text, 
+            parsed_intent.intent.value
+        )
         
-        # Detect and handle shadow DOM
-        shadow_roots = self.shadow_dom_handler.detect_shadow_roots(elements)
-        log.info(f"Detected {len(shadow_roots)} shadow DOM roots")
+        # Step 3: Resolve matches via backendNodeId
+        resolved_matches = self._resolve_matches_by_backend_node_id(dom_matches)
         
-        # Detect and handle dynamic content
-        dynamic_elements = self.dynamic_handler.detect_dynamic_elements(elements)
-        log.info(f"Detected {len(dynamic_elements)} dynamic elements")
-        
-        # Use enhanced target matcher with frame awareness
-        frame_aware_matcher = FrameAwareTargetMatcher(self.frame_handler, self.target_matcher)
-        
-        # Match elements across all contexts
-        all_matches = []
-        
-        # 1. Match in main frame
-        main_elements = [e for e in elements if not e.get('meta', {}).get('frame_hash')]
-        main_matches = self.target_matcher.match_elements(main_elements, search_target)
-        all_matches.extend(main_matches)
-        
-        # 2. Match in frames
-        frame_matches = frame_aware_matcher.match_elements_in_frames(elements, search_target)
-        for frame_context, matches in frame_matches:
-            for match in matches:
-                match.element['frame_context'] = frame_context.frame_id
-                all_matches.append(match)
-        
-        # 3. Match in shadow DOM
-        shadow_matches = self.shadow_dom_handler.find_elements_in_shadow_dom(elements, search_target, self.target_matcher)
-        all_matches.extend(shadow_matches)
-        
-        # 4. Match in dynamic content
-        dynamic_matches = self.dynamic_handler.handle_dynamic_loading(elements, self.target_matcher, search_target)
-        all_matches.extend(dynamic_matches)
-        
-        # Sort all matches by score
-        all_matches.sort(key=lambda m: m.score, reverse=True)
-        matches = all_matches
-        
-        if not matches:
-            log.warning("No exact matches found in DOM, trying accessibility fallback")
-            # Try accessibility fallback for icon-only elements
-            ax_matches = self._try_accessibility_fallback(elements, search_target)
+        # Step 4: Fallback to AX tree only if DOM has no matches
+        if not resolved_matches and self.config.no_semantic_use_ax_fallback:
+            log.warning("No DOM matches found, trying accessibility fallback")
+            ax_matches = self._try_accessibility_fallback_explicit(elements, parsed_intent)
             if ax_matches:
                 log.info(f"Found {len(ax_matches)} accessibility matches")
-                matches = ax_matches
+                resolved_matches = ax_matches
             else:
                 return {"results": [], "strategy": "no-semantic-exact", "confidence": 0.0}
         
-        # If multiple matches, apply reranking with MarkupLM + heuristics
-        if len(matches) > 1:
-            log.info(f"Found {len(matches)} exact matches, applying reranking")
-            matches = self._rerank_no_semantic_matches(matches, query, user_intent, target)
+        if not resolved_matches:
+            return {"results": [], "strategy": "no-semantic-exact", "confidence": 0.0}
+        
+        # Step 5: For each match, build canonical descriptor (tag + attributes + hierarchy)
+        canonical_matches = self._build_canonical_descriptors(resolved_matches)
+        
+        # Step 6: If multiple candidates, rerank with MarkupLM
+        if len(canonical_matches) > 1:
+            log.info(f"Found {len(canonical_matches)} matches, applying MarkupLM reranking")
+            canonical_matches = self._rerank_no_semantic_matches_explicit(
+                canonical_matches, query, parsed_intent
+            )
+        
+        # Step 7: Apply intent-specific heuristics
+        heuristically_scored_matches = self._apply_intent_specific_heuristics(
+            canonical_matches, parsed_intent
+        )
         
         # Check for promotions (with mode-specific cache key)
         promo_top: Optional[Dict[str, Any]] = None
         if page_sig and frame_hash and label_key:
-            # Add mode to cache key for separation
             mode_label_key = f"no-semantic:{label_key}"
             sel = lookup_promotion(self.kv, page_sig=page_sig, frame_hash=frame_hash, label_key=mode_label_key)
             if sel:
@@ -753,29 +744,33 @@ class HybridPipeline:
                     "meta": {"frame_hash": frame_hash, "promoted": True, "mode": "no-semantic"},
                 }
         
-        # Build results
+        # Step 8: Generate stable relative XPath and execute
         results = []
         if promo_top:
             results.append(promo_top)
         
-        for match in matches[:top_k]:
-            # Generate XPath for the element
+        for match in heuristically_scored_matches[:top_k]:
+            # Generate stable relative XPath
             from ..utils.xpath_generator import generate_xpath_for_element
             xpath = generate_xpath_for_element(match.element)
             
             results.append({
                 "selector": xpath,
                 "score": float(match.score),
-                "reasons": match.reasons + [f"no-semantic-{match.match_type}"],
+                "reasons": [f"no-semantic-{match.match_type.value}", f"intent-{parsed_intent.intent.value}"],
                 "meta": {
                     **match.element,
-                    "matched_attribute": match.matched_attribute,
-                    "matched_value": match.matched_value,
-                    "mode": "no-semantic"
+                    "matched_attribute": match.matched_text,
+                    "matched_value": match.matched_text,
+                    "mode": "no-semantic",
+                    "intent": parsed_intent.intent.value,
+                    "backend_node_id": match.backend_node_id,
+                    "canonical_descriptor": match.canonical_descriptor,
+                    "hierarchy_path": match.hierarchy_path
                 },
             })
         
-        head_score = 1.0 if promo_top is not None else (matches[0].score if matches else 0.0)
+        head_score = 1.0 if promo_top is not None else (heuristically_scored_matches[0].score if heuristically_scored_matches else 0.0)
         confidence = max(0.0, min(1.0, float(head_score)))
         
         # Record performance metrics
@@ -789,18 +784,19 @@ class HybridPipeline:
         else:
             record_cache_metrics("no-semantic", False)
         
-        log.info(f"No-semantic query completed: {len(results)} results, confidence: {confidence:.3f}, duration: {query_duration:.3f}s")
+        log.info(f"Explicit no-semantic query completed: {len(results)} results, confidence: {confidence:.3f}, duration: {query_duration:.3f}s")
         
         return {
             "results": results,
-            "strategy": "no-semantic-exact+promotion" if promo_top else "no-semantic-exact",
+            "strategy": "no-semantic-explicit+promotion" if promo_top else "no-semantic-explicit",
             "confidence": confidence,
             "performance": {
                 "duration": query_duration,
-                "frames_detected": len(frames),
-                "shadow_roots_detected": len(shadow_roots),
-                "dynamic_elements_detected": len(dynamic_elements),
-                "total_matches": len(all_matches)
+                "intent_parsed": parsed_intent.intent.value,
+                "target_text": parsed_intent.target_text,
+                "dom_matches": len(dom_matches),
+                "resolved_matches": len(resolved_matches),
+                "final_matches": len(heuristically_scored_matches)
             }
         }
     
@@ -952,6 +948,291 @@ class HybridPipeline:
         except Exception as e:
             log.warning(f"Accessibility fallback failed: {e}")
             return []
+    
+    def _resolve_matches_by_backend_node_id(self, dom_matches: List[DOMMatch]) -> List[DOMMatch]:
+        """Resolve matches by backend node ID, removing duplicates."""
+        if not dom_matches:
+            return []
+        
+        # Group by backend node ID and keep the best match for each
+        node_id_to_match = {}
+        for match in dom_matches:
+            node_id = match.backend_node_id
+            if node_id not in node_id_to_match or match.score > node_id_to_match[node_id].score:
+                node_id_to_match[node_id] = match
+        
+        resolved = list(node_id_to_match.values())
+        resolved.sort(key=lambda m: m.score, reverse=True)
+        
+        log.info(f"Resolved {len(dom_matches)} DOM matches to {len(resolved)} unique matches by backend node ID")
+        return resolved
+    
+    def _try_accessibility_fallback_explicit(self, elements: List[Dict[str, Any]], 
+                                           parsed_intent: ParsedIntent) -> List[DOMMatch]:
+        """Try accessibility fallback with explicit intent parsing."""
+        try:
+            # Extract accessibility elements from DOM elements
+            ax_elements = []
+            for element in elements:
+                attrs = element.get('attributes', {})
+                
+                # Check if element has accessibility attributes
+                has_ax_info = any(attr in attrs for attr in [
+                    'aria-label', 'aria-labelledby', 'role', 'title', 'alt'
+                ])
+                
+                # Check if element might be icon-only (no text but has other attributes)
+                has_no_text = not element.get('text', '').strip()
+                has_other_attrs = any(attr in attrs for attr in [
+                    'class', 'id', 'data-testid', 'data-test-id', 'onclick'
+                ])
+                
+                if has_ax_info or (has_no_text and has_other_attrs):
+                    ax_element = {
+                        'name': attrs.get('aria-label') or attrs.get('title') or attrs.get('alt', ''),
+                        'role': attrs.get('role', ''),
+                        'element': element
+                    }
+                    if ax_element['name'] or ax_element['role']:
+                        ax_elements.append(ax_element)
+            
+            if not ax_elements:
+                log.debug("No accessibility elements found for fallback")
+                return []
+            
+            # Use accessibility fallback matcher
+            ax_matches = self.ax_fallback_matcher.match_accessibility_elements(ax_elements, parsed_intent.target_text)
+            
+            # Convert back to DOMMatch format
+            results = []
+            for ax_match in ax_matches:
+                # Get the original element from the accessibility match
+                original_element = None
+                for ax_el in ax_elements:
+                    if ax_el['name'] == ax_match.matched_value:
+                        original_element = ax_el['element']
+                        break
+                
+                if original_element:
+                    # Create DOMMatch with original element
+                    backend_node_id = self.dom_target_binder._get_backend_node_id(original_element)
+                    dom_match = DOMMatch(
+                        element=original_element,
+                        backend_node_id=backend_node_id,
+                        match_type=ax_match.matched_attribute,
+                        matched_text=ax_match.matched_value,
+                        score=ax_match.score * 0.8,  # Slightly lower score for AX fallback
+                        hierarchy_path=self.dom_target_binder._build_hierarchy_path(original_element),
+                        canonical_descriptor=self.dom_target_binder._build_canonical_descriptor(original_element)
+                    )
+                    results.append(dom_match)
+            
+            return results
+            
+        except Exception as e:
+            log.warning(f"Accessibility fallback failed: {e}")
+            return []
+    
+    def _build_canonical_descriptors(self, matches: List[DOMMatch]) -> List[DOMMatch]:
+        """Build canonical descriptors for matches (already done in DOMMatch creation)."""
+        # Canonical descriptors are already built in DOMMatch creation
+        return matches
+    
+    def _rerank_no_semantic_matches_explicit(self, matches: List[DOMMatch], 
+                                           query: str, parsed_intent: ParsedIntent) -> List[DOMMatch]:
+        """Rerank no-semantic matches using MarkupLM + heuristics with explicit intent."""
+        if not matches or len(matches) <= 1:
+            return matches
+        
+        log.info(f"Reranking {len(matches)} no-semantic matches with MarkupLM")
+        
+        # Use MarkupLM for reranking (if available)
+        if _MARKUP_IMPORT_OK:
+            try:
+                # Create query embedding
+                q_markup = self._embed_query_markup(query)
+                
+                # Create enhanced elements for MarkupLM
+                enhanced_elements = []
+                for match in matches:
+                    element = match.element
+                    enhanced_meta = element.copy()
+                    
+                    # Convert to HTML structure for MarkupLM
+                    tag = element.get('tag', '').lower()
+                    text = element.get('text', '')
+                    attrs = element.get('attributes', {})
+                    
+                    # Build attribute string
+                    attr_str = ""
+                    for key, value in attrs.items():
+                        attr_str += f' {key}="{value}"'
+                    
+                    # Create HTML structure
+                    if tag in ['a', 'button', 'input', 'select', 'option']:
+                        if tag == 'a':
+                            html_text = f'<a{attr_str}>{text}</a>'
+                        elif tag == 'button':
+                            html_text = f'<button{attr_str}>{text}</button>'
+                        elif tag == 'input':
+                            html_text = f'<input{attr_str} value="{text}">'
+                        else:
+                            html_text = f'<{tag}{attr_str}>{text}</{tag}>'
+                    else:
+                        html_text = f'<{tag}{attr_str}>{text}</{tag}>'
+                    
+                    enhanced_meta["text"] = html_text
+                    enhanced_meta["tag"] = "html"
+                    enhanced_elements.append(enhanced_meta)
+                
+                # Get MarkupLM embeddings
+                markup_embeddings = self.element_embedder.batch_encode(enhanced_elements)
+                
+                # Compute similarity scores and update match scores
+                for i, match in enumerate(matches):
+                    if i < markup_embeddings.shape[0]:
+                        markup_vec = markup_embeddings[i]
+                        markup_score = _cos(q_markup, markup_vec)
+                        
+                        # Apply intent-specific scoring
+                        intent_score = self._calculate_intent_score(match, parsed_intent)
+                        
+                        # Combine scores (weighted average)
+                        final_score = (match.score * 0.6) + (markup_score * 0.3) + (intent_score * 0.1)
+                        match.score = final_score
+                
+                # Sort by new scores
+                matches.sort(key=lambda m: m.score, reverse=True)
+                
+            except Exception as e:
+                log.warning(f"MarkupLM reranking failed: {e}, using original order")
+        
+        return matches
+    
+    def _apply_intent_specific_heuristics(self, matches: List[DOMMatch], 
+                                        parsed_intent: ParsedIntent) -> List[DOMMatch]:
+        """Apply intent-specific heuristics to matches."""
+        if not matches:
+            return matches
+        
+        # Get intent-specific heuristics
+        heuristics = self.intent_parser.get_intent_specific_heuristics(parsed_intent.intent)
+        
+        # Apply heuristics to each match
+        for match in matches:
+            element = match.element
+            tag = element.get('tag', '').lower()
+            attrs = element.get('attributes', {})
+            
+            # Calculate intent-specific score
+            intent_score = self._calculate_intent_score(match, parsed_intent)
+            
+            # Apply tag preferences
+            if heuristics['prefer_tags']:
+                for prefer_tag in heuristics['prefer_tags']:
+                    if self._tag_matches(element, prefer_tag):
+                        match.score += 0.2
+                        break
+            
+            # Apply attribute preferences
+            if heuristics['prefer_attributes']:
+                for prefer_attr in heuristics['prefer_attributes']:
+                    if self._attribute_matches(attrs, prefer_attr):
+                        match.score += 0.1
+                        break
+            
+            # Apply tag avoidance
+            if heuristics['avoid_tags']:
+                for avoid_tag in heuristics['avoid_tags']:
+                    if self._tag_matches(element, avoid_tag):
+                        match.score -= 0.1
+                        break
+            
+            # Apply minimum interactive score
+            min_score = heuristics.get('min_interactive_score', 0.5)
+            if match.score < min_score:
+                match.score *= 0.5  # Reduce score for low-interactive elements
+        
+        # Sort by updated scores
+        matches.sort(key=lambda m: m.score, reverse=True)
+        
+        log.info(f"Applied intent-specific heuristics for {parsed_intent.intent.value}")
+        return matches
+    
+    def _calculate_intent_score(self, match: DOMMatch, parsed_intent: ParsedIntent) -> float:
+        """Calculate intent-specific score for a match."""
+        element = match.element
+        tag = element.get('tag', '').lower()
+        attrs = element.get('attributes', {})
+        
+        # Base score from match
+        base_score = match.score
+        
+        # Intent-specific scoring
+        if parsed_intent.intent == IntentType.CLICK:
+            # Prefer interactive elements
+            if tag in ['button', 'a', 'input[type="button"]', 'input[type="submit"]']:
+                return base_score + 0.3
+            elif attrs.get('onclick') or attrs.get('role') == 'button':
+                return base_score + 0.2
+            else:
+                return base_score
+        
+        elif parsed_intent.intent in [IntentType.ENTER, IntentType.TYPE, IntentType.SEARCH]:
+            # Prefer input elements
+            if tag in ['input', 'textarea']:
+                return base_score + 0.3
+            elif attrs.get('contenteditable') == 'true':
+                return base_score + 0.2
+            else:
+                return base_score
+        
+        elif parsed_intent.intent == IntentType.SELECT:
+            # Prefer select elements
+            if tag in ['select', 'option', 'input[type="radio"]', 'input[type="checkbox"]']:
+                return base_score + 0.3
+            else:
+                return base_score
+        
+        elif parsed_intent.intent == IntentType.VALIDATE:
+            # Prefer label elements
+            if tag in ['label', 'span', 'div', 'p']:
+                return base_score + 0.2
+            else:
+                return base_score
+        
+        return base_score
+    
+    def _tag_matches(self, element: Dict[str, Any], tag_pattern: str) -> bool:
+        """Check if element tag matches pattern."""
+        tag = element.get('tag', '').lower()
+        
+        if '[' in tag_pattern:
+            # Handle attribute selectors like input[type="text"]
+            tag_part, attr_part = tag_pattern.split('[', 1)
+            attr_part = attr_part.rstrip(']')
+            
+            if tag != tag_part:
+                return False
+            
+            if '=' in attr_part:
+                attr_name, attr_value = attr_part.split('=', 1)
+                attr_value = attr_value.strip('"\'')
+                return element.get('attributes', {}).get(attr_name) == attr_value
+            else:
+                return attr_name in element.get('attributes', {})
+        else:
+            return tag == tag_pattern
+    
+    def _attribute_matches(self, attrs: Dict[str, Any], attr_pattern: str) -> bool:
+        """Check if attributes match pattern."""
+        if '*' in attr_pattern:
+            # Handle wildcard patterns like name*search
+            attr_name, pattern = attr_pattern.split('*', 1)
+            value = attrs.get(attr_name, '')
+            return pattern.lower() in value.lower()
+        else:
+            return attr_pattern in attrs
 
     def _query_standard(
         self,

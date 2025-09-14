@@ -8,6 +8,14 @@ from typing import Optional, Dict, Any
 from dataclasses import dataclass, field
 from enum import Enum
 
+try:
+    from dotenv import load_dotenv
+    # Load environment variables from .env file
+    load_dotenv()
+    DOTENV_AVAILABLE = True
+except ImportError:
+    DOTENV_AVAILABLE = False
+
 
 class CanonicalMode(Enum):
     """Canonical descriptor building modes."""
@@ -32,7 +40,7 @@ class HERConfig:
     log_level: str = field(default_factory=lambda: os.getenv("HER_LOG_LEVEL", "INFO"))
     
     # Feature flags
-    use_hierarchy: bool = field(default_factory=lambda: os.getenv("HER_USE_HIERARCHY", "false").lower() == "true")
+    use_hierarchy: bool = field(default_factory=lambda: os.getenv("HER_USE_HIERARCHY", "true").lower() == "true")
     use_two_stage: bool = field(default_factory=lambda: os.getenv("HER_USE_TWO_STAGE", "false").lower() == "true")
     disable_heuristics: bool = field(default_factory=lambda: os.getenv("HER_DISABLE_HEURISTICS", "false").lower() == "true")
     use_semantic_search: bool = field(default_factory=lambda: os.getenv("HER_USE_SEMANTIC_SEARCH", "true").lower() == "true")
@@ -41,6 +49,15 @@ class HERConfig:
     max_text_length: int = field(default_factory=lambda: int(os.getenv("HER_MAX_TEXT_LENGTH", "1024")))
     max_elements: int = field(default_factory=lambda: int(os.getenv("HER_MAX_ELEMENTS", "1000")))
     cache_size_mb: int = field(default_factory=lambda: int(os.getenv("HER_CACHE_SIZE_MB", "100")))
+    
+    # No-semantic mode settings
+    no_semantic_case_sensitive: bool = field(default_factory=lambda: os.getenv("HER_NO_SEMANTIC_CASE_SENSITIVE", "false").lower() == "true")
+    no_semantic_min_score: float = field(default_factory=lambda: float(os.getenv("HER_NO_SEMANTIC_MIN_SCORE", "0.5")))
+    no_semantic_use_ax_fallback: bool = field(default_factory=lambda: os.getenv("HER_NO_SEMANTIC_USE_AX_FALLBACK", "true").lower() == "true")
+    
+    # Performance monitoring
+    enable_metrics: bool = field(default_factory=lambda: os.getenv("HER_ENABLE_METRICS", "true").lower() == "true")
+    metrics_export_path: str = field(default_factory=lambda: os.getenv("HER_METRICS_EXPORT_PATH", "metrics.json"))
     
     # Browser settings
     headless: bool = field(default_factory=lambda: os.getenv("HER_HEADLESS", "true").lower() == "true")
