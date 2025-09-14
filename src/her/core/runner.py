@@ -499,13 +499,19 @@ class Runner:
             frame_url = getattr(self._page, "url", "")
             fh = compute_frame_hash(frame_url, elements)
             
-            # Ensure frame_hash is properly set for all elements
+            # Ensure frame_hash is properly set for all elements AFTER hierarchy context
             for it in elements:
                 # Create meta dict if it doesn't exist
                 if "meta" not in it:
                     it["meta"] = {}
                 it["meta"]["frame_hash"] = fh
                 it["frame_url"] = frame_url
+                
+                # Debug: Verify frame_hash is set
+                if "meta" not in it or "frame_hash" not in it["meta"]:
+                    print(f"⚠️  Element missing frame_hash: {it.get('tag', 'unknown')}")
+                    it["meta"] = it.get("meta", {})
+                    it["meta"]["frame_hash"] = fh
                 
             frames = [{"frame_url": frame_url, "elements": elements, "frame_hash": fh}]
             return {"elements": elements, "dom_hash": dom_hash(frames), "url": frame_url}

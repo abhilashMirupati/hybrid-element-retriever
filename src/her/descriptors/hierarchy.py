@@ -38,8 +38,10 @@ class HierarchyContextBuilder:
         enhanced_elements = []
         for element in dom_tree:
             context = self._build_element_context(element, node_index, parent_child_map)
-            element['context'] = context
-            enhanced_elements.append(element)
+            # Preserve all existing fields, especially meta
+            enhanced_element = element.copy()
+            enhanced_element['context'] = context
+            enhanced_elements.append(enhanced_element)
         
         self.logger.debug(f"Built hierarchy context for {len(enhanced_elements)} elements")
         return enhanced_elements
