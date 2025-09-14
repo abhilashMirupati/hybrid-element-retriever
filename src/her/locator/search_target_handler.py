@@ -93,7 +93,7 @@ class SearchTargetHandler:
             return 'tel'
         elif 'url' in step_lower or 'website' in step_lower:
             return 'url'
-        elif 'search' in step_lower or 'query' in step_lower:
+        elif 'search' in step_lower or 'query' in step_lower or 'enter' in step_lower:
             return 'search'
         else:
             return 'text'
