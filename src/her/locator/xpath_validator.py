@@ -123,8 +123,14 @@ class XPathValidator:
         if text:
             # Escape quotes in text
             escaped_text = text.replace('"', '\\"')
-            # Use contains() for more flexible matching
-            return f'//{tag}[contains(normalize-space(), "{escaped_text}")]'
+            # Use more flexible text matching
+            if len(text) > 20:
+                # For long text, use partial matching
+                partial_text = text[:20]
+                return f'//{tag}[contains(normalize-space(), "{partial_text}")]'
+            else:
+                # For short text, use exact matching
+                return f'//{tag}[normalize-space()="{escaped_text}"]'
         
         return ""
     
@@ -144,21 +150,27 @@ class XPathValidator:
                 return f'//text()[contains(normalize-space(), "{text.replace('"', '\\"')}")]'
             return ""
         
-        # Try different attribute combinations
-        if attrs.get('id'):
+        # Try different attribute combinations (prioritize stable attributes)
+        if attrs.get('id') and not attrs['id'].startswith('auto-id-'):
+            # Only use ID if it's not auto-generated
             return f'//{tag}[@id="{attrs["id"]}"]'
         
         if attrs.get('data-testid'):
             return f'//{tag}[@data-testid="{attrs["data-testid"]}"]'
         
-        if attrs.get('class'):
-            # Use the full class string, not just the first part
-            class_value = attrs['class']
-            return f'//{tag}[contains(@class, "{class_value.split()[0]}")]'
-        
-        # Try aria-label as fallback
         if attrs.get('aria-label'):
             return f'//{tag}[@aria-label="{attrs["aria-label"]}"]'
+        
+        if attrs.get('class'):
+            # Use the first meaningful class
+            class_value = attrs['class']
+            first_class = class_value.split()[0] if class_value else ''
+            if first_class and not first_class.startswith('auto-'):
+                return f'//{tag}[contains(@class, "{first_class}")]'
+        
+        # Try role attribute
+        if attrs.get('role'):
+            return f'//{tag}[@role="{attrs["role"]}"]'
         
         return ""
     

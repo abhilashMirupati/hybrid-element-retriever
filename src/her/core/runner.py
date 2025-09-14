@@ -601,31 +601,45 @@ class Runner:
                                 attrs[attr.name] = attr.value;
                             }
                             
-                            // Determine if interactive
+                            // Better visibility detection
+                            const isVisible = rect.width > 0 && rect.height > 0 && 
+                                            style.display !== 'none' && 
+                                            style.visibility !== 'hidden' && 
+                                            style.opacity !== '0' &&
+                                            !node.hasAttribute('hidden') &&
+                                            !node.classList.contains('hidden') &&
+                                            !node.classList.contains('sr-only');
+                            
+                            // Better interactive detection
                             const interactive = ['button', 'a', 'input', 'select', 'textarea'].includes(node.tagName.toLowerCase()) ||
                                               node.onclick || node.getAttribute('onclick') ||
                                               style.cursor === 'pointer' ||
-                                              node.getAttribute('role') === 'button';
+                                              node.getAttribute('role') === 'button' ||
+                                              node.getAttribute('role') === 'link' ||
+                                              node.tabIndex >= 0;
                             
-                            elements.push({
-                                text: text,
-                                tag: node.tagName.toUpperCase(),
-                                role: node.getAttribute('role') || '',
-                                attrs: attrs,
-                                bbox: {
-                                    x: Math.round(rect.x),
-                                    y: Math.round(rect.y),
-                                    width: Math.round(rect.width),
-                                    height: Math.round(rect.height),
-                                    w: Math.round(rect.width),
-                                    h: Math.round(rect.height)
-                                },
-                                visible: rect.width > 0 && rect.height > 0 && style.display !== 'none',
-                                below_fold: rect.y > window.innerHeight,
-                                interactive: interactive,
-                                backendNodeId: Math.random().toString(36).substr(2, 9),  // Generate fake ID
-                                meta: {}  // Initialize meta field for frame_hash
-                            });
+                            // Only include elements that are visible or have meaningful text
+                            if (isVisible || (text && text.trim().length > 0)) {
+                                elements.push({
+                                    text: text,
+                                    tag: node.tagName.toUpperCase(),
+                                    role: node.getAttribute('role') || '',
+                                    attrs: attrs,
+                                    bbox: {
+                                        x: Math.round(rect.x),
+                                        y: Math.round(rect.y),
+                                        width: Math.round(rect.width),
+                                        height: Math.round(rect.height),
+                                        w: Math.round(rect.width),
+                                        h: Math.round(rect.height)
+                                    },
+                                    visible: isVisible,
+                                    below_fold: rect.y > window.innerHeight,
+                                    interactive: interactive,
+                                    backendNodeId: Math.random().toString(36).substr(2, 9),  // Generate fake ID
+                                    meta: {}  // Initialize meta field for frame_hash
+                                });
+                            }
                         }
                     }
                     
