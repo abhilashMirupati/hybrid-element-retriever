@@ -32,10 +32,6 @@ os.environ["HER_CACHE_DIR"] = str(Path(".her_cache").resolve())
 from transformers import MarkupLMProcessor, MarkupLMForQuestionAnswering
 import torch
 
-from her.core.runner import Runner
-from her.locator.intent_parser import IntentParser, ParsedIntent, IntentType
-from her.locator.target_matcher import TargetMatcher
-
 
 class MarkupLMVerizonTest:
     """Enhanced Verizon test with real MarkupLM integration."""
@@ -54,14 +50,10 @@ class MarkupLMVerizonTest:
             self.model = MarkupLMForQuestionAnswering.from_pretrained(self.model_name)
             self.model.eval()
             print("✅ MarkupLM model loaded successfully!")
+            print(f"✅ Model confirmed: {self.model_name}")
         except Exception as e:
             print(f"❌ Failed to load MarkupLM model: {e}")
             raise
-        
-        # Initialize other components (simplified for testing)
-        # self.runner = Runner(headless=False)  # Commented out to avoid HER dependencies
-        # self.intent_parser = IntentParser()
-        # self.target_matcher = TargetMatcher(case_sensitive=False)
         
         print("✅ All components initialized successfully!")
     
@@ -227,7 +219,7 @@ class MarkupLMVerizonTest:
         attr_parts = []
         
         # Include important attributes
-        important_attrs = ['class', 'id', 'role', 'type', 'name', 'aria-label', 'data-testid']
+        important_attrs = ['class', 'id', 'role', 'type', 'name', 'aria-label', 'data-testid', 'href', 'data-cy']
         
         for attr in important_attrs:
             value = attrs.get(attr, '')
@@ -238,41 +230,75 @@ class MarkupLMVerizonTest:
         
         return ' ' + ' '.join(attr_parts) if attr_parts else ''
     
-    def score_snippets_with_markuplm(self, html_snippets: List[str], query: str) -> List[Tuple[float, str]]:
-        """Score HTML snippets using real MarkupLM model."""
+    def score_snippets_with_markuplm(self, html_snippets: List[str], query: str) -> List[Tuple[float, str, Dict[str, Any]]]:
+        """Score HTML snippets using real MarkupLM model with detailed input/output."""
         print(f"🤖 Scoring {len(html_snippets)} snippets with MarkupLM")
         
         results = []
         
-        for idx, snippet in enumerate(html_snippets):
+        for idx, snippet_data in enumerate(html_snippets):
+            snippet_html = snippet_data['html']
+            element_meta = snippet_data['element']
+            
+            print(f"\n============================================================")
+            print(f"📄 SNIPPET {idx+1} ANALYSIS")
+            print(f"============================================================")
+            print(f"HTML Length: {len(snippet_html)} chars")
+            print(f"HTML Content:\n```html\n{snippet_html}\n```\n")
+            
             try:
                 # Prepare inputs for MarkupLM
                 inputs = self.processor(
                     questions=query,
-                    html_strings=[snippet],
+                    html_strings=[snippet_html],
                     return_tensors="pt"
                 )
+                
+                print(f"🔧 MARKUPLM INPUT PREPARATION:")
+                print(f"   Query: '{query}'")
+                print(f"   HTML: {snippet_html[:100]}...")
+                
+                print(f"\n📊 MARKUPLM INPUT DETAILS:")
+                print(f"   Available keys: {list(inputs.keys())}")
+                print(f"\n   Input IDs shape: {inputs['input_ids'].shape}")
+                print(f"   Attention mask shape: {inputs['attention_mask'].shape}")
+                if 'token_type_ids' in inputs:
+                    print(f"   Token type IDs shape: {inputs['token_type_ids'].shape}")
+                if 'xpath_tags_seq' in inputs:
+                    print(f"   XPath tags seq shape: {inputs['xpath_tags_seq'].shape}")
+                if 'xpath_subs_seq' in inputs:
+                    print(f"   XPath subs seq shape: {inputs['xpath_subs_seq'].shape}")
+                
+                print(f"\n🔤 TOKENIZED INPUT:")
+                print(f"   Input IDs: {inputs['input_ids'].tolist()}")
+                print(f"   Attention mask: {inputs['attention_mask'].tolist()}")
                 
                 # Get model predictions
                 with torch.no_grad():
                     outputs = self.model(**inputs)
-                    
-                    # Combine start and end logits as scoring metric
-                    start_score = outputs.start_logits.max().item()
-                    end_score = outputs.end_logits.max().item()
-                    combined_score = (start_score + end_score) / 2.0
-                    
-                    results.append((combined_score, snippet))
-                    print(f"   Snippet {idx+1}: Score = {combined_score:.3f}")
-                    
+                
+                # Calculate score (start + end logits)
+                start_logits = outputs.start_logits
+                end_logits = outputs.end_logits
+                
+                # Simple scoring: sum of max logits
+                score = float(start_logits.max() + end_logits.max())
+                
+                print(f"\n🎯 MARKUPLM OUTPUT:")
+                print(f"   Start logits shape: {start_logits.shape}")
+                print(f"   End logits shape: {end_logits.shape}")
+                print(f"   Max start logit: {start_logits.max().item():.3f}")
+                print(f"   Max end logit: {end_logits.max().item():.3f}")
+                print(f"   Combined score: {score:.3f}")
+                
+                results.append((score, snippet_html, element_meta))
+                
             except Exception as e:
-                print(f"   ❌ Error scoring snippet {idx+1}: {e}")
-                results.append((0.0, snippet))
+                print(f"❌ Error scoring snippet {idx+1}: {e}")
+                results.append((-100.0, snippet_html, element_meta))
         
         # Sort by score (highest first)
         results.sort(key=lambda x: x[0], reverse=True)
-        
-        print(f"   Top score: {results[0][0]:.3f}" if results else "   No results")
         return results
     
     def generate_best_xpath(self, node: Dict[str, Any]) -> str:
@@ -299,6 +325,10 @@ class MarkupLMVerizonTest:
             first_class = attrs['class'].split()[0]
             xpath = f"//{tag}[@class='{first_class}']"
             print(f"   Using class-based XPath: {xpath}")
+            return xpath
+        elif attrs.get('href'):
+            xpath = f"//{tag}[@href='{attrs['href']}']"
+            print(f"   Using href-based XPath: {xpath}")
             return xpath
         elif attrs.get('name'):
             xpath = f"//{tag}[@name='{attrs['name']}']"
@@ -344,7 +374,8 @@ class MarkupLMVerizonTest:
                     "attributes": {
                         "href": "/devices",
                         "class": "nav-link",
-                        "data-testid": "devices-link"
+                        "data-testid": "devices-link",
+                        "aria-label": "Devices navigation link"
                     },
                     "visible": True,
                     "xpath": "//a[@href='/devices']"
@@ -355,33 +386,45 @@ class MarkupLMVerizonTest:
                     "attributes": {
                         "id": "smartphones-btn",
                         "class": "category-button",
-                        "data-testid": "smartphones-category"
+                        "data-testid": "smartphones-category",
+                        "aria-label": "Smartphones category"
                     },
                     "visible": True,
                     "xpath": "//button[@id='smartphones-btn']"
                 },
                 {
-                    "tag": "button",
-                    "text": "Apple",
+                    "tag": "a",
+                    "text": "Apple iPhone 17",
                     "attributes": {
-                        "id": "apple-filter",
-                        "class": "filter-button active",
-                        "data-testid": "apple-filter",
-                        "aria-label": "Filter by Apple brand"
+                        "href": "/smartphones/apple-iphone-17/",
+                        "class": "product-link",
+                        "data-testid": "apple-iphone-17-link",
+                        "aria-label": "Apple iPhone 17 product link"
                     },
                     "visible": True,
-                    "xpath": "//div[@class='filter-container']/button[@id='apple-filter']"
+                    "xpath": "//a[@href='/smartphones/apple-iphone-17/']"
                 },
                 {
                     "tag": "button",
-                    "text": "Samsung",
+                    "text": "White",
                     "attributes": {
-                        "id": "samsung-filter",
-                        "class": "filter-button",
-                        "data-testid": "samsung-filter"
+                        "id": "color-white",
+                        "class": "color-option",
+                        "data-testid": "color-white",
+                        "aria-label": "White color option"
                     },
                     "visible": True,
-                    "xpath": "//div[@class='filter-container']/button[@id='samsung-filter']"
+                    "xpath": "//button[@id='color-white']"
+                },
+                {
+                    "tag": "h1",
+                    "text": "Apple iPhone 17",
+                    "attributes": {
+                        "class": "product-title",
+                        "data-testid": "product-title"
+                    },
+                    "visible": True,
+                    "xpath": "//h1[@class='product-title']"
                 },
                 {
                     "tag": "div",
@@ -440,7 +483,10 @@ class MarkupLMVerizonTest:
             html_snippets = []
             for node in match_nodes:
                 html_context = self.build_html_context(node, all_elements)
-                html_snippets.append(html_context)
+                html_snippets.append({
+                    'html': html_context,
+                    'element': node
+                })
             
             # Score snippets with MarkupLM
             scored_snippets = self.score_snippets_with_markuplm(html_snippets, step)
@@ -453,14 +499,13 @@ class MarkupLMVerizonTest:
                 }
             
             # Get the highest scoring node
-            best_score, best_html = scored_snippets[0]
-            best_node = match_nodes[0]  # Assuming same order
+            best_score, best_html, best_element = scored_snippets[0]
             
             print(f"Best score: {best_score:.3f}")
             print(f"Best HTML snippet length: {len(best_html)} chars")
             
             # Generate best XPath for the highest scoring node
-            best_xpath = self.generate_best_xpath(best_node)
+            best_xpath = self.generate_best_xpath(best_element)
             
             # Execute with Playwright using the best XPath
             print(f"Executing with XPath: {best_xpath}")
@@ -475,6 +520,7 @@ class MarkupLMVerizonTest:
                 "xpath": best_xpath,
                 "score": best_score,
                 "html_snippet": best_html,
+                "element": best_element,
                 "execution_time": execution_time,
                 "step": step,
                 "result": result[0] if result else {}
@@ -494,16 +540,16 @@ class MarkupLMVerizonTest:
         print("🚀 Starting Enhanced Verizon Test with MarkupLM")
         print("=" * 80)
         
-        # Test steps
+        # Updated test steps as requested
         steps = [
             'Navigate to Verizon page "https://www.verizon.com/"',
-            'Click on "Shop" button',
-            'Click on "Devices"',
-            'Click on "Smartphones"',
-            'Click on "Apple" filter',
-            'Validate "Apple" text is visible',
-            'Click on "Samsung" filter',
-            'Validate "Samsung" text is visible'
+            'Click on "Shop" button',  # Changed from "Phones" to "Shop"
+            'Click on "Devices"',      # Changed from "Apple" filter to "Devices"
+            'Click on "Smartphones"',  # Navigate to smartphones section
+            'Click on "Apple iPhone 17"',  # Select the iPhone
+            'Validate it landed on "https://www.verizon.com/smartphones/apple-iphone-17/"',
+            'Validate "Apple iPhone 17" text on pdp page',
+            'Click on "White" color'
         ]
         
         results = []
