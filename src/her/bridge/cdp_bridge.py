@@ -48,7 +48,7 @@ class DOMSnapshot:
         return hashlib.md5(content.encode()).hexdigest()
 
 
-def wait_for_dom_stable(page: Page, timeout_ms: int = 5000) -> bool:
+def wait_for_dom_stable(page: Page, timeout_ms: int = 10000) -> bool:
     """Wait for DOM to be stable (no mutations, network idle).
 
     Args:
@@ -62,13 +62,22 @@ def wait_for_dom_stable(page: Page, timeout_ms: int = 5000) -> bool:
         return False
 
     try:
+        print("🔄 Waiting for DOM stability...")
+        
         # Wait for document ready state
         page.wait_for_load_state("domcontentloaded", timeout=timeout_ms)
         page.wait_for_load_state("networkidle", timeout=timeout_ms)
 
         # Additional wait for any async rendering
-        page.wait_for_timeout(100)
-
+        page.wait_for_timeout(2000)
+        
+        # Force a re-render to ensure all elements are visible
+        page.evaluate("() => { document.body.offsetHeight; }")
+        
+        # Wait for any remaining dynamic content
+        page.wait_for_timeout(3000)
+        
+        print("✅ DOM is stable")
         return True
     except Exception as e:
         logger.warning(f"DOM not stable within timeout: {e}")
@@ -92,45 +101,66 @@ def get_flattened_document(
     if not page or not PLAYWRIGHT_AVAILABLE:
         return []
 
-    # Wait for DOM stability if requested
+    # ALWAYS wait for full page load and network idle before CDP calls
     if wait_stable:
-        wait_for_dom_stable(page)
+        print("🔄 Ensuring page is fully loaded before CDP...")
+        
+        # Wait for all load states
+        page.wait_for_load_state("domcontentloaded", timeout=15000)
+        page.wait_for_load_state("load", timeout=15000) 
+        page.wait_for_load_state("networkidle", timeout=15000)
+        
+        # Additional wait for dynamic content
+        page.wait_for_timeout(5000)
+        
+        # Force re-render
+        page.evaluate("() => { document.body.offsetHeight; }")
+        
+        # Final wait
+        page.wait_for_timeout(3000)
+        
+        print("✅ Page fully loaded, proceeding with CDP...")
 
     try:
         # Create CDP session
+        print("🔧 Creating CDP session...")
         client = page.context.new_cdp_session(page)
 
         # Enable DOM domain
+        print("🔧 Enabling DOM domain...")
         client.send("DOM.enable")
+        
+        # Check if DOM is ready
+        print("🔧 Checking DOM readiness...")
+        doc_info = client.send("DOM.getDocument", {"depth": 0})
+        print(f"Document info: {doc_info.get('root', {}).get('nodeName', 'unknown')}")
 
-        # Try getFlattenedDocument first (Chrome 86+)
-        try:
-            response = client.send(
-                "DOM.getFlattenedDocument", {"depth": depth, "pierce": pierce}
-            )
-            nodes = response.get("nodes", [])
-            print(f"Retrieved {len(nodes)} DOM nodes via getFlattenedDocument")
-            return nodes
-        except Exception as e:
-            # Fall back to getDocument if getFlattenedDocument not available
-            logger.debug(
-                f"getFlattenedDocument not available, falling back to getDocument: {e}"
-            )
+        # Skip getFlattenedDocument and go directly to getDocument with full depth
+        print("🔧 Using getDocument with full depth...")
+        
+        # Get document root with maximum depth
+        doc_response = client.send(
+            "DOM.getDocument", {"depth": -1, "pierce": True}
+        )
 
-            # Get document root
-            doc_response = client.send(
-                "DOM.getDocument", {"depth": depth, "pierce": pierce}
-            )
+        root = doc_response.get("root", {})
+        if not root:
+            print("❌ No document root found")
+            return []
 
-            root = doc_response.get("root", {})
-            if not root:
-                return []
-
-            # Flatten the tree manually
-            nodes = []
-            _flatten_dom_tree(root, nodes)
-            logger.debug(f"Retrieved {len(nodes)} DOM nodes via getDocument")
-            return nodes
+        # Flatten the tree manually
+        nodes = []
+        _flatten_dom_tree(root, nodes)
+        print(f"Retrieved {len(nodes)} DOM nodes via getDocument")
+        
+        # Debug: Check if we're getting the right nodes
+        if len(nodes) < 100:
+            print(f"⚠️  Low node count detected: {len(nodes)}")
+            print("First few nodes:")
+            for i, node in enumerate(nodes[:10]):
+                print(f"  Node {i}: {node.get('nodeName', 'unknown')} - {node.get('nodeType', 'unknown')}")
+        
+        return nodes
 
     except Exception as e:
         # Real error handling - fail hard if CDP bridge fails
@@ -177,6 +207,25 @@ def get_full_ax_tree(
     """
     if not page or not PLAYWRIGHT_AVAILABLE:
         return []
+
+    # ALWAYS wait for full page load before CDP calls
+    print("🔄 Ensuring page is fully loaded before AX tree CDP...")
+    
+    # Wait for all load states
+    page.wait_for_load_state("domcontentloaded", timeout=15000)
+    page.wait_for_load_state("load", timeout=15000)
+    page.wait_for_load_state("networkidle", timeout=15000)
+    
+    # Additional wait for dynamic content
+    page.wait_for_timeout(5000)
+    
+    # Force re-render
+    page.evaluate("() => { document.body.offsetHeight; }")
+    
+    # Final wait
+    page.wait_for_timeout(3000)
+    
+    print("✅ Page fully loaded, proceeding with AX tree CDP...")
 
     try:
         # Create CDP session

@@ -44,13 +44,43 @@ class CoreNoSemanticMatcher:
         
         log.info(f"Finding exact matches for target: '{target_text}', intent: {intent}")
         
-        for element in elements:
+        # Sort elements by priority: visible + interactive > visible > interactive > others
+        def element_priority(element):
+            visible = element.get('visible', False)
+            interactive = element.get('interactive', False)
+            if visible and interactive:
+                return 3  # Highest priority
+            elif visible:
+                return 2
+            elif interactive:
+                return 1
+            else:
+                return 0
+        
+        sorted_elements = sorted(elements, key=element_priority, reverse=True)
+        
+        for element in sorted_elements:
+            # Calculate base confidence with visibility/interactivity bonus
+            base_confidence = 1.0
+            visible = element.get('visible', False)
+            interactive = element.get('interactive', False)
+            
+            # Boost confidence for visible and interactive elements
+            if visible and interactive:
+                base_confidence = 1.0  # Highest confidence
+            elif visible:
+                base_confidence = 0.9  # High confidence
+            elif interactive:
+                base_confidence = 0.8  # Medium-high confidence
+            else:
+                base_confidence = 0.5  # Lower confidence for hidden elements
+            
             # 1. InnerText matching
             if self._matches_inner_text(element, target_text):
                 matches.append(ExactMatch(
                     element=element,
                     match_type='innerText',
-                    match_confidence=1.0,
+                    match_confidence=base_confidence,
                     matched_text=target_text
                 ))
             
@@ -60,7 +90,7 @@ class CoreNoSemanticMatcher:
                 matches.append(ExactMatch(
                     element=element,
                     match_type='attribute',
-                    match_confidence=attr_match['confidence'],
+                    match_confidence=attr_match['confidence'] * base_confidence,
                     matched_text=target_text,
                     matched_attribute=attr_match['field']
                 ))
@@ -71,7 +101,7 @@ class CoreNoSemanticMatcher:
                 matches.append(ExactMatch(
                     element=element,
                     match_type='accessibility',
-                    match_confidence=ax_match['confidence'],
+                    match_confidence=ax_match['confidence'] * base_confidence,
                     matched_text=target_text
                 ))
             

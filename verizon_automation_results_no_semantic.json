@@ -1,0 +1,478 @@
+{
+  "test_summary": {
+    "total_steps": 7,
+    "successful_steps": 1,
+    "failed_steps": 6,
+    "success_rate": 14.285714285714285,
+    "semantic_mode": false,
+    "hierarchy_mode": true
+  },
+  "detailed_logs": [
+    {
+      "step_number": 1,
+      "step_description": "Navigate to Verizon page \"https://www.verizon.com/\"",
+      "timestamp": 1757874012.600613,
+      "result": {
+        "success": true,
+        "url": "https://www.verizon.com/",
+        "elements_found": 2570,
+        "dom_hash": "8c132c539bcfe64544ee1582728cf42f45bc74c4",
+        "strategy": "navigation",
+        "execution_time": 18.62452268600464
+      },
+      "canonical_description": "Successfully navigated to \"https://www.verizon.com/\" and loaded the page",
+      "input_analysis": {
+        "user_intent": "Navigate to a specific URL",
+        "target_element": "\"https://www.verizon.com/\"",
+        "action_type": "navigation",
+        "context": "unknown",
+        "semantic_mode": false,
+        "hierarchy_mode": true
+      },
+      "output_analysis": {
+        "success": true,
+        "confidence": 0.0,
+        "selector_used": "",
+        "strategy_used": "navigation",
+        "candidates_found": 0,
+        "execution_time": 18.62452268600464,
+        "semantic_mode": false
+      },
+      "markup_analysis": {
+        "html_aware": true,
+        "element_tag": "unknown",
+        "element_attributes": {},
+        "element_text": "",
+        "element_role": "",
+        "accessibility_info": {},
+        "hierarchy_context": true
+      },
+      "xpath_analysis": {
+        "xpath_selector": "",
+        "xpath_type": "unknown",
+        "xpath_precision": "unknown",
+        "xpath_stability": "unknown",
+        "semantic_mode": false
+      },
+      "multiple_text_handling": {
+        "target_text": "",
+        "multiple_elements_found": 0,
+        "selection_strategy": "unknown",
+        "context_used": [],
+        "intent_based_filtering": false,
+        "semantic_mode": false
+      }
+    },
+    {
+      "step_number": 2,
+      "step_description": "Click on \"Phones\" button",
+      "timestamp": 1757874014.9697711,
+      "result": {
+        "success": false,
+        "error": "No selector found for target",
+        "target": "",
+        "candidates": [],
+        "execution_time": 0.3689272403717041
+      },
+      "canonical_description": "Failed to click on the '' element",
+      "input_analysis": {
+        "user_intent": "Click on a specific element",
+        "target_element": "",
+        "action_type": "click",
+        "context": "Main navigation menu",
+        "semantic_mode": false,
+        "hierarchy_mode": true
+      },
+      "output_analysis": {
+        "success": false,
+        "confidence": 0.0,
+        "selector_used": "",
+        "strategy_used": "unknown",
+        "candidates_found": 0,
+        "execution_time": 0.3689272403717041,
+        "semantic_mode": false,
+        "error": "No selector found for target"
+      },
+      "markup_analysis": {
+        "html_aware": true,
+        "element_tag": "unknown",
+        "element_attributes": {},
+        "element_text": "",
+        "element_role": "",
+        "accessibility_info": {},
+        "hierarchy_context": true
+      },
+      "xpath_analysis": {
+        "xpath_selector": "",
+        "xpath_type": "unknown",
+        "xpath_precision": "unknown",
+        "xpath_stability": "unknown",
+        "semantic_mode": false
+      },
+      "multiple_text_handling": {
+        "target_text": "",
+        "multiple_elements_found": 0,
+        "selection_strategy": "unknown",
+        "context_used": [],
+        "intent_based_filtering": false,
+        "semantic_mode": false
+      }
+    },
+    {
+      "step_number": 3,
+      "step_description": "Click on \"Apple\" filter",
+      "timestamp": 1757874015.4881477,
+      "result": {
+        "success": false,
+        "error": "No selector found for target",
+        "target": "Apple\" filter",
+        "candidates": [],
+        "execution_time": 0.5182919502258301
+      },
+      "canonical_description": "Failed to click on the 'Apple\" filter' element",
+      "input_analysis": {
+        "user_intent": "Click on a specific element",
+        "target_element": "Apple\" filter",
+        "action_type": "click",
+        "context": "Product filter section",
+        "semantic_mode": false,
+        "hierarchy_mode": true
+      },
+      "output_analysis": {
+        "success": false,
+        "confidence": 0.0,
+        "selector_used": "",
+        "strategy_used": "unknown",
+        "candidates_found": 0,
+        "execution_time": 0.5182919502258301,
+        "semantic_mode": false,
+        "error": "No selector found for target"
+      },
+      "markup_analysis": {
+        "html_aware": true,
+        "element_tag": "unknown",
+        "element_attributes": {},
+        "element_text": "",
+        "element_role": "",
+        "accessibility_info": {},
+        "hierarchy_context": true
+      },
+      "xpath_analysis": {
+        "xpath_selector": "",
+        "xpath_type": "unknown",
+        "xpath_precision": "unknown",
+        "xpath_stability": "unknown",
+        "semantic_mode": false
+      },
+      "multiple_text_handling": {
+        "target_text": "Apple\" filter",
+        "multiple_elements_found": 0,
+        "selection_strategy": "unknown",
+        "context_used": [],
+        "intent_based_filtering": false,
+        "semantic_mode": false
+      }
+    },
+    {
+      "step_number": 4,
+      "step_description": "Click on \"Apple IPhone 17\" device",
+      "timestamp": 1757874015.8037262,
+      "result": {
+        "success": false,
+        "error": "No selector found for target",
+        "target": "e 17\" device",
+        "candidates": [],
+        "execution_time": 0.3154914379119873
+      },
+      "canonical_description": "Failed to click on the 'e 17\" device' element",
+      "input_analysis": {
+        "user_intent": "Click on a specific element",
+        "target_element": "e 17\" device",
+        "action_type": "click",
+        "context": "Product listing page",
+        "semantic_mode": false,
+        "hierarchy_mode": true
+      },
+      "output_analysis": {
+        "success": false,
+        "confidence": 0.0,
+        "selector_used": "",
+        "strategy_used": "unknown",
+        "candidates_found": 0,
+        "execution_time": 0.3154914379119873,
+        "semantic_mode": false,
+        "error": "No selector found for target"
+      },
+      "markup_analysis": {
+        "html_aware": true,
+        "element_tag": "unknown",
+        "element_attributes": {},
+        "element_text": "",
+        "element_role": "",
+        "accessibility_info": {},
+        "hierarchy_context": true
+      },
+      "xpath_analysis": {
+        "xpath_selector": "",
+        "xpath_type": "unknown",
+        "xpath_precision": "unknown",
+        "xpath_stability": "unknown",
+        "semantic_mode": false
+      },
+      "multiple_text_handling": {
+        "target_text": "e 17\" device",
+        "multiple_elements_found": 0,
+        "selection_strategy": "unknown",
+        "context_used": [],
+        "intent_based_filtering": false,
+        "semantic_mode": false
+      }
+    },
+    {
+      "step_number": 5,
+      "step_description": "Validate it landed on \"https://www.verizon.com/smartphones/apple-iphone-17/\"",
+      "timestamp": 1757874017.8045762,
+      "result": {
+        "success": false,
+        "validation_type": "url",
+        "expected": "https://www.verizon.com/smartphones/apple-iphone-17/",
+        "execution_time": 2.0007665157318115
+      },
+      "canonical_description": "Successfully validated navigation to e-17/",
+      "input_analysis": {
+        "user_intent": "Validate URL navigation",
+        "target_element": "e-17/",
+        "action_type": "validation",
+        "context": "Main navigation menu",
+        "semantic_mode": false,
+        "hierarchy_mode": true
+      },
+      "output_analysis": {
+        "success": false,
+        "confidence": 0.0,
+        "selector_used": "",
+        "strategy_used": "unknown",
+        "candidates_found": 0,
+        "execution_time": 2.0007665157318115,
+        "semantic_mode": false
+      },
+      "markup_analysis": {
+        "html_aware": true,
+        "element_tag": "unknown",
+        "element_attributes": {},
+        "element_text": "",
+        "element_role": "",
+        "accessibility_info": {},
+        "hierarchy_context": true
+      },
+      "xpath_analysis": {
+        "xpath_selector": "",
+        "xpath_type": "unknown",
+        "xpath_precision": "unknown",
+        "xpath_stability": "unknown",
+        "semantic_mode": false
+      },
+      "multiple_text_handling": {
+        "target_text": "",
+        "multiple_elements_found": 0,
+        "selection_strategy": "unknown",
+        "context_used": [],
+        "intent_based_filtering": false,
+        "semantic_mode": false
+      }
+    },
+    {
+      "step_number": 6,
+      "step_description": "Validate \"Apple iPhone 17\" text on pdp page",
+      "timestamp": 1757874017.8046527,
+      "result": {
+        "success": false,
+        "validation_type": "text",
+        "expected": "page",
+        "execution_time": 9.059906005859375e-06
+      },
+      "canonical_description": "Successfully validated presence of 'on pdp page' text on page",
+      "input_analysis": {
+        "user_intent": "Validate text presence",
+        "target_element": "on pdp page",
+        "action_type": "validation",
+        "context": "Product listing page",
+        "semantic_mode": false,
+        "hierarchy_mode": true
+      },
+      "output_analysis": {
+        "success": false,
+        "confidence": 0.0,
+        "selector_used": "",
+        "strategy_used": "unknown",
+        "candidates_found": 0,
+        "execution_time": 9.059906005859375e-06,
+        "semantic_mode": false
+      },
+      "markup_analysis": {
+        "html_aware": true,
+        "element_tag": "unknown",
+        "element_attributes": {},
+        "element_text": "",
+        "element_role": "",
+        "accessibility_info": {},
+        "hierarchy_context": true
+      },
+      "xpath_analysis": {
+        "xpath_selector": "",
+        "xpath_type": "unknown",
+        "xpath_precision": "unknown",
+        "xpath_stability": "unknown",
+        "semantic_mode": false
+      },
+      "multiple_text_handling": {
+        "target_text": "",
+        "multiple_elements_found": 0,
+        "selection_strategy": "unknown",
+        "context_used": [],
+        "intent_based_filtering": false,
+        "semantic_mode": false
+      }
+    },
+    {
+      "step_number": 7,
+      "step_description": "Click on \"White\" color",
+      "timestamp": 1757874018.1404293,
+      "result": {
+        "success": false,
+        "error": "No selector found for target",
+        "target": "White\" color",
+        "candidates": [],
+        "execution_time": 0.3357241153717041
+      },
+      "canonical_description": "Failed to click on the 'White\" color' element",
+      "input_analysis": {
+        "user_intent": "Click on a specific element",
+        "target_element": "White\" color",
+        "action_type": "click",
+        "context": "Product detail page color selection",
+        "semantic_mode": false,
+        "hierarchy_mode": true
+      },
+      "output_analysis": {
+        "success": false,
+        "confidence": 0.0,
+        "selector_used": "",
+        "strategy_used": "unknown",
+        "candidates_found": 0,
+        "execution_time": 0.3357241153717041,
+        "semantic_mode": false,
+        "error": "No selector found for target"
+      },
+      "markup_analysis": {
+        "html_aware": true,
+        "element_tag": "unknown",
+        "element_attributes": {},
+        "element_text": "",
+        "element_role": "",
+        "accessibility_info": {},
+        "hierarchy_context": true
+      },
+      "xpath_analysis": {
+        "xpath_selector": "",
+        "xpath_type": "unknown",
+        "xpath_precision": "unknown",
+        "xpath_stability": "unknown",
+        "semantic_mode": false
+      },
+      "multiple_text_handling": {
+        "target_text": "White\" color",
+        "multiple_elements_found": 0,
+        "selection_strategy": "unknown",
+        "context_used": [],
+        "intent_based_filtering": false,
+        "semantic_mode": false
+      }
+    }
+  ],
+  "step_results": [
+    {
+      "step_number": 1,
+      "step": "Navigate to Verizon page \"https://www.verizon.com/\"",
+      "result": {
+        "success": true,
+        "url": "https://www.verizon.com/",
+        "elements_found": 2570,
+        "dom_hash": "8c132c539bcfe64544ee1582728cf42f45bc74c4",
+        "strategy": "navigation",
+        "execution_time": 18.62452268600464
+      },
+      "execution_time": 18.62452268600464
+    },
+    {
+      "step_number": 2,
+      "step": "Click on \"Phones\" button",
+      "result": {
+        "success": false,
+        "error": "No selector found for target",
+        "target": "",
+        "candidates": [],
+        "execution_time": 0.3689272403717041
+      },
+      "execution_time": 0.3689272403717041
+    },
+    {
+      "step_number": 3,
+      "step": "Click on \"Apple\" filter",
+      "result": {
+        "success": false,
+        "error": "No selector found for target",
+        "target": "Apple\" filter",
+        "candidates": [],
+        "execution_time": 0.5182919502258301
+      },
+      "execution_time": 0.5182919502258301
+    },
+    {
+      "step_number": 4,
+      "step": "Click on \"Apple IPhone 17\" device",
+      "result": {
+        "success": false,
+        "error": "No selector found for target",
+        "target": "e 17\" device",
+        "candidates": [],
+        "execution_time": 0.3154914379119873
+      },
+      "execution_time": 0.3154914379119873
+    },
+    {
+      "step_number": 5,
+      "step": "Validate it landed on \"https://www.verizon.com/smartphones/apple-iphone-17/\"",
+      "result": {
+        "success": false,
+        "validation_type": "url",
+        "expected": "https://www.verizon.com/smartphones/apple-iphone-17/",
+        "execution_time": 2.0007665157318115
+      },
+      "execution_time": 2.0007665157318115
+    },
+    {
+      "step_number": 6,
+      "step": "Validate \"Apple iPhone 17\" text on pdp page",
+      "result": {
+        "success": false,
+        "validation_type": "text",
+        "expected": "page",
+        "execution_time": 9.059906005859375e-06
+      },
+      "execution_time": 9.059906005859375e-06
+    },
+    {
+      "step_number": 7,
+      "step": "Click on \"White\" color",
+      "result": {
+        "success": false,
+        "error": "No selector found for target",
+        "target": "White\" color",
+        "candidates": [],
+        "execution_time": 0.3357241153717041
+      },
+      "execution_time": 0.3357241153717041
+    }
+  ]
+}

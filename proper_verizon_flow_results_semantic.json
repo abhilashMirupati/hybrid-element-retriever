@@ -1,0 +1,474 @@
+{
+  "test_summary": {
+    "total_steps": 7,
+    "successful_steps": 2,
+    "failed_steps": 5,
+    "success_rate": 28.57142857142857,
+    "semantic_mode": true,
+    "hierarchy_mode": true
+  },
+  "detailed_logs": [
+    {
+      "step_number": 1,
+      "step_description": "Navigate to Verizon page \"https://www.verizon.com/\"",
+      "timestamp": 1757875232.9464886,
+      "result": {
+        "success": true,
+        "url": "https://www.verizon.com/",
+        "elements_found": 2570,
+        "dom_hash": "8c132c539bcfe64544ee1582728cf42f45bc74c4",
+        "strategy": "navigation",
+        "execution_time": 18.804540157318115
+      },
+      "canonical_description": "Successfully navigated to \"https://www.verizon.com/\" and loaded the page",
+      "input_analysis": {
+        "user_intent": "Navigate to a specific URL",
+        "target_element": "\"https://www.verizon.com/\"",
+        "action_type": "navigation",
+        "context": "unknown",
+        "semantic_mode": true,
+        "hierarchy_mode": true
+      },
+      "output_analysis": {
+        "success": true,
+        "confidence": 0.0,
+        "selector_used": "",
+        "strategy_used": "navigation",
+        "candidates_found": 0,
+        "execution_time": 18.804540157318115,
+        "semantic_mode": true
+      },
+      "markup_analysis": {
+        "html_aware": true,
+        "element_tag": "unknown",
+        "element_attributes": {},
+        "element_text": "",
+        "element_role": "",
+        "accessibility_info": {},
+        "hierarchy_context": true
+      },
+      "xpath_analysis": {
+        "xpath_selector": "",
+        "xpath_type": "unknown",
+        "xpath_precision": "unknown",
+        "xpath_stability": "unknown",
+        "semantic_mode": true
+      },
+      "multiple_text_handling": {
+        "target_text": "",
+        "multiple_elements_found": 0,
+        "selection_strategy": "unknown",
+        "context_used": [],
+        "intent_based_filtering": false,
+        "semantic_mode": true
+      }
+    },
+    {
+      "step_number": 2,
+      "step_description": "Click on \"Shop\" menu to reveal device options",
+      "timestamp": 1757875260.4975536,
+      "result": {
+        "success": false,
+        "error": "Each element must include meta.frame_hash (wired in Step 3).",
+        "target": "s",
+        "execution_time": 24.550830841064453
+      },
+      "canonical_description": "Failed to click on the 's' element: Each element must include meta.frame_hash (wired in Step 3).",
+      "input_analysis": {
+        "user_intent": "Click on a specific element",
+        "target_element": "s",
+        "action_type": "click",
+        "context": "Main navigation menu",
+        "semantic_mode": true,
+        "hierarchy_mode": true
+      },
+      "output_analysis": {
+        "success": false,
+        "confidence": 0.0,
+        "selector_used": "",
+        "strategy_used": "unknown",
+        "candidates_found": 0,
+        "execution_time": 24.550830841064453,
+        "semantic_mode": true,
+        "error": "Each element must include meta.frame_hash (wired in Step 3)."
+      },
+      "markup_analysis": {
+        "html_aware": true,
+        "element_tag": "unknown",
+        "element_attributes": {},
+        "element_text": "",
+        "element_role": "",
+        "accessibility_info": {},
+        "hierarchy_context": true
+      },
+      "xpath_analysis": {
+        "xpath_selector": "",
+        "xpath_type": "unknown",
+        "xpath_precision": "unknown",
+        "xpath_stability": "unknown",
+        "semantic_mode": true
+      },
+      "multiple_text_handling": {
+        "target_text": "s",
+        "multiple_elements_found": 0,
+        "selection_strategy": "unknown",
+        "context_used": [],
+        "intent_based_filtering": false,
+        "semantic_mode": true
+      }
+    },
+    {
+      "step_number": 3,
+      "step_description": "Click on \"Smartphones\" or \"Phones\" from dropdown",
+      "timestamp": 1757875284.509406,
+      "result": {
+        "success": false,
+        "error": "Each element must include meta.frame_hash (wired in Step 3).",
+        "target": "es\" from dropdown",
+        "execution_time": 24.011616706848145
+      },
+      "canonical_description": "Failed to click on the 'es\" from dropdown' element: Each element must include meta.frame_hash (wired in Step 3).",
+      "input_analysis": {
+        "user_intent": "Click on a specific element",
+        "target_element": "es\" from dropdown",
+        "action_type": "click",
+        "context": "Device category selection",
+        "semantic_mode": true,
+        "hierarchy_mode": true
+      },
+      "output_analysis": {
+        "success": false,
+        "confidence": 0.0,
+        "selector_used": "",
+        "strategy_used": "unknown",
+        "candidates_found": 0,
+        "execution_time": 24.011616706848145,
+        "semantic_mode": true,
+        "error": "Each element must include meta.frame_hash (wired in Step 3)."
+      },
+      "markup_analysis": {
+        "html_aware": true,
+        "element_tag": "unknown",
+        "element_attributes": {},
+        "element_text": "",
+        "element_role": "",
+        "accessibility_info": {},
+        "hierarchy_context": true
+      },
+      "xpath_analysis": {
+        "xpath_selector": "",
+        "xpath_type": "unknown",
+        "xpath_precision": "unknown",
+        "xpath_stability": "unknown",
+        "semantic_mode": true
+      },
+      "multiple_text_handling": {
+        "target_text": "es\" from dropdown",
+        "multiple_elements_found": 0,
+        "selection_strategy": "unknown",
+        "context_used": [],
+        "intent_based_filtering": false,
+        "semantic_mode": true
+      }
+    },
+    {
+      "step_number": 4,
+      "step_description": "Look for Apple products or iPhone options",
+      "timestamp": 1757875309.5181184,
+      "result": {
+        "success": false,
+        "error": "Each element must include meta.frame_hash (wired in Step 3).",
+        "target": "Apple products or iPhone options",
+        "execution_time": 25.008432626724243
+      },
+      "canonical_description": "Successfully executed: Look for Apple products or iPhone options",
+      "input_analysis": {
+        "user_intent": "unknown",
+        "target_element": "unknown",
+        "action_type": "unknown",
+        "context": "Device category selection",
+        "semantic_mode": true,
+        "hierarchy_mode": true
+      },
+      "output_analysis": {
+        "success": false,
+        "confidence": 0.0,
+        "selector_used": "",
+        "strategy_used": "unknown",
+        "candidates_found": 0,
+        "execution_time": 25.008432626724243,
+        "semantic_mode": true,
+        "error": "Each element must include meta.frame_hash (wired in Step 3)."
+      },
+      "markup_analysis": {
+        "html_aware": true,
+        "element_tag": "unknown",
+        "element_attributes": {},
+        "element_text": "",
+        "element_role": "",
+        "accessibility_info": {},
+        "hierarchy_context": true
+      },
+      "xpath_analysis": {
+        "xpath_selector": "",
+        "xpath_type": "unknown",
+        "xpath_precision": "unknown",
+        "xpath_stability": "unknown",
+        "semantic_mode": true
+      },
+      "multiple_text_handling": {
+        "target_text": "",
+        "multiple_elements_found": 0,
+        "selection_strategy": "unknown",
+        "context_used": [],
+        "intent_based_filtering": false,
+        "semantic_mode": true
+      }
+    },
+    {
+      "step_number": 5,
+      "step_description": "Navigate to any iPhone product page",
+      "timestamp": 1757875309.9330692,
+      "result": {
+        "success": true,
+        "url": "page",
+        "elements_found": 2576,
+        "dom_hash": "151c1ade60924051d5efb59bb29532e68f79c074",
+        "strategy": "navigation",
+        "execution_time": 0.4145512580871582
+      },
+      "canonical_description": "Successfully navigated to page and loaded the page",
+      "input_analysis": {
+        "user_intent": "Navigate to a specific URL",
+        "target_element": "page",
+        "action_type": "navigation",
+        "context": "Device category selection",
+        "semantic_mode": true,
+        "hierarchy_mode": true
+      },
+      "output_analysis": {
+        "success": true,
+        "confidence": 0.0,
+        "selector_used": "",
+        "strategy_used": "navigation",
+        "candidates_found": 0,
+        "execution_time": 0.4145512580871582,
+        "semantic_mode": true
+      },
+      "markup_analysis": {
+        "html_aware": true,
+        "element_tag": "unknown",
+        "element_attributes": {},
+        "element_text": "",
+        "element_role": "",
+        "accessibility_info": {},
+        "hierarchy_context": true
+      },
+      "xpath_analysis": {
+        "xpath_selector": "",
+        "xpath_type": "unknown",
+        "xpath_precision": "unknown",
+        "xpath_stability": "unknown",
+        "semantic_mode": true
+      },
+      "multiple_text_handling": {
+        "target_text": "",
+        "multiple_elements_found": 0,
+        "selection_strategy": "unknown",
+        "context_used": [],
+        "intent_based_filtering": false,
+        "semantic_mode": true
+      }
+    },
+    {
+      "step_number": 6,
+      "step_description": "Validate we are on a product detail page",
+      "timestamp": 1757875312.9334245,
+      "result": {
+        "success": false,
+        "validation_type": "text",
+        "expected": "unknown",
+        "execution_time": 9.72747802734375e-05
+      },
+      "canonical_description": "Successfully executed: Validate we are on a product detail page",
+      "input_analysis": {
+        "user_intent": "unknown",
+        "target_element": "unknown",
+        "action_type": "validation",
+        "context": "unknown",
+        "semantic_mode": true,
+        "hierarchy_mode": true
+      },
+      "output_analysis": {
+        "success": false,
+        "confidence": 0.0,
+        "selector_used": "",
+        "strategy_used": "unknown",
+        "candidates_found": 0,
+        "execution_time": 9.72747802734375e-05,
+        "semantic_mode": true
+      },
+      "markup_analysis": {
+        "html_aware": true,
+        "element_tag": "unknown",
+        "element_attributes": {},
+        "element_text": "",
+        "element_role": "",
+        "accessibility_info": {},
+        "hierarchy_context": true
+      },
+      "xpath_analysis": {
+        "xpath_selector": "",
+        "xpath_type": "unknown",
+        "xpath_precision": "unknown",
+        "xpath_stability": "unknown",
+        "semantic_mode": true
+      },
+      "multiple_text_handling": {
+        "target_text": "",
+        "multiple_elements_found": 0,
+        "selection_strategy": "unknown",
+        "context_used": [],
+        "intent_based_filtering": false,
+        "semantic_mode": true
+      }
+    },
+    {
+      "step_number": 7,
+      "step_description": "Look for color selection options",
+      "timestamp": 1757875337.9502215,
+      "result": {
+        "success": false,
+        "error": "Each element must include meta.frame_hash (wired in Step 3).",
+        "target": "color selection options",
+        "execution_time": 25.016627550125122
+      },
+      "canonical_description": "Successfully executed: Look for color selection options",
+      "input_analysis": {
+        "user_intent": "unknown",
+        "target_element": "unknown",
+        "action_type": "unknown",
+        "context": "Product detail page color selection",
+        "semantic_mode": true,
+        "hierarchy_mode": true
+      },
+      "output_analysis": {
+        "success": false,
+        "confidence": 0.0,
+        "selector_used": "",
+        "strategy_used": "unknown",
+        "candidates_found": 0,
+        "execution_time": 25.016627550125122,
+        "semantic_mode": true,
+        "error": "Each element must include meta.frame_hash (wired in Step 3)."
+      },
+      "markup_analysis": {
+        "html_aware": true,
+        "element_tag": "unknown",
+        "element_attributes": {},
+        "element_text": "",
+        "element_role": "",
+        "accessibility_info": {},
+        "hierarchy_context": true
+      },
+      "xpath_analysis": {
+        "xpath_selector": "",
+        "xpath_type": "unknown",
+        "xpath_precision": "unknown",
+        "xpath_stability": "unknown",
+        "semantic_mode": true
+      },
+      "multiple_text_handling": {
+        "target_text": "",
+        "multiple_elements_found": 0,
+        "selection_strategy": "unknown",
+        "context_used": [],
+        "intent_based_filtering": false,
+        "semantic_mode": true
+      }
+    }
+  ],
+  "step_results": [
+    {
+      "step_number": 1,
+      "step": "Navigate to Verizon page \"https://www.verizon.com/\"",
+      "result": {
+        "success": true,
+        "url": "https://www.verizon.com/",
+        "elements_found": 2570,
+        "dom_hash": "8c132c539bcfe64544ee1582728cf42f45bc74c4",
+        "strategy": "navigation",
+        "execution_time": 18.804540157318115
+      },
+      "execution_time": 18.804540157318115
+    },
+    {
+      "step_number": 2,
+      "step": "Click on \"Shop\" menu to reveal device options",
+      "result": {
+        "success": false,
+        "error": "Each element must include meta.frame_hash (wired in Step 3).",
+        "target": "s",
+        "execution_time": 24.550830841064453
+      },
+      "execution_time": 24.550830841064453
+    },
+    {
+      "step_number": 3,
+      "step": "Click on \"Smartphones\" or \"Phones\" from dropdown",
+      "result": {
+        "success": false,
+        "error": "Each element must include meta.frame_hash (wired in Step 3).",
+        "target": "es\" from dropdown",
+        "execution_time": 24.011616706848145
+      },
+      "execution_time": 24.011616706848145
+    },
+    {
+      "step_number": 4,
+      "step": "Look for Apple products or iPhone options",
+      "result": {
+        "success": false,
+        "error": "Each element must include meta.frame_hash (wired in Step 3).",
+        "target": "Apple products or iPhone options",
+        "execution_time": 25.008432626724243
+      },
+      "execution_time": 25.008432626724243
+    },
+    {
+      "step_number": 5,
+      "step": "Navigate to any iPhone product page",
+      "result": {
+        "success": true,
+        "url": "page",
+        "elements_found": 2576,
+        "dom_hash": "151c1ade60924051d5efb59bb29532e68f79c074",
+        "strategy": "navigation",
+        "execution_time": 0.4145512580871582
+      },
+      "execution_time": 0.4145512580871582
+    },
+    {
+      "step_number": 6,
+      "step": "Validate we are on a product detail page",
+      "result": {
+        "success": false,
+        "validation_type": "text",
+        "expected": "unknown",
+        "execution_time": 9.72747802734375e-05
+      },
+      "execution_time": 9.72747802734375e-05
+    },
+    {
+      "step_number": 7,
+      "step": "Look for color selection options",
+      "result": {
+        "success": false,
+        "error": "Each element must include meta.frame_hash (wired in Step 3).",
+        "target": "color selection options",
+        "execution_time": 25.016627550125122
+      },
+      "execution_time": 25.016627550125122
+    }
+  ]
+}

@@ -193,12 +193,20 @@ class HybridPipeline:
         # Add hierarchical context if enabled (check dynamically)
         config_service = get_config_service()
         if config_service.should_use_hierarchy() and self.hierarchy_builder:
-            try:
-                elements = self.hierarchy_builder.add_context_to_elements(elements)
-                log.info(f"Added hierarchical context to {len(elements)} elements")
-            except Exception as e:
-                log.warning(f"Failed to add hierarchical context: {e}")
-                # Continue without hierarchy context
+            # Check if elements already have hierarchy context
+            has_context = any(el.get('context', {}).get('hierarchy_path') for el in elements[:10])
+            if not has_context:
+                try:
+                    # Create a deep copy to avoid modifying original elements
+                    import copy
+                    elements_copy = copy.deepcopy(elements)
+                    elements = self.hierarchy_builder.add_context_to_elements(elements_copy)
+                    log.info(f"Added hierarchical context to {len(elements)} elements")
+                except Exception as e:
+                    log.warning(f"Failed to add hierarchical context: {e}")
+                    # Continue without hierarchy context
+            else:
+                log.info(f"Elements already have hierarchical context, skipping")
 
         by_frame: Dict[str, List[Tuple[int, Dict[str, Any]]]] = {}
         for idx, el in enumerate(elements):
@@ -644,6 +652,11 @@ class HybridPipeline:
         """Prepare elements for query processing."""
         log.debug(f"Caching analysis - MiniLM stores: {len(self._mini_stores)}, MarkupLM stores: {len(self._markup_stores)}, frame_hash: {frame_hash}")
         
+        # Debug: Check first few elements before processing
+        print(f"🔍 DEBUG: First 3 elements before _prepare_elements:")
+        for i, el in enumerate(elements[:3]):
+            print(f"  Element {i}: has_meta={el.get('meta') is not None}, meta={el.get('meta')}")
+        
         E, meta = self._prepare_elements(elements)
         
         log.debug(f"Prepared {len(meta)} elements with both MiniLM and MarkupLM embeddings")
@@ -651,9 +664,9 @@ class HybridPipeline:
         
         return E, meta
     
-    def _query_semantic_mode(self, query: str, elements: List[Dict[str, Any]], top_k: int, 
+    def _query_semantic_mode(self, query: str, elements: List[Dict[str, Any]], top_k: int,
                             page_sig: Optional[str], frame_hash: Optional[str], 
-                            label_key: Optional[str], user_intent: Optional[str], 
+                            label_key: Optional[str], user_intent: Optional[str],
                             target: Optional[str]) -> Dict[str, Any]:
         """Execute semantic query strategy (existing pipeline)."""
         # Prepare elements for processing
@@ -698,12 +711,30 @@ class HybridPipeline:
             page = self._current_page
         
         # Execute enhanced no-semantic query
-        result = matcher.query(query, elements, page)
+        matcher_result = matcher.query(query, elements, page)
         
-        # Add performance metrics
-        result['performance'] = {
-            'elements_processed': len(elements),
-            'strategy': 'enhanced-no-semantic'
+        # Convert matcher result format to pipeline expected format
+        results = []
+        if matcher_result.get('selector'):
+            # Single result format from enhanced no-semantic matcher
+            element = matcher_result.get('element', {})
+            results.append({
+                'selector': matcher_result.get('selector', ''),
+                'score': float(matcher_result.get('confidence', 0.0)),
+                'meta': element,
+                'reasons': [f"Found via {matcher_result.get('strategy', 'no-semantic')}"],
+                'xpath': matcher_result.get('xpath', matcher_result.get('selector', ''))
+            })
+        
+        # Return in pipeline expected format
+        result = {
+            'results': results,
+            'confidence': matcher_result.get('confidence', 0.0),
+            'strategy': matcher_result.get('strategy', 'enhanced-no-semantic'),
+            'performance': {
+                'elements_processed': len(elements),
+                'strategy': 'enhanced-no-semantic'
+            }
         }
         
         return result
@@ -722,17 +753,26 @@ class HybridPipeline:
         """Execute standard hybrid search strategy."""
         log.info(f"Standard hybrid search: '{query}' with {len(meta)} elements")
         
-        # Prepare elements for search
-        mini_embeddings, elements = self._prepare_elements_for_query(meta, frame_hash)
+        # Use the already prepared elements (meta contains the prepared elements)
+        elements = meta
         
-        # Get MiniLM store
+        # Get MiniLM store and perform search with the query
         mini_store = self._get_mini_store(frame_hash)
         
+        # We need to encode the query using MiniLM to get the query vector
+        from ..embeddings.text_embedder import TextEmbedder
+        text_embedder = TextEmbedder()
+        query_vector = text_embedder.encode_one(query)
+        
         # Perform MiniLM search
-        mini_scores, mini_indices = mini_store.search(mini_embeddings, top_k * 2)
+        search_results = mini_store.search(query_vector, top_k * 2)
+        
+        # Extract scores and indices
+        mini_indices = [result[0] for result in search_results]
+        mini_scores = [result[1] for result in search_results]
         
         # Get top elements from MiniLM
-        top_elements = [elements[i] for i in mini_indices[0]]
+        top_elements = [elements[i] for i in mini_indices]
         
         # Prepare for MarkupLM reranking
         if _MARKUP_IMPORT_OK:
@@ -783,7 +823,7 @@ class HybridPipeline:
         for i, element in enumerate(top_elements[:top_k]):
             results.append({
                 "selector": f"//{element.get('tag', 'div')}[@id='{element.get('attributes', {}).get('id', '')}']",
-                "score": float(mini_scores[0][i]),
+                "score": float(mini_scores[i]) if i < len(mini_scores) else 0.0,
                 "reasons": ["minilm-only"],
                 "meta": element
             })
@@ -791,7 +831,7 @@ class HybridPipeline:
         return {
             "results": results,
             "strategy": "minilm-only",
-            "confidence": float(mini_scores[0][0]) if mini_scores[0] else 0.0
+            "confidence": float(mini_scores[0]) if mini_scores else 0.0
         }
 
     def _query_two_stage(

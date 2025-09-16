@@ -389,6 +389,10 @@ class Runner:
             print("✅ Models cleaned up")
 
     def _inline_snapshot(self) -> Dict[str, Any]:
+        # Skip CDP entirely and use JavaScript fallback which we know works
+        print("🔧 Using JavaScript fallback snapshot (CDP disabled for debugging)")
+        return self._fallback_javascript_snapshot()
+        
         # First try to get DOM + accessibility tree via CDP
         try:
             from ..bridge.cdp_bridge import capture_complete_snapshot
@@ -457,7 +461,8 @@ class Runner:
                     'below_fold': node.get('below_fold', False),
                     'interactive': interactive,
                     'backendNodeId': node.get('backendNodeId'),
-                    'accessibility': node.get('accessibility', {})
+                    'accessibility': node.get('accessibility', {}),
+                    'meta': {}  # Initialize meta field for frame_hash
                 }
                 
                 # Enhance with accessibility information
@@ -497,9 +502,21 @@ class Runner:
             # Return in expected format
             frame_url = getattr(self._page, "url", "")
             fh = compute_frame_hash(frame_url, elements)
+            
+            # Ensure frame_hash is properly set for all elements AFTER hierarchy context
             for it in elements:
-                (it.setdefault("meta", {}))["frame_hash"] = fh
+                # Create meta dict if it doesn't exist
+                if "meta" not in it:
+                    it["meta"] = {}
+                it["meta"]["frame_hash"] = fh
                 it["frame_url"] = frame_url
+                
+                # Debug: Verify frame_hash is set
+                if "meta" not in it or "frame_hash" not in it["meta"]:
+                    print(f"⚠️  Element missing frame_hash: {it.get('tag', 'unknown')}")
+                    it["meta"] = it.get("meta", {})
+                    it["meta"]["frame_hash"] = fh
+                
             frames = [{"frame_url": frame_url, "elements": elements, "frame_hash": fh}]
             return {"elements": elements, "dom_hash": dom_hash(frames), "url": frame_url}
                 
@@ -509,11 +526,155 @@ class Runner:
             import traceback
             traceback.print_exc()
             
-            # Force fallback to JavaScript approach
-            # This will be handled by the fallback code below
+            # Fallback to JavaScript approach
+            return self._fallback_javascript_snapshot()
         
-        
-       
+    def _fallback_javascript_snapshot(self) -> Dict[str, Any]:
+        """Fallback JavaScript-based snapshot when CDP fails."""
+        try:
+            page = self._ensure_browser()
+            if not page:
+                return {"elements": [], "dom_hash": "", "url": ""}
+            
+            # Ensure page is fully loaded before running JavaScript
+            print("🔄 Ensuring page is fully loaded before JavaScript...")
+            page.wait_for_load_state("domcontentloaded", timeout=15000)
+            page.wait_for_load_state("load", timeout=15000)
+            page.wait_for_load_state("networkidle", timeout=15000)
+            page.wait_for_timeout(5000)
+            
+            # Force re-render
+            page.evaluate("() => { document.body.offsetHeight; }")
+            page.wait_for_timeout(2000)
+            
+            print("✅ Page fully loaded, running JavaScript...")
+            
+            # Use JavaScript to get DOM elements
+            elements_js = page.evaluate("""
+                () => {
+                    try {
+                        console.log('JavaScript fallback starting...');
+                        console.log('Document ready state:', document.readyState);
+                        console.log('Body exists:', !!document.body);
+                        console.log('Body children count:', document.body ? document.body.children.length : 'N/A');
+                        
+                        const elements = [];
+                        
+                        // Try simple querySelectorAll first
+                        const allElements = document.querySelectorAll('*');
+                        console.log('querySelectorAll found:', allElements.length);
+                        
+                        // Process first few elements from querySelectorAll
+                        for (let i = 0; i < Math.min(10, allElements.length); i++) {
+                            const node = allElements[i];
+                            console.log('Element', i, ':', node.tagName, node.textContent?.substring(0, 50));
+                        }
+                        
+                        // Use TreeWalker as backup
+                        const walker = document.createTreeWalker(
+                            document.body,
+                            NodeFilter.SHOW_ELEMENT,
+                            null,
+                            false
+                        );
+                        
+                        let node;
+                        let count = 0;
+                        while (node = walker.nextNode()) {
+                            count++;
+                            if (count <= 5) {
+                                console.log('TreeWalker Node', count, ':', node.tagName, node.textContent?.substring(0, 50));
+                            }
+                            if (node.nodeType === Node.ELEMENT_NODE) {
+                            const rect = node.getBoundingClientRect();
+                            const style = window.getComputedStyle(node);
+                            
+                            // Get text content
+                            let text = '';
+                            if (node.textContent) {
+                                text = node.textContent.trim().substring(0, 200);
+                            }
+                            
+                            // Get attributes
+                            const attrs = {};
+                            for (let attr of node.attributes) {
+                                attrs[attr.name] = attr.value;
+                            }
+                            
+                            // Better visibility detection
+                            const isVisible = rect.width > 0 && rect.height > 0 && 
+                                            style.display !== 'none' && 
+                                            style.visibility !== 'hidden' && 
+                                            style.opacity !== '0' &&
+                                            !node.hasAttribute('hidden') &&
+                                            !node.classList.contains('hidden') &&
+                                            !node.classList.contains('sr-only');
+                            
+                            // Better interactive detection
+                            const interactive = ['button', 'a', 'input', 'select', 'textarea'].includes(node.tagName.toLowerCase()) ||
+                                              node.onclick || node.getAttribute('onclick') ||
+                                              style.cursor === 'pointer' ||
+                                              node.getAttribute('role') === 'button' ||
+                                              node.getAttribute('role') === 'link' ||
+                                              node.tabIndex >= 0;
+                            
+                            // Only include elements that are visible or have meaningful text
+                            if (isVisible || (text && text.trim().length > 0)) {
+                                elements.push({
+                                    text: text,
+                                    tag: node.tagName.toUpperCase(),
+                                    role: node.getAttribute('role') || '',
+                                    attrs: attrs,
+                                    bbox: {
+                                        x: Math.round(rect.x),
+                                        y: Math.round(rect.y),
+                                        width: Math.round(rect.width),
+                                        height: Math.round(rect.height),
+                                        w: Math.round(rect.width),
+                                        h: Math.round(rect.height)
+                                    },
+                                    visible: isVisible,
+                                    below_fold: rect.y > window.innerHeight,
+                                    interactive: interactive,
+                                    backendNodeId: Math.random().toString(36).substr(2, 9),  // Generate fake ID
+                                    meta: {}  // Initialize meta field for frame_hash
+                                });
+                            }
+                        }
+                    }
+                    
+                        console.log('Total elements found:', elements.length);
+                        console.log('First few elements:', elements.slice(0, 3));
+                        
+                        return elements;
+                    } catch (error) {
+                        console.error('JavaScript error:', error);
+                        return [];
+                    }
+                }
+            """)
+            
+            # Convert to expected format and add frame_hash
+            print(f"🔍 JavaScript returned {len(elements_js)} elements")
+            elements = []
+            frame_url = getattr(page, "url", "")
+            fh = compute_frame_hash(frame_url, elements_js)
+            
+            for element in elements_js:
+                # Create meta dict
+                element["meta"] = {"frame_hash": fh}
+                element["frame_url"] = frame_url
+                elements.append(element)
+            
+            print(f"🔍 Processed {len(elements)} elements")
+            frames = [{"frame_url": frame_url, "elements": elements, "frame_hash": fh}]
+            return {"elements": elements, "dom_hash": dom_hash(frames), "url": frame_url}
+            
+        except Exception as e:
+            print(f"⚠️  JavaScript fallback also failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return {"elements": [], "dom_hash": "", "url": ""}
 
     def snapshot(self, url: Optional[str] = None) -> Dict[str, Any]:
         """Take a snapshot of the current page or navigate to a URL.
@@ -532,17 +693,42 @@ class Runner:
             return {"elements": [], "dom_hash": "", "url": url or ""}
         if url:
             try:
-                page.goto(url, wait_until="networkidle")
-                # Wait longer for dynamic content to load
-                page.wait_for_timeout(3000)
+                print(f"🔍 Loading page: {url}")
+                page.goto(url, wait_until="networkidle", timeout=30000)
+                
+                # Wait for page to be fully loaded
+                print("⏳ Waiting for page stability...")
+                page.wait_for_load_state("domcontentloaded", timeout=10000)
+                page.wait_for_load_state("networkidle", timeout=10000)
+                
+                # Additional wait for dynamic content
+                print("⏳ Waiting for dynamic content...")
+                page.wait_for_timeout(5000)
+                
                 # Try to dismiss any initial popups/overlays
+                print("🔧 Dismissing overlays...")
                 self._dismiss_overlays()
+                
                 # Universal dynamic content loading - works for any website
+                print("🔧 Loading dynamic content...")
                 self._load_dynamic_content(page)
-            except Exception:
-                print("Exception is " + str(Exception))
+                
+                # Final stability check
+                print("⏳ Final stability check...")
+                page.wait_for_timeout(2000)
+                
+                print("✅ Page loaded successfully")
+                
+            except Exception as e:
+                print(f"❌ Page loading exception: {e}")
                 pass
-        return self._inline_snapshot()
+        
+        print("📸 Taking snapshot...")
+        snapshot = self._inline_snapshot()
+        elements_count = len(snapshot.get('elements', []))
+        print(f"📊 Captured {elements_count} elements")
+        
+        return snapshot
 
     def resolve_selector(self, phrase: str, snapshot: Dict[str, Any]) -> Dict[str, Any]:
         """Resolve a natural language phrase to a CSS selector.

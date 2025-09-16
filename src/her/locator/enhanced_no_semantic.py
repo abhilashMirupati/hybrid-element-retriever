@@ -49,14 +49,7 @@ class HierarchicalContext:
     depth: int
     semantic_structure: str
 
-@dataclass
-class XPathCandidate:
-    """XPath candidate with validation status."""
-    xpath: str
-    element: Dict[str, Any]
-    confidence: float
-    is_valid: bool
-    validation_error: Optional[str] = None
+# XPathCandidate is imported from xpath_validator
 
 class EnhancedNoSemanticMatcher:
     """Enhanced no-semantic matcher with hierarchical context."""
