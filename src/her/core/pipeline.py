@@ -694,35 +694,35 @@ class HybridPipeline:
 
     def _query_no_semantic_mode(self, query: str, elements: List[Dict[str, Any]], top_k: int, 
                                page_sig: Optional[str], frame_hash: Optional[str], 
-                               label_key: Optional[str], parsed_intent: Optional[ParsedIntent], 
+                               label_key: Optional[str], user_intent: Optional[str], 
                                target: Optional[str]) -> Dict[str, Any]:
-        """Execute enhanced no-semantic query strategy with hierarchical context."""
-        log.info(f"Enhanced no-semantic mode query: '{query}' with {len(elements)} elements")
+        """Execute MarkupLM-enhanced no-semantic query strategy with hierarchical context."""
+        log.info(f"MarkupLM-enhanced no-semantic mode query: '{query}' with {len(elements)} elements")
         
-        # Import enhanced no-semantic matcher
-        from ..locator.enhanced_no_semantic import EnhancedNoSemanticMatcher
+        # Import MarkupLM no-semantic matcher
+        from ..locator.markuplm_no_semantic import MarkupLMNoSemanticMatcher
         
         # Create matcher instance
-        matcher = EnhancedNoSemanticMatcher()
+        matcher = MarkupLMNoSemanticMatcher()
         
         # Get page object for validation (if available)
         page = None
         if hasattr(self, '_current_page'):
             page = self._current_page
         
-        # Execute enhanced no-semantic query
+        # Execute MarkupLM-enhanced no-semantic query
         matcher_result = matcher.query(query, elements, page)
         
         # Convert matcher result format to pipeline expected format
         results = []
         if matcher_result.get('selector'):
-            # Single result format from enhanced no-semantic matcher
+            # Single result format from MarkupLM no-semantic matcher
             element = matcher_result.get('element', {})
             results.append({
                 'selector': matcher_result.get('selector', ''),
                 'score': float(matcher_result.get('confidence', 0.0)),
                 'meta': element,
-                'reasons': [f"Found via {matcher_result.get('strategy', 'no-semantic')}"],
+                'reasons': matcher_result.get('reasons', [f"Found via {matcher_result.get('strategy', 'markuplm-no-semantic')}"]),
                 'xpath': matcher_result.get('xpath', matcher_result.get('selector', ''))
             })
         
@@ -730,10 +730,11 @@ class HybridPipeline:
         result = {
             'results': results,
             'confidence': matcher_result.get('confidence', 0.0),
-            'strategy': matcher_result.get('strategy', 'enhanced-no-semantic'),
+            'strategy': matcher_result.get('strategy', 'markuplm-no-semantic'),
             'performance': {
                 'elements_processed': len(elements),
-                'strategy': 'enhanced-no-semantic'
+                'strategy': 'markuplm-no-semantic',
+                'markup_available': matcher.is_markup_available()
             }
         }
         

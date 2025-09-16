@@ -55,6 +55,12 @@ class HERConfig:
     no_semantic_min_score: float = field(default_factory=lambda: float(os.getenv("HER_NO_SEMANTIC_MIN_SCORE", "0.5")))
     no_semantic_use_ax_fallback: bool = field(default_factory=lambda: os.getenv("HER_NO_SEMANTIC_USE_AX_FALLBACK", "true").lower() == "true")
     
+    # MarkupLM no-semantic mode settings
+    use_markuplm_no_semantic: bool = field(default_factory=lambda: os.getenv("HER_USE_MARKUPLM_NO_SEMANTIC", "true").lower() == "true")
+    markuplm_model_name: str = field(default_factory=lambda: os.getenv("HER_MARKUPLM_MODEL_NAME", "microsoft/markuplm-base-finetuned-websrc"))
+    markuplm_device: str = field(default_factory=lambda: os.getenv("HER_MARKUPLM_DEVICE", "cpu"))
+    markuplm_batch_size: int = field(default_factory=lambda: int(os.getenv("HER_MARKUPLM_BATCH_SIZE", "8")))
+    
     # Performance monitoring
     enable_metrics: bool = field(default_factory=lambda: os.getenv("HER_ENABLE_METRICS", "true").lower() == "true")
     metrics_export_path: str = field(default_factory=lambda: os.getenv("HER_METRICS_EXPORT_PATH", "metrics.json"))
@@ -154,6 +160,22 @@ class HERConfig:
     def is_hierarchy_debug_enabled(self) -> bool:
         """Check if hierarchy debug is enabled."""
         return self.debug_hierarchy
+    
+    def should_use_markuplm_no_semantic(self) -> bool:
+        """Check if MarkupLM no-semantic mode should be used."""
+        return self.use_markuplm_no_semantic
+    
+    def get_markuplm_model_name(self) -> str:
+        """Get MarkupLM model name."""
+        return self.markuplm_model_name
+    
+    def get_markuplm_device(self) -> str:
+        """Get MarkupLM device."""
+        return self.markuplm_device
+    
+    def get_markuplm_batch_size(self) -> int:
+        """Get MarkupLM batch size."""
+        return self.markuplm_batch_size
     
     @classmethod
     def from_env(cls) -> 'HERConfig':
