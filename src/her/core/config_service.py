@@ -78,6 +78,22 @@ class ConfigService:
     def is_e2e_enabled(self) -> bool:
         """Check if E2E testing is enabled."""
         return self._config.e2e_enabled
+    
+    def should_use_markuplm_no_semantic(self) -> bool:
+        """Check if MarkupLM no-semantic mode should be used."""
+        return self._config.should_use_markuplm_no_semantic()
+    
+    def get_markuplm_model_name(self) -> str:
+        """Get MarkupLM model name."""
+        return self._config.get_markuplm_model_name()
+    
+    def get_markuplm_device(self) -> str:
+        """Get MarkupLM device."""
+        return self._config.get_markuplm_device()
+    
+    def get_markuplm_batch_size(self) -> int:
+        """Get MarkupLM batch size."""
+        return self._config.get_markuplm_batch_size()
 
 
 # Global configuration service instance
