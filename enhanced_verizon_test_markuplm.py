@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Enhanced Verizon Test with Real MarkupLM Integration
+Enhanced Verizon Test with MarkupLM Integration
 
 This test implements the exact workflow:
 1. Get exact match nodes based on target text in quotes
@@ -35,6 +35,7 @@ import torch
 from her.core.runner import Runner
 from her.locator.intent_parser import IntentParser, ParsedIntent, IntentType
 from her.locator.target_matcher import TargetMatcher
+from her.utils.xpath_generator import generate_xpath_candidates, select_best_xpath_candidate
 
 
 class MarkupLMVerizonTest:
@@ -67,6 +68,7 @@ class MarkupLMVerizonTest:
     
     def extract_target_text(self, step: str) -> Optional[str]:
         """Extract target text from quoted strings in step."""
+        # Look for quoted text in various formats
         patterns = [
             r'"([^"]+)"',  # "text"
             r"'([^']+)'",  # 'text'
@@ -208,7 +210,7 @@ class MarkupLMVerizonTest:
             if elem_xpath and parent_xpath in elem_xpath:
                 # Check if it's a direct sibling (one level difference)
                 elem_depth = elem_xpath.count('/')
-                node_depth = node.get('xpath', '').count('/')
+                node_depth = node_xpath.count('/')
                 
                 if elem_depth == node_depth:
                     siblings.append(elem)
@@ -279,126 +281,25 @@ class MarkupLMVerizonTest:
         """Generate the best XPath for a node using multiple strategies."""
         print(f"🎯 Generating best XPath for node: {node.get('tag', 'unknown')}")
         
-        tag = node.get('tag', 'div')
-        attrs = node.get('attributes', {})
+        # Generate XPath candidates
+        candidates = generate_xpath_candidates(node)
         
-        # Priority order for XPath generation
-        if attrs.get('id'):
-            xpath = f"//*[@id='{attrs['id']}']"
-            print(f"   Using ID-based XPath: {xpath}")
-            return xpath
-        elif attrs.get('data-testid'):
-            xpath = f"//*[@data-testid='{attrs['data-testid']}']"
-            print(f"   Using data-testid XPath: {xpath}")
-            return xpath
-        elif attrs.get('aria-label'):
-            xpath = f"//*[@aria-label='{attrs['aria-label']}']"
-            print(f"   Using aria-label XPath: {xpath}")
-            return xpath
-        elif attrs.get('class'):
-            first_class = attrs['class'].split()[0]
-            xpath = f"//{tag}[@class='{first_class}']"
-            print(f"   Using class-based XPath: {xpath}")
-            return xpath
-        elif attrs.get('name'):
-            xpath = f"//{tag}[@name='{attrs['name']}']"
-            print(f"   Using name-based XPath: {xpath}")
-            return xpath
+        if not candidates:
+            return f"//{node.get('tag', 'div')}"
+        
+        # Select best candidate
+        best_candidate = select_best_xpath_candidate(candidates)
+        
+        if best_candidate:
+            print(f"   Best XPath: {best_candidate.xpath} (strategy: {best_candidate.strategy})")
+            return best_candidate.xpath
         else:
-            text = node.get('text', '').strip()
-            if text and len(text) < 100:
-                escaped_text = text.replace("'", "\\'").replace('"', '\\"')
-                xpath = f"//{tag}[normalize-space()='{escaped_text}']"
-                print(f"   Using text-based XPath: {xpath}")
-                return xpath
-            else:
-                xpath = f"//{tag}"
-                print(f"   Using generic XPath: {xpath}")
-                return xpath
+            # Fallback
+            fallback_xpath = f"//{node.get('tag', 'div')}"
+            print(f"   Using fallback XPath: {fallback_xpath}")
+            return fallback_xpath
     
-    def get_current_page_elements(self) -> List[Dict[str, Any]]:
-        """Get current page elements from the browser."""
-        try:
-            # Use the runner to get current page elements
-            # This is a simplified version - in reality, this would get elements from the current page
-            print("📄 Getting current page elements...")
-            
-            # For now, return a sample set of elements that might be on a Verizon page
-            # In a real implementation, this would extract elements from the current page
-            return [
-                {
-                    "tag": "button",
-                    "text": "Shop",
-                    "attributes": {
-                        "id": "shop-button",
-                        "class": "nav-button primary",
-                        "data-testid": "shop-nav",
-                        "aria-label": "Shop button"
-                    },
-                    "visible": True,
-                    "xpath": "//button[@id='shop-button']"
-                },
-                {
-                    "tag": "a",
-                    "text": "Devices",
-                    "attributes": {
-                        "href": "/devices",
-                        "class": "nav-link",
-                        "data-testid": "devices-link"
-                    },
-                    "visible": True,
-                    "xpath": "//a[@href='/devices']"
-                },
-                {
-                    "tag": "button",
-                    "text": "Smartphones",
-                    "attributes": {
-                        "id": "smartphones-btn",
-                        "class": "category-button",
-                        "data-testid": "smartphones-category"
-                    },
-                    "visible": True,
-                    "xpath": "//button[@id='smartphones-btn']"
-                },
-                {
-                    "tag": "button",
-                    "text": "Apple",
-                    "attributes": {
-                        "id": "apple-filter",
-                        "class": "filter-button active",
-                        "data-testid": "apple-filter",
-                        "aria-label": "Filter by Apple brand"
-                    },
-                    "visible": True,
-                    "xpath": "//div[@class='filter-container']/button[@id='apple-filter']"
-                },
-                {
-                    "tag": "button",
-                    "text": "Samsung",
-                    "attributes": {
-                        "id": "samsung-filter",
-                        "class": "filter-button",
-                        "data-testid": "samsung-filter"
-                    },
-                    "visible": True,
-                    "xpath": "//div[@class='filter-container']/button[@id='samsung-filter']"
-                },
-                {
-                    "tag": "div",
-                    "text": "Filter Container",
-                    "attributes": {
-                        "class": "filter-container",
-                        "id": "filter-container"
-                    },
-                    "visible": True,
-                    "xpath": "//div[@class='filter-container']"
-                }
-            ]
-        except Exception as e:
-            print(f"❌ Error getting page elements: {e}")
-            return []
-    
-    def execute_step_with_markuplm(self, step: str) -> Dict[str, Any]:
+    def execute_step_with_markuplm(self, step: str, all_elements: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Execute a single step using MarkupLM-enhanced matching."""
         print(f"\n{'='*60}")
         print(f"🔍 STEP: {step}")
@@ -417,15 +318,6 @@ class MarkupLMVerizonTest:
                 }
             
             print(f"Target text: '{target_text}'")
-            
-            # Get current page elements
-            all_elements = self.get_current_page_elements()
-            if not all_elements:
-                return {
-                    "success": False,
-                    "error": "No page elements available",
-                    "step": step
-                }
             
             # Find exact match nodes
             match_nodes = self.find_exact_match_nodes(all_elements, target_text)
@@ -500,10 +392,10 @@ class MarkupLMVerizonTest:
             'Click on "Shop" button',
             'Click on "Devices"',
             'Click on "Smartphones"',
-            'Click on "Apple" filter',
-            'Validate "Apple" text is visible',
-            'Click on "Samsung" filter',
-            'Validate "Samsung" text is visible'
+            'Click on "Apple iPhone 17"',
+            'Validate it landed on "https://www.verizon.com/smartphones/apple-iphone-17/"',
+            'Validate "Apple iPhone 17" text on pdp page',
+            'Click on "White" color'
         ]
         
         results = []
@@ -514,8 +406,14 @@ class MarkupLMVerizonTest:
             print(f"{'='*80}")
             
             try:
+                # Get current page elements
+                print("📄 Getting current page elements...")
+                # This would normally get elements from the current page
+                # For now, we'll simulate this with a basic element list
+                all_elements = self.get_current_page_elements()
+                
                 # Execute step with MarkupLM
-                result = self.execute_step_with_markuplm(step)
+                result = self.execute_step_with_markuplm(step, all_elements)
                 results.append(result)
                 
                 if result['success']:
@@ -544,6 +442,43 @@ class MarkupLMVerizonTest:
         self.save_results(results)
         
         return results
+    
+    def get_current_page_elements(self) -> List[Dict[str, Any]]:
+        """Get current page elements (simulated for now)."""
+        # This is a simplified version - in reality, this would get elements from the current page
+        return [
+            {
+                "tag": "button",
+                "text": "Shop",
+                "attributes": {
+                    "id": "shop-button",
+                    "class": "nav-button",
+                    "data-testid": "shop-nav"
+                },
+                "visible": True,
+                "xpath": "//button[@id='shop-button']"
+            },
+            {
+                "tag": "a",
+                "text": "Devices",
+                "attributes": {
+                    "href": "/devices",
+                    "class": "nav-link"
+                },
+                "visible": True,
+                "xpath": "//a[@href='/devices']"
+            },
+            {
+                "tag": "button",
+                "text": "Smartphones",
+                "attributes": {
+                    "id": "smartphones-btn",
+                    "class": "category-button"
+                },
+                "visible": True,
+                "xpath": "//button[@id='smartphones-btn']"
+            }
+        ]
     
     def print_final_summary(self, results: List[Dict[str, Any]]):
         """Print final test summary."""
@@ -574,27 +509,22 @@ class MarkupLMVerizonTest:
     
     def save_results(self, results: List[Dict[str, Any]]):
         """Save results to JSON file."""
-        filename = 'correct_verizon_markuplm_results.json'
+        filename = 'enhanced_verizon_markuplm_results.json'
         with open(filename, 'w') as f:
             json.dump(results, f, indent=2)
         print(f"\n📄 Detailed results saved to: {filename}")
 
 
-def run_corrected_verizon_test():
-    """Run the corrected Verizon test with MarkupLM integration."""
-    print("🔍 Starting Corrected Verizon Test with MarkupLM")
-    print("=" * 80)
-    
+def main():
+    """Main function to run the enhanced test."""
     try:
         test = MarkupLMVerizonTest()
         results = test.run_enhanced_test()
         return results
     except Exception as e:
         print(f"❌ Test failed to initialize: {e}")
-        import traceback
-        traceback.print_exc()
         return []
 
 
 if __name__ == "__main__":
-    run_corrected_verizon_test()
+    main()
