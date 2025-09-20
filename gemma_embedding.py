@@ -817,27 +817,29 @@ def retrieve_best_element(
 
     # Post-filter: suppress container nodes (e.g., li/div/span) when there is a matching preferred descendant (e.g., a/button)
     if dedup and bool(cfg.get("suppress_container_matches", True)):
-        container_tags = {"li", "ul", "ol", "div", "section", "nav", "header", "footer", "article", "main", "aside", "label"}
-        preferred_tags = {"a", "button", "input", "select", "textarea", "summary"}
+        # Treat these as containers; drop them if a preferred descendant also matches
+        container_tags = {"li", "ul", "ol", "div", "section", "nav", "header", "footer", "article", "main", "aside", "span"}
+        # Consider these as preferred actionable elements for matched text
+        preferred_tags = {"a", "button", "input", "select", "textarea", "summary", "label"}
         drop_indexes: set = set()
-        # Precompute node outerHTML for each candidate and ancestor outerHTML lists for preferred candidates
+        # Precompute node outerHTML and ancestor outerHTML sets for each candidate
         node_outer_by_idx = {i: (c.get('raw', {}).get('node', {}) or {}).get('outerHTML', '') for i, c in enumerate(dedup)}
-        ancestors_outer_by_idx = {}
-        for j, c in enumerate(dedup):
-            if (c.get('canonical', {}).get('node', {}).get('tag') or '') in preferred_tags:
-                anc_list = (c.get('raw', {}).get('ancestors') or [])
-                ancestors_outer_by_idx[j] = { (a or {}).get('outerHTML','') for a in anc_list if isinstance(a, dict) }
+        ancestors_outer_sets: Dict[int, set] = {}
+        for i, c in enumerate(dedup):
+            anc_list = (c.get('raw', {}).get('ancestors') or [])
+            ancestors_outer_sets[i] = { (a or {}).get('outerHTML','') for a in anc_list if isinstance(a, dict) }
+        # Collect outerHTML of preferred nodes
+        preferred_outers = { node_outer_by_idx.get(i) for i, c in enumerate(dedup)
+                             if (c.get('canonical', {}).get('node', {}).get('tag') or '') in preferred_tags }
+        preferred_outers.discard(None)
+        # Drop any candidate whose tag is a container OR not preferred, and whose ancestors include a preferred node
         for i, c in enumerate(dedup):
             tag_i = (c.get('canonical', {}).get('node', {}).get('tag') or '')
-            if tag_i not in container_tags:
+            if tag_i in preferred_tags:
                 continue
-            outer_i = node_outer_by_idx.get(i) or ''
-            if not outer_i:
-                continue
-            for j, anc_outers in ancestors_outer_by_idx.items():
-                if outer_i in anc_outers:
-                    drop_indexes.add(i)
-                    break
+            anc_outers_i = ancestors_outer_sets.get(i) or set()
+            if any(p in anc_outers_i for p in preferred_outers):
+                drop_indexes.add(i)
         if drop_indexes:
             dedup = [c for k, c in enumerate(dedup) if k not in drop_indexes]
             timings['postfilter_container_dropped'] = len(drop_indexes)
