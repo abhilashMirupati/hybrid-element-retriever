@@ -544,6 +544,14 @@ def flatten_for_embedding(canonical: Dict[str, Any], full: bool = False) -> str:
 
     # intent from id and relevant data-* keys
     intent_tokens = _collect_intent_tokens(attrs)
+    # additionally fold aria-label tokens into intent to emphasize semantic target
+    if aria_label:
+        aria_tokens = _split_camel_and_separators(aria_label)
+        aria_tokens = [t.lower() for t in aria_tokens if t and t.lower() not in {"compare","checkbox","button"}]
+        # merge uniquely
+        for tok in aria_tokens:
+            if tok not in intent_tokens:
+                intent_tokens.append(tok)
     # Bring in a tiny bit of ancestor semantics when clearly meaningful (e.g., searchFilters container)
     anc_tokens = _collect_semantic_from_ancestors(ancestors)
     if anc_tokens:
