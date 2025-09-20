@@ -475,7 +475,6 @@ def retrieve_best_element(
         # prefilter tuning
         "prefilter_match_mode": "contains",  # contains | equals | regex
         "prefilter_scope": "node_and_ancestors",  # node | node_and_ancestors
-        "tag_whitelist": None,  # e.g., ["A", "BUTTON"]
     }
     if config:
         cfg.update(config)
@@ -506,9 +505,7 @@ def retrieve_best_element(
     needle = needle_raw.lower()
     match_mode = str(cfg.get("prefilter_match_mode", "contains")).lower()
     scope = str(cfg.get("prefilter_scope", "node_and_ancestors")).lower()
-    tag_whitelist = cfg.get("tag_whitelist") or None
-    if tag_whitelist:
-        tag_whitelist = [str(t).upper() for t in tag_whitelist]
+    # tag-based whitelisting removed to avoid heuristic bias
 
     def match_text(text: str) -> bool:
         t = (text or '').strip()
@@ -535,10 +532,6 @@ def retrieve_best_element(
             passed_text = node_ok or anc_ok
             if not passed_text:
                 continue
-            if tag_whitelist:
-                tag = str(r.get('node', {}).get('tag') or '').upper()
-                if tag not in tag_whitelist:
-                    continue
             filtered.append(r)
     else:
         filtered = nodes[:]
@@ -583,18 +576,9 @@ def retrieve_best_element(
     timings['dedup_count'] = len(dedup)
     timings['dedupe_time'] = time.time() - t_du
 
-    # cap candidates deterministically (prefer visible + text match)
+    # cap candidates deterministically without heuristic preferences
     max_candidates = int(cfg['max_candidates'])
     if len(dedup) > max_candidates:
-        needle = (target_text or '').strip().lower()
-        def pref_score(c: Dict[str, Any]) -> Tuple[int, int]:
-            vis = c['canonical']['meta']['visibility']
-            vis_rank = _visibility_rank(vis)
-            if needle:
-                has = (needle in (c['canonical']['node']['text'] or '').lower())
-                return (1 if has else 0, vis_rank)
-            return (0, vis_rank)
-        dedup.sort(key=pref_score, reverse=True)
         dedup = dedup[:max_candidates]
         timings['capped_to'] = max_candidates
 
@@ -615,66 +599,8 @@ def retrieve_best_element(
     sims = sims_tensor.detach().cpu().numpy()
     timings['embedding_time'] = time.time() - t_emb
 
-    # tie-breakers
-    bonuses = np.zeros_like(sims, dtype=np.float32)
-    query_lower = (query or '').lower()
-    query_mentions_button = ('button' in query_lower)
-    query_mentions_filter = ('filter' in query_lower)
-    for idx, c in enumerate(dedup):
-        node = c['canonical']['node']
-        attrs = node.get('attrs', {}) or {}
-        text_norm = (node.get('text') or '').strip().lower()
-        vis = c['canonical']['meta']['visibility']
-        # exact equality bonus (prefer target_text if provided)
-        if target_text and text_norm == target_text.strip().lower():
-            bonuses[idx] += 0.02
-        # role/button vs anchor hints (separate weights)
-        tag = (node.get('tag') or '').upper()
-        role = str(attrs.get('role','')).lower()
-        has_href = 'href' in attrs
-        data_track_val = (attrs.get('data-track') or attrs.get('data_tracking') or '')
-        data_analytic_val = (attrs.get('data-analyticstrack') or '')
-        data_strings = f"{data_track_val} {data_analytic_val}".lower()
-
-        is_buttonish = (tag == 'BUTTON') or (role == 'button')
-        is_anchor = (tag == 'A') and has_href
-
-        # Base preference: buttons > anchors
-        if is_buttonish:
-            bonuses[idx] += 0.03
-        if is_anchor:
-            bonuses[idx] += 0.005
-
-        # Intent-aware boosts from query
-        if query_mentions_button and is_buttonish:
-            bonuses[idx] += 0.03
-        if query_mentions_button and is_anchor:
-            bonuses[idx] -= 0.005
-        if query_mentions_filter:
-            if ('filter' in data_strings) or ('searchfilters' in data_strings) or ('tab-' in data_strings):
-                bonuses[idx] += 0.02
-            # Also slightly prefer elements nearer the top of the page when asking for filters
-            try:
-                top_y = float(node.get('bbox', [0,0,0,0])[1] or 0)
-                if top_y >= 0 and top_y < 1500:
-                    bonuses[idx] += 0.01
-            except Exception:
-                pass
-
-        # data-track generic hint
-        if ('data-track' in attrs) or ('data_tracking' in attrs) or ('data-analyticstrack' in attrs):
-            bonuses[idx] += 0.003
-
-        # visibility preference (stronger)
-        if vis == 'visible':
-            bonuses[idx] += 0.02
-        elif vis == 'offscreen':
-            bonuses[idx] += 0.0
-        else:  # hidden
-            bonuses[idx] -= 0.02
-
-    final_scores = sims + bonuses
-    order = list(np.argsort(-final_scores))
+    # ranking strictly by embedding similarity (no heuristics)
+    order = list(np.argsort(-sims))
     best_idx = int(order[0])
     best_score = float(sims[best_idx])
     second_score = float(sims[order[1]]) if len(order) > 1 else 0.0
