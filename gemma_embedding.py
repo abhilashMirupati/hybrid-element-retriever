@@ -719,11 +719,24 @@ def retrieve_best_element(
 
 
 if __name__ == "__main__":
-    # Example run for Colab/local notebook; set auto_install_deps=True on first run in Colab
+    # Colab-friendly example run: auto-install deps and use HF token from env
     url = "https://www.verizon.com/smartphones/"
-    query = "Click on Apple button in footer"
+    query = "Click on Apple filter button"
     target_text = "Apple"
-    out = retrieve_best_element(url, query, target_text=target_text, config={"use_visual_fallback": True, "auto_install_deps": False})
+    cfg = {
+        "auto_install_deps": True,
+        "use_visual_fallback": False,
+        "embedding_model_name": "google/embeddinggemma-300m",
+        "allow_embedding_fallback": False,
+        "hf_token": os.environ.get("HUGGINGFACE_HUB_TOKEN"),
+        "debug_dump_candidates": True,
+        "debug_dump_only_prefiltered": True,
+        "debug_dump_top_k": 0,
+        "return_top_k": 0,
+        "prefilter_match_mode": "equals",
+        "prefilter_scope": "node",
+    }
+    out = retrieve_best_element(url, query, target_text=target_text, config=cfg)
     print(json.dumps({
         "best_index": out.get("best_index"),
         "best_score": out.get("best_score"),
