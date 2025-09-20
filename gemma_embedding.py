@@ -703,6 +703,8 @@ def retrieve_best_element(
         # prefilter tuning
         "prefilter_match_mode": "contains",  # contains | equals | regex
         "prefilter_scope": "node_and_ancestors",  # node | node_and_ancestors
+        # post-filter: drop container elements when a preferred descendant also matches
+        "suppress_container_matches": True,
     }
     if config:
         cfg.update(config)
@@ -812,6 +814,33 @@ def retrieve_best_element(
     if len(dedup) > max_candidates:
         dedup = dedup[:max_candidates]
         timings['capped_to'] = max_candidates
+
+    # Post-filter: suppress container nodes (e.g., li/div/span) when there is a matching preferred descendant (e.g., a/button)
+    if dedup and bool(cfg.get("suppress_container_matches", True)):
+        container_tags = {"li", "ul", "ol", "div", "section", "nav", "header", "footer", "article", "main", "aside", "label"}
+        preferred_tags = {"a", "button", "input", "select", "textarea", "summary"}
+        drop_indexes: set = set()
+        # Precompute node outerHTML for each candidate and ancestor outerHTML lists for preferred candidates
+        node_outer_by_idx = {i: (c.get('raw', {}).get('node', {}) or {}).get('outerHTML', '') for i, c in enumerate(dedup)}
+        ancestors_outer_by_idx = {}
+        for j, c in enumerate(dedup):
+            if (c.get('canonical', {}).get('node', {}).get('tag') or '') in preferred_tags:
+                anc_list = (c.get('raw', {}).get('ancestors') or [])
+                ancestors_outer_by_idx[j] = { (a or {}).get('outerHTML','') for a in anc_list if isinstance(a, dict) }
+        for i, c in enumerate(dedup):
+            tag_i = (c.get('canonical', {}).get('node', {}).get('tag') or '')
+            if tag_i not in container_tags:
+                continue
+            outer_i = node_outer_by_idx.get(i) or ''
+            if not outer_i:
+                continue
+            for j, anc_outers in ancestors_outer_by_idx.items():
+                if outer_i in anc_outers:
+                    drop_indexes.add(i)
+                    break
+        if drop_indexes:
+            dedup = [c for k, c in enumerate(dedup) if k not in drop_indexes]
+            timings['postfilter_container_dropped'] = len(drop_indexes)
 
     if not dedup:
         result = {"best_index": None, "best_canonical": None, "best_canonical_str": None, "best_score": 0.0, "scores": [], "fallback_used": False, "fallback_info": None, "diagnostics": {"timings": timings, "num_candidates": 0, "top5": []}, "total_time_s": time.time()-overall_t0}
