@@ -313,23 +313,25 @@ def build_canonical(rec: Dict[str, Any]) -> Dict[str, Any]:
     return canonical
 
 
-def flatten_for_embedding(canonical: Dict[str, Any]) -> str:
+def flatten_for_embedding(canonical: Dict[str, Any], full: bool = False) -> str:
     parts: List[str] = []
     parts.append(f"FRAME[{canonical.get('frameId','')}] url={canonical.get('frameUrl','')}")
     for anc in canonical.get('ancestors', []):
-        parts.append(
-            f"ANC[{anc.get('tag')}] attrs={_safe_attrs_str(anc.get('attrs',{}),200)} bbox={','.join(str(int(x)) for x in anc.get('bbox',[0,0,0,0]))}"
-        )
+        attrs_str = json.dumps(anc.get('attrs', {}), sort_keys=True, ensure_ascii=False) if full else _safe_attrs_str(anc.get('attrs', {}), 200)
+        bbox_str = ','.join(str(int(x)) for x in anc.get('bbox', [0, 0, 0, 0]))
+        parts.append(f"ANC[{anc.get('tag')}] attrs={attrs_str} bbox={bbox_str}")
     node = canonical.get('node', {})
-    parts.append(
-        f"NODE[{node.get('tag')}] text={(node.get('text') or '')[:200]} attrs={_safe_attrs_str(node.get('attrs',{}),300)} bbox={','.join(str(int(x)) for x in node.get('bbox',[0,0,0,0]))}"
-    )
+    node_text = (node.get('text') or '') if full else (node.get('text') or '')[:200]
+    node_attrs_str = json.dumps(node.get('attrs', {}), sort_keys=True, ensure_ascii=False) if full else _safe_attrs_str(node.get('attrs', {}), 300)
+    node_bbox_str = ','.join(str(int(x)) for x in node.get('bbox', [0, 0, 0, 0]))
+    parts.append(f"NODE[{node.get('tag')}] text={node_text} attrs={node_attrs_str} bbox={node_bbox_str}")
     for s in canonical.get('siblings', []):
-        parts.append(
-            f"SIB[{s.get('tag')}] text={(s.get('text') or '')[:80]} attrs={_safe_attrs_str(s.get('attrs',{}),150)} bbox={','.join(str(int(x)) for x in s.get('bbox',[0,0,0,0]))}"
-        )
+        sib_text = (s.get('text') or '') if full else (s.get('text') or '')[:80]
+        sib_attrs_str = json.dumps(s.get('attrs', {}), sort_keys=True, ensure_ascii=False) if full else _safe_attrs_str(s.get('attrs', {}), 150)
+        sib_bbox_str = ','.join(str(int(x)) for x in s.get('bbox', [0, 0, 0, 0]))
+        parts.append(f"SIB[{s.get('tag')}] text={sib_text} attrs={sib_attrs_str} bbox={sib_bbox_str}")
     flat = " | ".join(parts)
-    if len(flat) > 32000:
+    if not full and len(flat) > 32000:
         h = hashlib.sha1(flat.encode('utf-8')).hexdigest()[:8]
         flat = flat[:32000] + "...|sha1:" + h
     return flat
@@ -541,10 +543,11 @@ def retrieve_best_element(
     # Build canonical & flattened
     t_can = time.time()
     candidates: List[Dict[str, Any]] = []
+    full_flat = bool(cfg.get("embedding_full_attributes", False))
     for rec in filtered:
         try:
             can = build_canonical(rec)
-            flat = flatten_for_embedding(can)
+            flat = flatten_for_embedding(can, full=full_flat)
             candidates.append({"canonical": can, "flat": flat, "raw": rec})
         except Exception:
             continue
