@@ -34,6 +34,10 @@ from PIL import Image
 import pytesseract
 
 from sentence_transformers import SentenceTransformer, util
+try:
+    from huggingface_hub import login as hf_login
+except Exception:  # pragma: no cover
+    hf_login = None
 from playwright.async_api import async_playwright
 
 
@@ -380,14 +384,40 @@ def _iou(b1: Tuple[int,int,int,int], b2: Tuple[int,int,int,int]) -> float:
 _EMBED_MODEL: Optional[SentenceTransformer] = None
 
 
-def _ensure_model_loaded() -> SentenceTransformer:
+def _get_model(cfg: Dict[str, Any]) -> SentenceTransformer:
+    """Load embedding model, by default strictly Google Gemma (no fallback).
+
+    Config keys:
+    - embedding_model_name: str (default 'google/embeddinggemma-300m')
+    - allow_embedding_fallback: bool (default False). If True, falls back to 'all-MiniLM-L6-v2'.
+    """
     global _EMBED_MODEL
-    if _EMBED_MODEL is None:
-        try:
-            _EMBED_MODEL = SentenceTransformer("google/embeddinggemma-300m")
-        except Exception as e:
-            print("[WARN] Failed to load google/embeddinggemma-300m, falling back to all-MiniLM-L6-v2:", e)
+    model_name = cfg.get("embedding_model_name") or "google/embeddinggemma-300m"
+    allow_fallback = bool(cfg.get("allow_embedding_fallback", False))
+    # Reuse existing if same model was loaded
+    if _EMBED_MODEL is not None and getattr(_EMBED_MODEL, "_model_card_name", None) == model_name:
+        return _EMBED_MODEL
+    try:
+        # Optional: authenticate with a provided token to access gated models
+        hf_token = cfg.get("hf_token")
+        if hf_token and hf_login is not None:
+            try:
+                hf_login(token=hf_token)
+                os.environ["HUGGINGFACE_HUB_TOKEN"] = hf_token
+            except Exception:
+                pass
+        _EMBED_MODEL = SentenceTransformer(model_name)
+        setattr(_EMBED_MODEL, "_model_card_name", model_name)
+    except Exception as e:
+        if allow_fallback:
+            print("[WARN] Failed to load", model_name, "— falling back to all-MiniLM-L6-v2:", e)
             _EMBED_MODEL = SentenceTransformer("all-MiniLM-L6-v2")
+            setattr(_EMBED_MODEL, "_model_card_name", "all-MiniLM-L6-v2")
+        else:
+            raise RuntimeError(
+                f"Failed to load embedding model '{model_name}'. "
+                "Set HUGGINGFACE_HUB_TOKEN or set allow_embedding_fallback=True to permit fallback."
+            ) from e
     return _EMBED_MODEL
 
 
@@ -430,6 +460,9 @@ def retrieve_best_element(
         "max_candidates": 500,
         "use_visual_fallback": True,
         "auto_install_deps": False,
+        # embedding model strictness
+        "embedding_model_name": "google/embeddinggemma-300m",
+        "allow_embedding_fallback": False,
         # diagnostics/printing
         "debug_dump_candidates": False,
         # 0 or None -> dump all when debug enabled
@@ -537,7 +570,7 @@ def retrieve_best_element(
 
     # embeddings
     t_emb = time.time()
-    model = _ensure_model_loaded()
+    model = _get_model(cfg)
     cand_texts = [d['flat'] for d in dedup]
     q_emb = model.encode([query], convert_to_tensor=True)
     cand_emb = model.encode(cand_texts, convert_to_tensor=True)
