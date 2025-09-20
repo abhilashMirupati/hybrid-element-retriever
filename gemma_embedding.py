@@ -102,6 +102,7 @@ _JS_DEEP_EXTRACT = r"""
   const maxSiblings = Number(args.maxSiblings)||1;
   const viewW = window.innerWidth || 0;
   const viewH = window.innerHeight || 0;
+  const targetExact = (args.targetExact||'').toString();
 
   function isHidden(el){
     if (!el) return true;
@@ -160,6 +161,71 @@ _JS_DEEP_EXTRACT = r"""
   const root = document.body || document.documentElement;
   if (!root) return out;
 
+  if (targetExact) {
+    // Find exact innerText matches and return only leaf matches (no parents that contain another match)
+    const matches = [];
+    for (const el of deepWalker(root)){
+      try {
+        if (!el) continue;
+        if (isHidden(el)) continue;
+        const txt = (el.innerText||'').trim();
+        if (txt === targetExact) matches.push(el);
+      } catch(e){}
+    }
+    const leafMatches = matches.filter(el => !matches.some(other => other!==el && el.contains(other)));
+    // Hoist to nearest actionable ancestor (label, a, button) that also exactly matches text
+    const actionableTags = new Set(['LABEL','A','BUTTON']);
+    const seenOuter = new Set();
+    const finalMatches = [];
+    for (const el of leafMatches){
+      let chosen = el;
+      try{
+        let p = el.parentElement;
+        while(p && p !== document.documentElement){
+          try {
+            const ptxt = (p.innerText||'').trim();
+            if (ptxt === targetExact && actionableTags.has(p.tagName)) {
+              chosen = p; break;
+            }
+          } catch(e){}
+          p = p.parentElement;
+        }
+      } catch(e){}
+      try{
+        const outHTML = chosen && chosen.outerHTML ? chosen.outerHTML : '';
+        if (outHTML && !seenOuter.has(outHTML)){
+          seenOuter.add(outHTML);
+          finalMatches.push(chosen);
+        }
+      }catch(e){}
+    }
+    for (const el of finalMatches){
+      try{
+        // build ancestor list up to ancestorLevels (nearby context only)
+        const ancestors = [];
+        let p = el.parentElement, cnt=0;
+        while(p && p !== document.documentElement && cnt < ancestorLevels){
+          const s = serialize(p);
+          if (s) ancestors.unshift(s);
+          p = p.parentElement; cnt++;
+        }
+        // siblings window
+        const siblings = [];
+        if (el.parentElement && maxSiblings>0){
+          const kids = Array.from(el.parentElement.children);
+          const idx = kids.indexOf(el);
+          const start = Math.max(0, idx - maxSiblings);
+          const end = Math.min(kids.length-1, idx + maxSiblings);
+          for (let i=start;i<=end;i++){ if (i===idx) continue; const ss = serialize(kids[i]); if (ss) siblings.push(ss); }
+        }
+        const node = serialize(el);
+        if (!node) continue;
+        out.push({ node: node, ancestors: ancestors, siblings: siblings });
+      }catch(e){}
+    }
+    return out;
+  }
+
   for (const el of deepWalker(root)){
     try {
       if (!el) continue;
@@ -199,7 +265,8 @@ async def _extract_all_nodes_async(url: str,
                                    max_siblings: int = 1,
                                    include_hidden: bool = False,
                                    wait_until: str = "networkidle",
-                                   timeout_ms: int = 60000) -> Tuple[List[Dict[str, Any]], str, Dict[str, Any]]:
+                                   timeout_ms: int = 60000,
+                                   target_exact: str = "") -> Tuple[List[Dict[str, Any]], str, Dict[str, Any]]:
     timings: Dict[str, Any] = {}
     t0 = time.time()
     async with async_playwright() as pw:
@@ -224,7 +291,8 @@ async def _extract_all_nodes_async(url: str,
                 res = await frame.evaluate(_JS_DEEP_EXTRACT, {
                     "includeHidden": include_hidden,
                     "ancestorLevels": ancestor_levels,
-                    "maxSiblings": max_siblings
+                    "maxSiblings": max_siblings,
+                    "targetExact": target_exact or ""
                 })
                 for r in res:
                     r['_frameId'] = str(id(frame))
@@ -266,13 +334,15 @@ def extract_all_nodes(url: str,
                       max_siblings: int = 1,
                       include_hidden: bool = False,
                       wait_until: str = "networkidle",
-                      timeout_ms: int = 60000) -> Tuple[List[Dict[str, Any]], str, Dict[str, Any]]:
+                      timeout_ms: int = 60000,
+                      target_exact: str = "") -> Tuple[List[Dict[str, Any]], str, Dict[str, Any]]:
     return _run_async(_extract_all_nodes_async(url,
                                                ancestor_levels=ancestor_levels,
                                                max_siblings=max_siblings,
                                                include_hidden=include_hidden,
                                                wait_until=wait_until,
-                                               timeout_ms=timeout_ms))
+                                               timeout_ms=timeout_ms,
+                                               target_exact=target_exact))
 
 
 # ---------------------------
@@ -713,6 +783,7 @@ def retrieve_best_element(
         maybe_install_deps(auto_install=bool(cfg.get("auto_install_deps", False)))
 
     overall_t0 = time.time()
+    # We don't know match_mode until later; run a first extraction, then optionally re-extract with targetExact
     nodes, screenshot_b64, timings_extract = extract_all_nodes(
         url,
         ancestor_levels=cfg["ancestor_levels"],
@@ -720,6 +791,7 @@ def retrieve_best_element(
         include_hidden=cfg["include_hidden"],
         wait_until=cfg["wait_until"],
         timeout_ms=cfg["timeout_ms"],
+        target_exact="",
     )
 
     timings: Dict[str, Any] = {"page_load": timings_extract.get("page_load", 0.0),
@@ -729,11 +801,23 @@ def retrieve_best_element(
                                "frame_urls": timings_extract.get("frame_urls", [])}
     timings['extracted_count'] = len(nodes)
 
-    # pre-filter by target_text
+    # pre-filter by target_text (exact innerText, with DOM-side leaf-match optimization when equals mode)
     pre_t0 = time.time()
     needle_raw = (target_text or '').strip()
     needle = needle_raw.lower()
     match_mode = str(cfg.get("prefilter_match_mode", "contains")).lower()
+    # If equals mode with needle, re-extract using DOM-side leaf matching for exact text
+    if needle_raw and match_mode == 'equals':
+        nodes, screenshot_b64, timings_extract2 = extract_all_nodes(
+            url,
+            ancestor_levels=cfg["ancestor_levels"],
+            max_siblings=cfg["max_siblings"],
+            include_hidden=cfg["include_hidden"],
+            wait_until=cfg["wait_until"],
+            timeout_ms=cfg["timeout_ms"],
+            target_exact=needle_raw,
+        )
+        timings['extracted_count'] = len(nodes)
     scope = str(cfg.get("prefilter_scope", "node_and_ancestors")).lower()
     direct_only = bool(cfg.get("prefilter_direct_text_only", False))
     # tag-based whitelisting removed to avoid heuristic bias
@@ -754,19 +838,26 @@ def retrieve_best_element(
 
     if needle:
         filtered: List[Dict[str, Any]] = []
-        for r in nodes:
-            node_field = 'directText' if direct_only else 'text'
-            node_dict = r.get('node', {}) or {}
-            value = str(node_dict.get(node_field) or '')
-            node_ok = match_text(value)
-            anc_ok = False
-            if scope == 'node_and_ancestors':
-                anc_texts = ' '.join([(a.get('text') or '') for a in (r.get('ancestors') or [])])
-                anc_ok = match_text(anc_texts)
-            passed_text = node_ok or anc_ok
-            if not passed_text:
-                continue
-            filtered.append(r)
+        if match_mode == 'equals':
+            # Prefer DOM-side exact leaf matching: use only node.text exact equality
+            for r in nodes:
+                txt = str((r.get('node', {}) or {}).get('text') or '')
+                if txt.strip().lower() == needle:
+                    filtered.append(r)
+        else:
+            for r in nodes:
+                node_field = 'directText' if direct_only else 'text'
+                node_dict = r.get('node', {}) or {}
+                value = str(node_dict.get(node_field) or '')
+                node_ok = match_text(value)
+                anc_ok = False
+                if scope == 'node_and_ancestors':
+                    anc_texts = ' '.join([(a.get('text') or '') for a in (r.get('ancestors') or [])])
+                    anc_ok = match_text(anc_texts)
+                passed_text = node_ok or anc_ok
+                if not passed_text:
+                    continue
+                filtered.append(r)
     else:
         filtered = nodes[:]
     timings['prefilter_count'] = len(filtered)
