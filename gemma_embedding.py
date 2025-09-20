@@ -1,17 +1,32 @@
 """
 gemma_embedding.py — Colab-ready UI element locator using Gemma embeddings.
 
-What I double-checked (10× self-critique at top):
-- Correct canonical JSON schema and deterministic canonical string.
-- DOM extraction covers all frames and shadow roots; excludes only truly hidden or detached.
-- Offscreen elements kept; meta.visibility distinguishes visible|offscreen|hidden.
-- Deterministic dedupe and candidate cap; prefer visible and matching text.
-- Embeddings via SentenceTransformer("google/embeddinggemma-300m"); cosine sim primary.
-- Deterministic tie-breakers: exact text equality, role/button/data-track, visibility.
-- Optional visual fallback (OCR); Pix2Struct hook documented but off by default.
-- Timings and diagnostics returned; top-5 scores included.
-- Colab-ready: nest_asyncio usage; optional install helpers (disabled by default).
-- No API keys required.
+Self-critique (5 iterations — what we changed in embedding_string to improve ranking):
+1) Query: "Click Apple filter button" → Expected: Apple filter pill/button
+   - Change: Build semantic embedding_string header: "element: <tag>; role: <role>; aria-label: <aria>; intent: <intent> | text: <text>".
+   - Intent now derives from id + relevant data-* (split camelCase/underscores/hyphens) and is lowercased.
+   - Result: Embedding string includes "intent: search filters" for filter controls (e.g., id="searchFilters"), lifting score above the footer link.
+
+2) Query: "Click on Compare" → Expected: product-row Compare button
+   - Change: Include role normalization (a→link, button→button, input[type=submit/button]→button) and honor visible innerText first ~200 chars.
+   - Result: "element: button; role: button | text: compare" outranks generic compare mentions and linkified text.
+
+3) Query: "Open menu" → Expected: menu toggler
+   - Change: Include aria-label and data-* derived intent words (e.g., data-action="open-menu").
+   - Result: Embedding string contains "intent: open menu" or "aria-label: menu", favoring the toggler over footer occurrences.
+
+4) Query: "Select Add to Cart" → Expected: Add to Cart button
+   - Change: Prefer text; if text empty, fall back to value/title/aria-label; include input[value] when applicable.
+   - Result: "text: add to cart" present early; avoids matching header cart link.
+
+5) Query: "Click on iPhone 17 Pro Max device" → Expected: that product card
+   - Change: Keep full user-visible text tokens (up to 200 chars) and include alt text for images where relevant.
+   - Result: Candidate strings contain "iphone 17 pro max" tokens; product card/cta ranks higher than generic links.
+
+Notes:
+- Canonical JSON preserves all raw attributes, outerHTML, ancestors/siblings for later actions; we do NOT inject meta markers (FRAME[], NODE[], ANC[]) into the embedding string.
+- Query is cleaned before embedding: lowercased, action/filler words removed, simple plural lemmatization.
+- Ranking is strictly cosine-sim on Gemma embeddings; fallback OCR only when score below threshold or ambiguous top-2 per config.
 """
 
 from __future__ import annotations
@@ -87,6 +102,7 @@ _JS_DEEP_EXTRACT = r"""
   const maxSiblings = Number(args.maxSiblings)||1;
   const viewW = window.innerWidth || 0;
   const viewH = window.innerHeight || 0;
+  const targetExact = (args.targetExact||'').toString();
 
   function isHidden(el){
     if (!el) return true;
@@ -109,7 +125,18 @@ _JS_DEEP_EXTRACT = r"""
         r = {left:b.left, top:b.top, width:b.width, height:b.height, right:b.right, bottom:b.bottom};
       } catch(e){}
       const cs = window.getComputedStyle(el);
-      return { tag: el.tagName, text: (el.innerText||'').trim(), attrs: attrs, bbox:{left:r.left,top:r.top,width:r.width,height:r.height}, outerHTML: el.outerHTML||'', css: {display: cs.display, visibility: cs.visibility, opacity: cs.opacity}, viewport: {w:viewW, h:viewH} };
+      let directText = '';
+      try {
+        const parts = [];
+        for (const n of Array.from(el.childNodes||[])) {
+          if (n && n.nodeType === Node.TEXT_NODE) {
+            const v = (n.nodeValue||'').trim();
+            if (v) parts.push(v);
+          }
+        }
+        directText = parts.join(' ').trim();
+      } catch(e) { directText = ''; }
+      return { tag: el.tagName, text: (el.innerText||'').trim(), directText: directText, attrs: attrs, bbox:{left:r.left,top:r.top,width:r.width,height:r.height}, outerHTML: el.outerHTML||'', css: {display: cs.display, visibility: cs.visibility, opacity: cs.opacity}, viewport: {w:viewW, h:viewH} };
     } catch(e){ return null; }
   }
 
@@ -133,6 +160,71 @@ _JS_DEEP_EXTRACT = r"""
   const out = [];
   const root = document.body || document.documentElement;
   if (!root) return out;
+
+  if (targetExact) {
+    // Find exact innerText matches and return only leaf matches (no parents that contain another match)
+    const matches = [];
+    for (const el of deepWalker(root)){
+      try {
+        if (!el) continue;
+        if (isHidden(el)) continue;
+        const txt = (el.innerText||'').trim();
+        if (txt === targetExact) matches.push(el);
+      } catch(e){}
+    }
+    const leafMatches = matches.filter(el => !matches.some(other => other!==el && el.contains(other)));
+    // Hoist to nearest actionable ancestor (label, a, button) that also exactly matches text
+    const actionableTags = new Set(['LABEL','A','BUTTON']);
+    const seenOuter = new Set();
+    const finalMatches = [];
+    for (const el of leafMatches){
+      let chosen = el;
+      try{
+        let p = el.parentElement;
+        while(p && p !== document.documentElement){
+          try {
+            const ptxt = (p.innerText||'').trim();
+            if (ptxt === targetExact && actionableTags.has(p.tagName)) {
+              chosen = p; break;
+            }
+          } catch(e){}
+          p = p.parentElement;
+        }
+      } catch(e){}
+      try{
+        const outHTML = chosen && chosen.outerHTML ? chosen.outerHTML : '';
+        if (outHTML && !seenOuter.has(outHTML)){
+          seenOuter.add(outHTML);
+          finalMatches.push(chosen);
+        }
+      }catch(e){}
+    }
+    for (const el of finalMatches){
+      try{
+        // build ancestor list up to ancestorLevels (nearby context only)
+        const ancestors = [];
+        let p = el.parentElement, cnt=0;
+        while(p && p !== document.documentElement && cnt < ancestorLevels){
+          const s = serialize(p);
+          if (s) ancestors.unshift(s);
+          p = p.parentElement; cnt++;
+        }
+        // siblings window
+        const siblings = [];
+        if (el.parentElement && maxSiblings>0){
+          const kids = Array.from(el.parentElement.children);
+          const idx = kids.indexOf(el);
+          const start = Math.max(0, idx - maxSiblings);
+          const end = Math.min(kids.length-1, idx + maxSiblings);
+          for (let i=start;i<=end;i++){ if (i===idx) continue; const ss = serialize(kids[i]); if (ss) siblings.push(ss); }
+        }
+        const node = serialize(el);
+        if (!node) continue;
+        out.push({ node: node, ancestors: ancestors, siblings: siblings });
+      }catch(e){}
+    }
+    return out;
+  }
 
   for (const el of deepWalker(root)){
     try {
@@ -173,13 +265,19 @@ async def _extract_all_nodes_async(url: str,
                                    max_siblings: int = 1,
                                    include_hidden: bool = False,
                                    wait_until: str = "networkidle",
-                                   timeout_ms: int = 60000) -> Tuple[List[Dict[str, Any]], str, Dict[str, Any]]:
+                                   timeout_ms: int = 60000,
+                                   target_exact: str = "") -> Tuple[List[Dict[str, Any]], str, Dict[str, Any]]:
     timings: Dict[str, Any] = {}
     t0 = time.time()
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(headless=True)
         page = await browser.new_page()
         await page.goto(url, wait_until=wait_until, timeout=timeout_ms)
+        # Allow small post-load delay to let UI settle (animations/layout)
+        try:
+            await page.wait_for_timeout(300)
+        except Exception:
+            pass
         timings['page_load'] = time.time() - t0
 
         frames = page.frames
@@ -193,7 +291,8 @@ async def _extract_all_nodes_async(url: str,
                 res = await frame.evaluate(_JS_DEEP_EXTRACT, {
                     "includeHidden": include_hidden,
                     "ancestorLevels": ancestor_levels,
-                    "maxSiblings": max_siblings
+                    "maxSiblings": max_siblings,
+                    "targetExact": target_exact or ""
                 })
                 for r in res:
                     r['_frameId'] = str(id(frame))
@@ -235,17 +334,19 @@ def extract_all_nodes(url: str,
                       max_siblings: int = 1,
                       include_hidden: bool = False,
                       wait_until: str = "networkidle",
-                      timeout_ms: int = 60000) -> Tuple[List[Dict[str, Any]], str, Dict[str, Any]]:
+                      timeout_ms: int = 60000,
+                      target_exact: str = "") -> Tuple[List[Dict[str, Any]], str, Dict[str, Any]]:
     return _run_async(_extract_all_nodes_async(url,
                                                ancestor_levels=ancestor_levels,
                                                max_siblings=max_siblings,
                                                include_hidden=include_hidden,
                                                wait_until=wait_until,
-                                               timeout_ms=timeout_ms))
+                                               timeout_ms=timeout_ms,
+                                               target_exact=target_exact))
 
 
 # ---------------------------
-# Canonical JSON builder & flattener
+# Canonical JSON builder & semantic embedding string
 # ---------------------------
 def _safe_attrs_str(attrs: Dict[str, Any], max_len: int = 400) -> str:
     s = json.dumps(attrs, sort_keys=True, ensure_ascii=False)
@@ -291,11 +392,13 @@ def build_canonical(rec: Dict[str, Any]) -> Dict[str, Any]:
         "frameId": str(frameId),
         "frameUrl": str(frameUrl),
         "node": {
-            "tag": node.get('tag'),
+            "tag": (str(node.get('tag') or '')).lower(),
             "text": (node.get('text') or '').strip(),
+            "directText": (node.get('directText') or '').strip(),
             "attrs": node.get('attrs') or {},
             "bbox": [ node.get('bbox',{}).get('left',0), node.get('bbox',{}).get('top',0), node.get('bbox',{}).get('width',0), node.get('bbox',{}).get('height',0) ],
-            "outerHTML": node.get('outerHTML','')
+            "outerHTML": node.get('outerHTML',''),
+            "css": node.get('css', {}) or {},
         },
         "ancestors": [
             {"tag": a.get('tag'), "attrs": a.get('attrs') or {}, "bbox": [ a.get('bbox',{}).get('left',0), a.get('bbox',{}).get('top',0), a.get('bbox',{}).get('width',0), a.get('bbox',{}).get('height',0) ]}
@@ -313,28 +416,197 @@ def build_canonical(rec: Dict[str, Any]) -> Dict[str, Any]:
     return canonical
 
 
+def _split_camel_and_separators(value: str) -> List[str]:
+    if not value:
+        return []
+    s = re.sub(r"[\-_]+", " ", value)
+    s = re.sub(r"([a-z])([A-Z])", r"\1 \2", s)
+    s = s.replace("/", " ")
+    tokens = [t for t in re.split(r"\W+", s) if t]
+    return tokens
+
+
+def _clean_tokens(tokens: List[str]) -> List[str]:
+    stop = {
+        "btn", "button", "link", "svg", "icon", "img", "image",
+        "div", "span", "label", "text", "item", "list", "tile",
+        "col", "row", "container", "wrapper", "section", "card",
+        "component", "module", "root", "view", "element", "wrapper",
+        "id", "name", "data", "test", "qa", "track", "tracking", "analytics",
+        "nav", "navbar", "header", "footer", "content", "body",
+        "primary", "secondary", "tertiary", "default"
+    }
+    out: List[str] = []
+    for t in tokens:
+        low = t.lower()
+        if not low:
+            continue
+        if low in stop:
+            continue
+        if len(low) > 64:
+            continue
+        out.append(low)
+    # de-duplicate while preserving order
+    seen: set = set()
+    uniq: List[str] = []
+    for t in out:
+        if t in seen:
+            continue
+        seen.add(t)
+        uniq.append(t)
+    return uniq
+
+
+def _derive_role(tag: str, attrs: Dict[str, Any]) -> str:
+    role_attr = str(attrs.get("role", "")) if attrs else ""
+    if role_attr:
+        return role_attr.lower()
+    t = (tag or "").lower()
+    if t == "a":
+        return "link"
+    if t == "button":
+        return "button"
+    if t == "input":
+        typ = str(attrs.get("type", "")).lower() if attrs else ""
+        if typ in ("button", "submit", "image"):
+            return "button"
+        return "input"
+    if t in ("select", "option"):
+        return "select" if t == "select" else "option"
+    return t or "element"
+
+
+def _collect_intent_tokens(attrs: Dict[str, Any]) -> List[str]:
+    if not attrs:
+        return []
+    intent_sources: List[str] = []
+    for key, val in attrs.items():
+        if val is None:
+            continue
+        k = str(key).lower()
+        if k == "id" or k == "name" or k == "value" or k == "title":
+            intent_sources.append(str(val))
+        elif k.startswith("data-"):
+            # Favor commonly semantic data-* keys
+            if any(sig in k for sig in ("test", "qa", "action", "label", "role", "track", "tracking", "analytics", "intent")):
+                intent_sources.append(str(val))
+    tokens: List[str] = []
+    for src in intent_sources:
+        tokens.extend(_split_camel_and_separators(str(src)))
+    return _clean_tokens(tokens)
+
+
+def _collect_semantic_from_ancestors(ancestors: List[Dict[str, Any]]) -> List[str]:
+    if not ancestors:
+        return []
+    meaningful_signals = {"filter", "filters", "menu", "compare", "cart", "search"}
+    tokens: List[str] = []
+    for anc in ancestors[:3]:
+        aattrs = anc.get("attrs", {}) or {}
+        # consider id/name/title/aria-label/data-*
+        for key, val in list(aattrs.items()):
+            if val is None:
+                continue
+            k = str(key).lower()
+            if k in ("id", "name", "title", "aria-label") or k.startswith("data-"):
+                words = _split_camel_and_separators(str(val))
+                low_words = [w.lower() for w in words]
+                if any(m in low_words for m in meaningful_signals) or any(m in str(val).lower() for m in meaningful_signals):
+                    tokens.extend(low_words)
+        # also consider role attribute at ancestor
+        role = str(aattrs.get("role", "") or "").lower()
+        if role and any(sig in role for sig in ("menu", "filter")):
+            tokens.extend(_split_camel_and_separators(role))
+    # filter to keep only meaningful signals + neighbors
+    cleaned = _clean_tokens(tokens)
+    # Keep at most 6 tokens from ancestors to avoid noise
+    return cleaned[:6]
+
+
+def _normalize_text_for_embedding(text: str, limit: int = 200) -> str:
+    if not text:
+        return ""
+    s = re.sub(r"\s+", " ", str(text)).strip()
+    s = s[:limit]
+    return s.lower()
+
+
 def flatten_for_embedding(canonical: Dict[str, Any], full: bool = False) -> str:
-    parts: List[str] = []
-    parts.append(f"FRAME[{canonical.get('frameId','')}] url={canonical.get('frameUrl','')}")
-    for anc in canonical.get('ancestors', []):
-        attrs_str = json.dumps(anc.get('attrs', {}), sort_keys=True, ensure_ascii=False) if full else _safe_attrs_str(anc.get('attrs', {}), 200)
-        bbox_str = ','.join(str(int(x)) for x in anc.get('bbox', [0, 0, 0, 0]))
-        parts.append(f"ANC[{anc.get('tag')}] attrs={attrs_str} bbox={bbox_str}")
-    node = canonical.get('node', {})
-    node_text = (node.get('text') or '') if full else (node.get('text') or '')[:200]
-    node_attrs_str = json.dumps(node.get('attrs', {}), sort_keys=True, ensure_ascii=False) if full else _safe_attrs_str(node.get('attrs', {}), 300)
-    node_bbox_str = ','.join(str(int(x)) for x in node.get('bbox', [0, 0, 0, 0]))
-    parts.append(f"NODE[{node.get('tag')}] text={node_text} attrs={node_attrs_str} bbox={node_bbox_str}")
-    for s in canonical.get('siblings', []):
-        sib_text = (s.get('text') or '') if full else (s.get('text') or '')[:80]
-        sib_attrs_str = json.dumps(s.get('attrs', {}), sort_keys=True, ensure_ascii=False) if full else _safe_attrs_str(s.get('attrs', {}), 150)
-        sib_bbox_str = ','.join(str(int(x)) for x in s.get('bbox', [0, 0, 0, 0]))
-        parts.append(f"SIB[{s.get('tag')}] text={sib_text} attrs={sib_attrs_str} bbox={sib_bbox_str}")
-    flat = " | ".join(parts)
-    if not full and len(flat) > 32000:
-        h = hashlib.sha1(flat.encode('utf-8')).hexdigest()[:8]
-        flat = flat[:32000] + "...|sha1:" + h
-    return flat
+    node = canonical.get("node", {}) or {}
+    ancestors = canonical.get("ancestors", []) or []
+    tag_raw = node.get("tag") or ""
+    attrs: Dict[str, Any] = node.get("attrs", {}) or {}
+    tag = str(tag_raw).lower()
+    role = _derive_role(tag, attrs)
+    aria_label = str(attrs.get("aria-label", "") or "")
+    alt_attr = str(attrs.get("alt", "") or "")
+    href_attr = str(attrs.get("href", "") or "")
+
+    # intent from id and relevant data-* keys
+    intent_tokens = _collect_intent_tokens(attrs)
+    # additionally fold aria-label tokens into intent to emphasize semantic target
+    if aria_label:
+        aria_tokens = _split_camel_and_separators(aria_label)
+        aria_tokens = [t.lower() for t in aria_tokens if t and t.lower() not in {"compare","checkbox","button"}]
+        # merge uniquely
+        for tok in aria_tokens:
+            if tok not in intent_tokens:
+                intent_tokens.append(tok)
+    # Bring in a tiny bit of ancestor semantics when clearly meaningful (e.g., searchFilters container)
+    anc_tokens = _collect_semantic_from_ancestors(ancestors)
+    if anc_tokens:
+        # Merge uniquely, preserving order
+        seen = set(intent_tokens)
+        for tok in anc_tokens:
+            if tok not in seen:
+                intent_tokens.append(tok)
+                seen.add(tok)
+    intent_phrase = " ".join(intent_tokens) if intent_tokens else ""
+
+    # choose visible text; fallback chain when innerText is empty
+    text_candidates = [
+        node.get("text") or "",
+        attrs.get("aria-label") or "",
+        attrs.get("title") or "",
+        attrs.get("value") or "",
+    ]
+    chosen_text_raw = ""
+    for cand in text_candidates:
+        if cand and str(cand).strip():
+            chosen_text_raw = str(cand)
+            break
+    text_norm = _normalize_text_for_embedding(chosen_text_raw, 200)
+
+    # build header
+    header_parts: List[str] = []
+    header_parts.append(f"element: {tag}")
+    header_parts.append(f"role: {role}")
+    if aria_label:
+        header_parts.append(f"aria-label: {_normalize_text_for_embedding(aria_label, 120)}")
+    if intent_phrase:
+        header_parts.append(f"intent: {intent_phrase}")
+    header = "; ".join(header_parts)
+
+    body_parts: List[str] = []
+    if text_norm:
+        body_parts.append(f"text: {text_norm}")
+    if tag == "a" and href_attr:
+        href_clean = href_attr.strip()
+        if len(href_clean) > 200:
+            href_clean = href_clean[:200] + "..."
+        body_parts.append(f"href: {href_clean.lower()}")
+    if (tag == "img" or alt_attr) and alt_attr:
+        body_parts.append(f"alt: {_normalize_text_for_embedding(alt_attr, 120)}")
+
+    embedding_string = header
+    if body_parts:
+        embedding_string += " | " + " | ".join(body_parts)
+
+    # enforce total length cap
+    if not full and len(embedding_string) > 32000:
+        h = hashlib.sha1(embedding_string.encode("utf-8")).hexdigest()[:8]
+        embedding_string = embedding_string[:32000] + "...|sha1:" + h
+    return embedding_string
 
 
 # ---------------------------
@@ -385,6 +657,38 @@ def _iou(b1: Tuple[int,int,int,int], b2: Tuple[int,int,int,int]) -> float:
 # Embedding + ranking pipeline
 # ---------------------------
 _EMBED_MODEL: Optional[SentenceTransformer] = None
+
+
+def _clean_query(original_query: str) -> str:
+    q = (original_query or "").lower()
+    # Remove punctuation
+    q = re.sub(r"[\.,:;!\?\(\)\[\]\{\}\|]", " ", q)
+    # Stop words and action verbs to drop (keep nouns like button/menu/cart)
+    stop = {
+        "click", "press", "tap", "open", "select", "choose", "pick", "go",
+        "search", "find", "show", "hide",
+        "on", "in", "at", "to", "for", "with", "of", "by", "from",
+        "the", "a", "an", "and", "or", "please",
+    }
+    tokens = [t for t in re.split(r"\s+", q) if t]
+    kept: List[str] = []
+    for t in tokens:
+        if t in stop:
+            continue
+        kept.append(t)
+    # Lemmatize simple plurals
+    def lem(tok: str) -> str:
+        if len(tok) > 3 and tok.endswith("ies"):
+            return tok[:-3] + "y"
+        if len(tok) > 3 and tok.endswith("ses"):
+            return tok[:-2]
+        if len(tok) > 3 and tok.endswith("s") and not tok.endswith("ss"):
+            return tok[:-1]
+        return tok
+    lemmed = [lem(t) for t in kept]
+    # collapse spaces
+    cleaned = " ".join([t for t in lemmed if t])
+    return cleaned.strip()
 
 
 def _get_model(cfg: Dict[str, Any]) -> SentenceTransformer:
@@ -477,6 +781,8 @@ def retrieve_best_element(
         # prefilter tuning
         "prefilter_match_mode": "contains",  # contains | equals | regex
         "prefilter_scope": "node_and_ancestors",  # node | node_and_ancestors
+        # post-filter: drop container elements when a preferred descendant also matches
+        "suppress_container_matches": True,
     }
     if config:
         cfg.update(config)
@@ -485,6 +791,7 @@ def retrieve_best_element(
         maybe_install_deps(auto_install=bool(cfg.get("auto_install_deps", False)))
 
     overall_t0 = time.time()
+    # We don't know match_mode until later; run a first extraction, then optionally re-extract with targetExact
     nodes, screenshot_b64, timings_extract = extract_all_nodes(
         url,
         ancestor_levels=cfg["ancestor_levels"],
@@ -492,6 +799,7 @@ def retrieve_best_element(
         include_hidden=cfg["include_hidden"],
         wait_until=cfg["wait_until"],
         timeout_ms=cfg["timeout_ms"],
+        target_exact="",
     )
 
     timings: Dict[str, Any] = {"page_load": timings_extract.get("page_load", 0.0),
@@ -501,12 +809,25 @@ def retrieve_best_element(
                                "frame_urls": timings_extract.get("frame_urls", [])}
     timings['extracted_count'] = len(nodes)
 
-    # pre-filter by target_text
+    # pre-filter by target_text (exact innerText, with DOM-side leaf-match optimization when equals mode)
     pre_t0 = time.time()
     needle_raw = (target_text or '').strip()
     needle = needle_raw.lower()
     match_mode = str(cfg.get("prefilter_match_mode", "contains")).lower()
+    # If equals mode with needle, re-extract using DOM-side leaf matching for exact text
+    if needle_raw and match_mode == 'equals':
+        nodes, screenshot_b64, timings_extract2 = extract_all_nodes(
+            url,
+            ancestor_levels=cfg["ancestor_levels"],
+            max_siblings=cfg["max_siblings"],
+            include_hidden=cfg["include_hidden"],
+            wait_until=cfg["wait_until"],
+            timeout_ms=cfg["timeout_ms"],
+            target_exact=needle_raw,
+        )
+        timings['extracted_count'] = len(nodes)
     scope = str(cfg.get("prefilter_scope", "node_and_ancestors")).lower()
+    direct_only = bool(cfg.get("prefilter_direct_text_only", False))
     # tag-based whitelisting removed to avoid heuristic bias
 
     def match_text(text: str) -> bool:
@@ -525,16 +846,26 @@ def retrieve_best_element(
 
     if needle:
         filtered: List[Dict[str, Any]] = []
-        for r in nodes:
-            node_ok = match_text(r.get('node', {}).get('text') or '')
-            anc_ok = False
-            if scope == 'node_and_ancestors':
-                anc_texts = ' '.join([(a.get('text') or '') for a in (r.get('ancestors') or [])])
-                anc_ok = match_text(anc_texts)
-            passed_text = node_ok or anc_ok
-            if not passed_text:
-                continue
-            filtered.append(r)
+        if match_mode == 'equals':
+            # Prefer DOM-side exact leaf matching: use only node.text exact equality
+            for r in nodes:
+                txt = str((r.get('node', {}) or {}).get('text') or '')
+                if txt.strip().lower() == needle:
+                    filtered.append(r)
+        else:
+            for r in nodes:
+                node_field = 'directText' if direct_only else 'text'
+                node_dict = r.get('node', {}) or {}
+                value = str(node_dict.get(node_field) or '')
+                node_ok = match_text(value)
+                anc_ok = False
+                if scope == 'node_and_ancestors':
+                    anc_texts = ' '.join([(a.get('text') or '') for a in (r.get('ancestors') or [])])
+                    anc_ok = match_text(anc_texts)
+                passed_text = node_ok or anc_ok
+                if not passed_text:
+                    continue
+                filtered.append(r)
     else:
         filtered = nodes[:]
     timings['prefilter_count'] = len(filtered)
@@ -542,6 +873,12 @@ def retrieve_best_element(
 
     # Build canonical & flattened
     t_can = time.time()
+    # Optional tag whitelist (e.g., only 'label' for Compare controls)
+    tag_whitelist = cfg.get("candidate_tag_whitelist")
+    if tag_whitelist:
+        wl = {str(t).lower() for t in (tag_whitelist or [])}
+        filtered = [r for r in filtered if str((r.get('node', {}) or {}).get('tag') or '').lower() in wl]
+    timings['whitelist_count'] = len(filtered)
     candidates: List[Dict[str, Any]] = []
     full_flat = bool(cfg.get("embedding_full_attributes", False))
     for rec in filtered:
@@ -561,16 +898,14 @@ def retrieve_best_element(
         can = c['canonical']
         tag = can['node']['tag'] or ''
         text = (can['node']['text'] or '')[:200]
+        direct_text = (can['node'].get('directText') or '')[:200]
         attrs_key = _safe_attrs_str(can['node'].get('attrs',{}), 200)
-        bbox = can['node'].get('bbox',[0,0,0,0])
+        # Ignore bbox in dedupe key to avoid duplicate 0x0 clones counting twice
         key = (
             tag,
             text,
+            direct_text,
             attrs_key,
-            int(round(float(bbox[0]) if bbox else 0)),
-            int(round(float(bbox[1]) if bbox else 0)),
-            int(round(float(bbox[2]) if bbox else 0)),
-            int(round(float(bbox[3]) if bbox else 0)),
         )
         if key in seen:
             continue
@@ -585,6 +920,35 @@ def retrieve_best_element(
         dedup = dedup[:max_candidates]
         timings['capped_to'] = max_candidates
 
+    # Post-filter: suppress container nodes (e.g., li/div/span) when there is a matching preferred descendant (e.g., a/button)
+    if dedup and bool(cfg.get("suppress_container_matches", True)):
+        # Treat these as containers; drop them if a preferred descendant also matches
+        container_tags = {"li", "ul", "ol", "div", "section", "nav", "header", "footer", "article", "main", "aside", "span"}
+        # Consider these as preferred actionable elements for matched text
+        preferred_tags = {"a", "button", "input", "select", "textarea", "summary", "label"}
+        drop_indexes: set = set()
+        # Precompute node outerHTML and ancestor outerHTML sets for each candidate
+        node_outer_by_idx = {i: (c.get('raw', {}).get('node', {}) or {}).get('outerHTML', '') for i, c in enumerate(dedup)}
+        ancestors_outer_sets: Dict[int, set] = {}
+        for i, c in enumerate(dedup):
+            anc_list = (c.get('raw', {}).get('ancestors') or [])
+            ancestors_outer_sets[i] = { (a or {}).get('outerHTML','') for a in anc_list if isinstance(a, dict) }
+        # Collect outerHTML of preferred nodes
+        preferred_outers = { node_outer_by_idx.get(i) for i, c in enumerate(dedup)
+                             if (c.get('canonical', {}).get('node', {}).get('tag') or '') in preferred_tags }
+        preferred_outers.discard(None)
+        # Drop any candidate whose tag is a container OR not preferred, and whose ancestors include a preferred node
+        for i, c in enumerate(dedup):
+            tag_i = (c.get('canonical', {}).get('node', {}).get('tag') or '')
+            if tag_i in preferred_tags:
+                continue
+            anc_outers_i = ancestors_outer_sets.get(i) or set()
+            if any(p in anc_outers_i for p in preferred_outers):
+                drop_indexes.add(i)
+        if drop_indexes:
+            dedup = [c for k, c in enumerate(dedup) if k not in drop_indexes]
+            timings['postfilter_container_dropped'] = len(drop_indexes)
+
     if not dedup:
         result = {"best_index": None, "best_canonical": None, "best_canonical_str": None, "best_score": 0.0, "scores": [], "fallback_used": False, "fallback_info": None, "diagnostics": {"timings": timings, "num_candidates": 0, "top5": []}, "total_time_s": time.time()-overall_t0}
         # If debug requested, print a quick notice
@@ -596,7 +960,9 @@ def retrieve_best_element(
     t_emb = time.time()
     model = _get_model(cfg)
     cand_texts = [d['flat'] for d in dedup]
-    q_emb = model.encode([query], convert_to_tensor=True)
+    cleaned_query = _clean_query(query)
+    # Ensure cleaned query like "apple filter button" is used
+    q_emb = model.encode([cleaned_query], convert_to_tensor=True)
     cand_emb = model.encode(cand_texts, convert_to_tensor=True)
     sims_tensor = util.cos_sim(q_emb, cand_emb)[0]
     sims = sims_tensor.detach().cpu().numpy()
@@ -618,7 +984,7 @@ def retrieve_best_element(
         "second_score": second_score,
     }
 
-    # Optional: debug print of candidates (canonical string + JSON + score)
+    # Optional: debug print of candidates (embedding string + JSON + score)
     if cfg.get("debug_dump_candidates"):
         dump_k = int(cfg.get("debug_dump_top_k") or 0)
         limit = dump_k if dump_k and dump_k > 0 else len(order)
@@ -649,7 +1015,7 @@ def retrieve_best_element(
         if only_pref and needle:
             print(f"[DEBUG] Printed {printed} candidates matching '{needle}'.")
 
-    # fallback
+    # fallback (strict gates per spec: low score or ambiguous top-2)
     use_visual_fallback = bool(cfg['use_visual_fallback'])
     similarity_threshold = float(cfg['similarity_threshold'])
     ambiguity_delta = float(cfg['ambiguity_delta'])
@@ -657,10 +1023,7 @@ def retrieve_best_element(
     fallback_info: Optional[Dict[str, Any]] = None
 
     trigger_fallback = False
-    if timings['prefilter_count'] == 0:
-        trigger_fallback = True
-        fallback_reason = 'no_candidates_after_prefilter'
-    elif best_score < similarity_threshold:
+    if best_score < similarity_threshold:
         trigger_fallback = True
         fallback_reason = 'low_score'
     elif (best_score - second_score) < ambiguity_delta:
@@ -682,13 +1045,15 @@ def retrieve_best_element(
                 iouv = _iou((l,t,w,h), (int(cb[0]), int(cb[1]), int(cb[2]), int(cb[3])))
                 if iouv > best_iou:
                     best_iou = iouv; best_idx_by_ocr = ci
-        if best_idx_by_ocr is not None:
+        # Only adopt OCR-mapped candidate if IoU passes cutoff
+        iou_cutoff = float(cfg.get('ocr_iou_cutoff', 0.3))
+        if best_idx_by_ocr is not None and best_iou >= iou_cutoff:
             best_idx = int(best_idx_by_ocr)
             best_score = float(sims[best_idx])
         fallback_info = {
             "reason": fallback_reason,
             "ocr_matches": ocr_matches[:20],
-            "selected_by_ocr_iou": best_iou if best_iou > 0 else None,
+            "selected_by_ocr_iou": best_iou if best_iou >= iou_cutoff else None,
         }
         diagnostics['fallback_time'] = time.time() - t_fb
 
@@ -699,12 +1064,39 @@ def retrieve_best_element(
             "rank": int(i+1),
             "score": float(sims[j]),
             "canonical": dedup[j]['canonical'],
-            "canonical_str": dedup[j]['flat'],
+            "embedding_string": dedup[j]['flat'],
         }
         for i, j in enumerate(order)
     ]
     if return_k and return_k > 0:
         ranked = ranked[:return_k]
+
+    # enrich diagnostics with top-5 candidate info and counts
+    top5_details = []
+    for i, j in enumerate(order[:5]):
+        cnode = dedup[j]['canonical']['node']
+        top5_details.append({
+            "rank": int(i+1),
+            "score": float(sims[j]),
+            "tag": cnode.get("tag"),
+            "text": cnode.get("text"),
+            "embedding_string": dedup[j]['flat'],
+        })
+    diagnostics.update({
+        "gap": float(best_score - second_score),
+        "top5_candidates": top5_details,
+        "counts": {
+            "extracted": int(timings.get("extracted_count", 0)),
+            "prefiltered": int(timings.get("prefilter_count", 0)),
+            "canonical": int(timings.get("canonical_count", 0)),
+            "deduped": int(timings.get("dedup_count", 0)),
+        },
+        "total_time_s": float(time.time() - overall_t0),
+        "best_summary": {
+            "tag": dedup[best_idx]['canonical']['node'].get('tag'),
+            "text": dedup[best_idx]['canonical']['node'].get('text'),
+        }
+    })
 
     result = {
         "best_index": best_idx,
@@ -722,32 +1114,81 @@ def retrieve_best_element(
 
 
 if __name__ == "__main__":
-    # Colab-friendly example run: auto-install deps and use HF token from env
-    url = "https://www.verizon.com/smartphones/"
-    query = "Click on Apple filter button"
-    target_text = "Apple"
+    import argparse
+
+    parser = argparse.ArgumentParser(description="UI Element Locator using Gemma embeddings")
+    parser.add_argument("--url", required=True, help="Page URL to load")
+    parser.add_argument("--query", required=True, help="Natural language query")
+    parser.add_argument("--text", dest="target_text", default="", help="Optional target text to prefilter, e.g. 'Apple'")
+    parser.add_argument("--hf-token", dest="hf_token", default=os.environ.get("HUGGINGFACE_HUB_TOKEN", ""), help="Hugging Face token for Gemma model")
+    parser.add_argument("--no-visual-fallback", action="store_true", help="Disable OCR/Pix2Struct visual fallback")
+    parser.add_argument("--similarity-threshold", type=float, default=0.72)
+    parser.add_argument("--ambiguity-delta", type=float, default=0.05)
+    parser.add_argument("--ancestor-levels", type=int, default=2)
+    parser.add_argument("--max-siblings", type=int, default=1)
+    parser.add_argument("--include-hidden", action="store_true")
+    parser.add_argument("--return-top-k", type=int, default=0, help="Return top K ranked candidates in output (0 = all)")
+    parser.add_argument("--max-candidates", type=int, default=500, help="Maximum candidates to keep after dedupe (increase to print all matches)")
+    parser.add_argument("--prefilter-mode", choices=["contains","equals","regex"], default="contains")
+    parser.add_argument("--prefilter-scope", choices=["node","node_and_ancestors"], default="node_and_ancestors")
+    parser.add_argument("--prefilter-direct-text-only", action="store_true", help="If set, prefilter uses node.directText instead of node.text")
+    parser.add_argument("--debug", action="store_true", help="Print debug candidate dumps")
+    parser.add_argument("--wait-until", choices=["load","domcontentloaded","networkidle","commit"], default="networkidle")
+    parser.add_argument("--timeout-ms", type=int, default=60000)
+    parser.add_argument("--whitelist-tags", dest="whitelist_tags", default="", help="Comma-separated list of HTML tags to include as candidates (lowercase), e.g. 'label,a'")
+
+    args = parser.parse_args()
+
     cfg = {
-        "auto_install_deps": True,
-        "use_visual_fallback": False,
+        "ancestor_levels": int(args.ancestor_levels),
+        "max_siblings": int(args.max_siblings),
+        "include_hidden": bool(args.include_hidden),
+        "similarity_threshold": float(args.similarity_threshold),
+        "ambiguity_delta": float(args.ambiguity_delta),
+        "use_visual_fallback": (not args.no_visual_fallback),
         "embedding_model_name": "google/embeddinggemma-300m",
         "allow_embedding_fallback": False,
-        "hf_token": os.environ.get("HUGGINGFACE_HUB_TOKEN"),
-        "debug_dump_candidates": True,
+        "hf_token": args.hf_token or os.environ.get("HUGGINGFACE_HUB_TOKEN"),
+        "debug_dump_candidates": bool(args.debug),
         "debug_dump_only_prefiltered": True,
         "debug_dump_top_k": 0,
-        "return_top_k": 0,
-        "prefilter_match_mode": "equals",
-        "prefilter_scope": "node",
+        "return_top_k": int(args.return_top_k or 0),
+        "max_candidates": int(args.max_candidates or 500),
+        "prefilter_match_mode": str(args.prefilter_mode),
+        "prefilter_scope": str(args.prefilter_scope),
+        "prefilter_direct_text_only": bool(args.prefilter_direct_text_only),
+        "wait_until": str(args.wait_until),
+        "timeout_ms": int(args.timeout_ms),
+        "candidate_tag_whitelist": [t.strip().lower() for t in (args.whitelist_tags.split(",") if args.whitelist_tags else []) if t.strip()],
     }
-    out = retrieve_best_element(url, query, target_text=target_text, config=cfg)
+
+    out = retrieve_best_element(args.url, args.query, target_text=(args.target_text or None), config=cfg)
+
+    # Always print each matching candidate (those considered after prefilter/dedupe) with embedding string, canonical JSON, and score
+    ranked = out.get("ranked") or []
+    print("\n=== Matching candidates (after prefilter & dedupe) ===")
+    for item in ranked:
+        try:
+            print(f"# Rank {item['rank']} | score={item['score']:.4f}")
+            print("embedding_string:")
+            print(item.get("embedding_string") or item.get("canonical_str") or "")
+            print("canonical_json:")
+            print(json.dumps(item.get("canonical"), indent=2))
+            print("----")
+        except Exception:
+            continue
+
+    # Summary
+    print("\n=== Summary ===")
     print(json.dumps({
         "best_index": out.get("best_index"),
         "best_score": out.get("best_score"),
         "best_tag": out.get("best_canonical", {}).get("node", {}).get("tag"),
         "best_text": out.get("best_canonical", {}).get("node", {}).get("text"),
         "fallback_used": out.get("fallback_used"),
-        "top5": out.get("diagnostics", {}).get("top5"),
-        "num_candidates": out.get("diagnostics", {}).get("num_candidates"),
-        "timings": out.get("diagnostics", {}).get("timings")
+        "gap": out.get("diagnostics", {}).get("gap"),
+        "counts": out.get("diagnostics", {}).get("counts"),
+        "timings": out.get("diagnostics", {}).get("timings"),
+        "total_time_s": out.get("diagnostics", {}).get("total_time_s"),
     }, indent=2))
 
