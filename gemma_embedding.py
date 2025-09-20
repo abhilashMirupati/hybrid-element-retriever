@@ -430,6 +430,12 @@ def retrieve_best_element(
         "max_candidates": 500,
         "use_visual_fallback": True,
         "auto_install_deps": False,
+        # diagnostics/printing
+        "debug_dump_candidates": False,
+        # 0 or None -> dump all when debug enabled
+        "debug_dump_top_k": 0,
+        # return top-K ranked candidates in payload (0/None -> all)
+        "return_top_k": 100,
     }
     if config:
         cfg.update(config)
@@ -524,6 +530,9 @@ def retrieve_best_element(
 
     if not dedup:
         result = {"best_index": None, "best_canonical": None, "best_canonical_str": None, "best_score": 0.0, "scores": [], "fallback_used": False, "fallback_info": None, "diagnostics": {"timings": timings, "num_candidates": 0, "top5": []}, "total_time_s": time.time()-overall_t0}
+        # If debug requested, print a quick notice
+        if cfg.get("debug_dump_candidates"):
+            print("[DEBUG] No candidates after processing.")
         return result
 
     # embeddings
@@ -578,6 +587,27 @@ def retrieve_best_element(
         "second_score": second_score,
     }
 
+    # Optional: debug print of candidates (canonical string + JSON + score)
+    if cfg.get("debug_dump_candidates"):
+        dump_k = int(cfg.get("debug_dump_top_k") or 0)
+        limit = dump_k if dump_k and dump_k > 0 else len(order)
+        print(f"[DEBUG] Dumping top {limit} candidates (of {len(order)})")
+        for rank, idx in enumerate(order[:limit], start=1):
+            c = dedup[idx]
+            print("== Candidate #", rank, "==")
+            try:
+                print("canonical_string:")
+                print(c['flat'])
+            except Exception:
+                pass
+            try:
+                print("canonical_json:")
+                print(json.dumps(c['canonical'], indent=2))
+            except Exception:
+                pass
+            print("similarity:", float(sims[idx]))
+            print("----")
+
     # fallback
     use_visual_fallback = bool(cfg['use_visual_fallback'])
     similarity_threshold = float(cfg['similarity_threshold'])
@@ -621,12 +651,27 @@ def retrieve_best_element(
         }
         diagnostics['fallback_time'] = time.time() - t_fb
 
+    # Return top-K candidates if requested
+    return_k = int(cfg.get("return_top_k") or 0)
+    ranked = [
+        {
+            "rank": int(i+1),
+            "score": float(sims[j]),
+            "canonical": dedup[j]['canonical'],
+            "canonical_str": dedup[j]['flat'],
+        }
+        for i, j in enumerate(order)
+    ]
+    if return_k and return_k > 0:
+        ranked = ranked[:return_k]
+
     result = {
         "best_index": best_idx,
         "best_canonical": dedup[best_idx]['canonical'],
         "best_canonical_str": dedup[best_idx]['flat'],
         "best_score": best_score,
         "scores": [float(s) for s in sims.tolist()],
+        "ranked": ranked,
         "fallback_used": fallback_used,
         "fallback_info": fallback_info,
         "diagnostics": diagnostics,
