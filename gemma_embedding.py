@@ -1036,6 +1036,7 @@ if __name__ == "__main__":
     parser.add_argument("--debug", action="store_true", help="Print debug candidate dumps")
     parser.add_argument("--wait-until", choices=["load","domcontentloaded","networkidle","commit"], default="networkidle")
     parser.add_argument("--timeout-ms", type=int, default=60000)
+    parser.add_argument("--whitelist-tags", dest="whitelist_tags", default="", help="Comma-separated list of HTML tags to include as candidates (lowercase), e.g. 'label,a'")
 
     args = parser.parse_args()
 
@@ -1059,6 +1060,7 @@ if __name__ == "__main__":
         "prefilter_direct_text_only": bool(args.prefilter_direct_text_only),
         "wait_until": str(args.wait_until),
         "timeout_ms": int(args.timeout_ms),
+        "candidate_tag_whitelist": [t.strip().lower() for t in (args.whitelist_tags.split(",") if args.whitelist_tags else []) if t.strip()],
     }
 
     out = retrieve_best_element(args.url, args.query, target_text=(args.target_text or None), config=cfg)
