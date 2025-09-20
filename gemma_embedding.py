@@ -978,9 +978,12 @@ if __name__ == "__main__":
     parser.add_argument("--max-siblings", type=int, default=1)
     parser.add_argument("--include-hidden", action="store_true")
     parser.add_argument("--return-top-k", type=int, default=0, help="Return top K ranked candidates in output (0 = all)")
+    parser.add_argument("--max-candidates", type=int, default=500, help="Maximum candidates to keep after dedupe (increase to print all matches)")
     parser.add_argument("--prefilter-mode", choices=["contains","equals","regex"], default="contains")
     parser.add_argument("--prefilter-scope", choices=["node","node_and_ancestors"], default="node_and_ancestors")
     parser.add_argument("--debug", action="store_true", help="Print debug candidate dumps")
+    parser.add_argument("--wait-until", choices=["load","domcontentloaded","networkidle","commit"], default="networkidle")
+    parser.add_argument("--timeout-ms", type=int, default=60000)
 
     args = parser.parse_args()
 
@@ -998,8 +1001,11 @@ if __name__ == "__main__":
         "debug_dump_only_prefiltered": True,
         "debug_dump_top_k": 0,
         "return_top_k": int(args.return_top_k or 0),
+        "max_candidates": int(args.max_candidates or 500),
         "prefilter_match_mode": str(args.prefilter_mode),
         "prefilter_scope": str(args.prefilter_scope),
+        "wait_until": str(args.wait_until),
+        "timeout_ms": int(args.timeout_ms),
     }
 
     out = retrieve_best_element(args.url, args.query, target_text=(args.target_text or None), config=cfg)
