@@ -23,10 +23,15 @@ Self-critique (5 iterations — what we changed in embedding_string to improve r
    - Change: Keep full user-visible text tokens (up to 200 chars) and include alt text for images where relevant.
    - Result: Candidate strings contain "iphone 17 pro max" tokens; product card/cta ranks higher than generic links.
 
+V2 Refinements (Post-Critique):
+- Problem: Overly complex embedding strings ("element: button; ...") created noise and diluted the main signal.
+- Change 1 (Content-First): The embedding string now leads with the most important content (visible text, ARIA label) and follows with minimal, unstructured context (e.g., "compare button product filters"). This removes noise and respects token importance in transformers.
+- Change 2 (Smarter Query Cleaning): The query cleaner now preserves important UI/action keywords (e.g., "compare", "filter") and extracts key tokens to guide the search.
+- Change 3 (Reranking for Ambiguity): If top candidates have very similar embedding scores, a reranking step is applied. It gives a small bonus to candidates whose text more closely matches the key tokens from the user's query, acting as a powerful tie-breaker.
+
 Notes:
 - Canonical JSON preserves all raw attributes, outerHTML, ancestors/siblings for later actions; we do NOT inject meta markers (FRAME[], NODE[], ANC[]) into the embedding string.
-- Query is cleaned before embedding: lowercased, action/filler words removed, simple plural lemmatization.
-- Ranking is strictly cosine-sim on Gemma embeddings; fallback OCR only when score below threshold or ambiguous top-2 per config.
+- Ranking is cosine-sim on Gemma embeddings, enhanced with a reranking step for ambiguous cases. Fallback OCR only when score below threshold.
 """
 
 from __future__ import annotations
@@ -416,197 +421,204 @@ def build_canonical(rec: Dict[str, Any]) -> Dict[str, Any]:
     return canonical
 
 
-def _split_camel_and_separators(value: str) -> List[str]:
-    if not value:
-        return []
-    s = re.sub(r"[\-_]+", " ", value)
-    s = re.sub(r"([a-z])([A-Z])", r"\1 \2", s)
-    s = s.replace("/", " ")
-    tokens = [t for t in re.split(r"\W+", s) if t]
-    return tokens
-
-
-def _clean_tokens(tokens: List[str]) -> List[str]:
-    stop = {
-        "btn", "button", "link", "svg", "icon", "img", "image",
-        "div", "span", "label", "text", "item", "list", "tile",
-        "col", "row", "container", "wrapper", "section", "card",
-        "component", "module", "root", "view", "element", "wrapper",
-        "id", "name", "data", "test", "qa", "track", "tracking", "analytics",
-        "nav", "navbar", "header", "footer", "content", "body",
-        "primary", "secondary", "tertiary", "default"
-    }
-    out: List[str] = []
-    for t in tokens:
-        low = t.lower()
-        if not low:
-            continue
-        if low in stop:
-            continue
-        if len(low) > 64:
-            continue
-        out.append(low)
-    # de-duplicate while preserving order
-    seen: set = set()
-    uniq: List[str] = []
-    for t in out:
-        if t in seen:
-            continue
-        seen.add(t)
-        uniq.append(t)
-    return uniq
-
-
-def _derive_role(tag: str, attrs: Dict[str, Any]) -> str:
-    role_attr = str(attrs.get("role", "")) if attrs else ""
-    if role_attr:
-        return role_attr.lower()
-    t = (tag or "").lower()
-    if t == "a":
+# ---------------------------
+# V2 Embedding String and Query Cleaning Helpers
+# ---------------------------
+def _get_element_type(tag: str, attrs: Dict[str, Any]) -> str:
+    """Get simplified element type for context."""
+    if tag == "a":
         return "link"
-    if t == "button":
+    if tag == "button":
         return "button"
-    if t == "input":
-        typ = str(attrs.get("type", "")).lower() if attrs else ""
-        if typ in ("button", "submit", "image"):
+    if tag == "input":
+        input_type = str(attrs.get("type", "")).lower()
+        if input_type in ("submit", "button"):
             return "button"
+        if input_type in ("text", "search", "email", "password"):
+            return "textbox"
+        if input_type in ("checkbox", "radio"):
+            return input_type
         return "input"
-    if t in ("select", "option"):
-        return "select" if t == "select" else "option"
-    return t or "element"
+    if tag in ("select", "option"):
+        return "dropdown"
+    if tag == "label":
+        return "label"
+    return ""
 
 
-def _collect_intent_tokens(attrs: Dict[str, Any]) -> List[str]:
-    if not attrs:
-        return []
-    intent_sources: List[str] = []
-    for key, val in attrs.items():
-        if val is None:
-            continue
-        k = str(key).lower()
-        if k == "id" or k == "name" or k == "value" or k == "title":
-            intent_sources.append(str(val))
-        elif k.startswith("data-"):
-            # Favor commonly semantic data-* keys
-            if any(sig in k for sig in ("test", "qa", "action", "label", "role", "track", "tracking", "analytics", "intent")):
-                intent_sources.append(str(val))
-    tokens: List[str] = []
-    for src in intent_sources:
-        tokens.extend(_split_camel_and_separators(str(src)))
-    return _clean_tokens(tokens)
-
-
-def _collect_semantic_from_ancestors(ancestors: List[Dict[str, Any]]) -> List[str]:
+def _get_ancestor_context(ancestors: List[Dict[str, Any]], query_tokens: List[str] = None) -> str:
+    """Extract only relevant ancestor context based on query tokens."""
     if not ancestors:
-        return []
-    meaningful_signals = {"filter", "filters", "menu", "compare", "cart", "search"}
-    tokens: List[str] = []
-    for anc in ancestors[:3]:
-        aattrs = anc.get("attrs", {}) or {}
-        # consider id/name/title/aria-label/data-*
-        for key, val in list(aattrs.items()):
-            if val is None:
-                continue
-            k = str(key).lower()
-            if k in ("id", "name", "title", "aria-label") or k.startswith("data-"):
-                words = _split_camel_and_separators(str(val))
-                low_words = [w.lower() for w in words]
-                if any(m in low_words for m in meaningful_signals) or any(m in str(val).lower() for m in meaningful_signals):
-                    tokens.extend(low_words)
-        # also consider role attribute at ancestor
-        role = str(aattrs.get("role", "") or "").lower()
-        if role and any(sig in role for sig in ("menu", "filter")):
-            tokens.extend(_split_camel_and_separators(role))
-    # filter to keep only meaningful signals + neighbors
-    cleaned = _clean_tokens(tokens)
-    # Keep at most 6 tokens from ancestors to avoid noise
-    return cleaned[:6]
-
-
-def _normalize_text_for_embedding(text: str, limit: int = 200) -> str:
-    if not text:
         return ""
-    s = re.sub(r"\s+", " ", str(text)).strip()
-    s = s[:limit]
-    return s.lower()
+
+    # Keywords that indicate important container context
+    container_signals = {
+        "filter", "filters", "search", "navigation", "menu", "toolbar",
+        "actions", "controls", "options", "settings", "cart", "checkout",
+        "product", "products", "item", "items", "results", "listing"
+    }
+
+    # If query tokens provided, add them to signals
+    if query_tokens:
+        for token in query_tokens:
+            if len(token) > 2:  # Skip very short tokens
+                container_signals.add(token.lower())
+
+    context_tokens = []
+    for ancestor in ancestors[:2]:  # Only check immediate ancestors
+        attrs = ancestor.get("attrs", {}) or {}
+
+        # Check ID and class for signals
+        for attr in ["id", "class", "data-section", "data-component"]:
+            value = str(attrs.get(attr, "")).lower()
+            if value:
+                # Check if any signal appears in the value
+                for signal in container_signals:
+                    if signal in value:
+                        # Extract the relevant part
+                        tokens = re.findall(r"\b\w+\b", value)
+                        relevant = [t for t in tokens if signal in t or t == signal]
+                        context_tokens.extend(relevant[:2])  # Limit tokens per ancestor
+                        break
+
+    # Return unique tokens
+    return " ".join(list(dict.fromkeys(context_tokens))[:3])  # Max 3 context tokens
 
 
-def flatten_for_embedding(canonical: Dict[str, Any], full: bool = False) -> str:
+def flatten_for_embedding(canonical: Dict[str, Any], query_tokens: List[str] = None, **kwargs) -> str:
+    """
+    Create task-focused embedding string optimized for semantic similarity.
+
+    Key changes:
+    1. Content-first: Put the actual text/label content before metadata
+    2. Task-aware: Include query context when available
+    3. Minimal structure: Remove unnecessary formatting tokens
+    4. Smart deduplication: Avoid repeating the same information
+    """
     node = canonical.get("node", {}) or {}
     ancestors = canonical.get("ancestors", []) or []
-    tag_raw = node.get("tag") or ""
-    attrs: Dict[str, Any] = node.get("attrs", {}) or {}
-    tag = str(tag_raw).lower()
-    role = _derive_role(tag, attrs)
-    aria_label = str(attrs.get("aria-label", "") or "")
-    alt_attr = str(attrs.get("alt", "") or "")
-    href_attr = str(attrs.get("href", "") or "")
+    tag = str(node.get("tag", "")).lower()
+    attrs = node.get("attrs", {}) or {}
 
-    # intent from id and relevant data-* keys
-    intent_tokens = _collect_intent_tokens(attrs)
-    # additionally fold aria-label tokens into intent to emphasize semantic target
-    if aria_label:
-        aria_tokens = _split_camel_and_separators(aria_label)
-        aria_tokens = [t.lower() for t in aria_tokens if t and t.lower() not in {"compare","checkbox","button"}]
-        # merge uniquely
-        for tok in aria_tokens:
-            if tok not in intent_tokens:
-                intent_tokens.append(tok)
-    # Bring in a tiny bit of ancestor semantics when clearly meaningful (e.g., searchFilters container)
-    anc_tokens = _collect_semantic_from_ancestors(ancestors)
-    if anc_tokens:
-        # Merge uniquely, preserving order
-        seen = set(intent_tokens)
-        for tok in anc_tokens:
-            if tok not in seen:
-                intent_tokens.append(tok)
-                seen.add(tok)
-    intent_phrase = " ".join(intent_tokens) if intent_tokens else ""
+    # Primary content sources (in order of importance)
+    text_sources = []
 
-    # choose visible text; fallback chain when innerText is empty
-    text_candidates = [
-        node.get("text") or "",
-        attrs.get("aria-label") or "",
-        attrs.get("title") or "",
-        attrs.get("value") or "",
-    ]
-    chosen_text_raw = ""
-    for cand in text_candidates:
-        if cand and str(cand).strip():
-            chosen_text_raw = str(cand)
-            break
-    text_norm = _normalize_text_for_embedding(chosen_text_raw, 200)
+    # 1. Visible text is most important
+    visible_text = (node.get("text") or "").strip()
+    if visible_text:
+        text_sources.append(visible_text.lower())
 
-    # build header
-    header_parts: List[str] = []
-    header_parts.append(f"element: {tag}")
-    header_parts.append(f"role: {role}")
-    if aria_label:
-        header_parts.append(f"aria-label: {_normalize_text_for_embedding(aria_label, 120)}")
-    if intent_phrase:
-        header_parts.append(f"intent: {intent_phrase}")
-    header = "; ".join(header_parts)
+    # 2. ARIA label (often more descriptive than visible text)
+    aria_label = str(attrs.get("aria-label", "")).strip()
+    if aria_label and aria_label.lower() not in [t.lower() for t in text_sources]:
+        text_sources.append(aria_label.lower())
 
-    body_parts: List[str] = []
-    if text_norm:
-        body_parts.append(f"text: {text_norm}")
-    if tag == "a" and href_attr:
-        href_clean = href_attr.strip()
-        if len(href_clean) > 200:
-            href_clean = href_clean[:200] + "..."
-        body_parts.append(f"href: {href_clean.lower()}")
-    if (tag == "img" or alt_attr) and alt_attr:
-        body_parts.append(f"alt: {_normalize_text_for_embedding(alt_attr, 120)}")
+    # 3. Value attribute (for inputs)
+    value = str(attrs.get("value", "")).strip()
+    if value and tag in ("input", "button") and value.lower() not in [t.lower() for t in text_sources]:
+        text_sources.append(value.lower())
 
-    embedding_string = header
-    if body_parts:
-        embedding_string += " | " + " | ".join(body_parts)
+    # 4. Title/alt attributes
+    title = str(attrs.get("title", "")).strip()
+    if title and title.lower() not in [t.lower() for t in text_sources]:
+        text_sources.append(title.lower())
 
-    # enforce total length cap
-    if not full and len(embedding_string) > 32000:
-        h = hashlib.sha1(embedding_string.encode("utf-8")).hexdigest()[:8]
-        embedding_string = embedding_string[:32000] + "...|sha1:" + h
+    alt = str(attrs.get("alt", "")).strip()
+    if alt and tag == "img" and alt.lower() not in [t.lower() for t in text_sources]:
+        text_sources.append(alt.lower())
+
+    # Build embedding: content first, then minimal context
+    parts = []
+
+    # Lead with the primary content (most important for matching)
+    if text_sources:
+        # Combine unique content, preserving order
+        primary_content = " ".join(text_sources[:3])  # Cap at 3 to avoid dilution
+        parts.append(primary_content)
+
+    # Add element type context (helps distinguish button vs link vs text)
+    element_type = _get_element_type(tag, attrs)
+    if element_type and element_type != "element":
+        parts.append(element_type)
+
+    # Add ancestor context ONLY if it contains meaningful signals
+    ancestor_context = _get_ancestor_context(ancestors, query_tokens)
+    if ancestor_context:
+        parts.append(ancestor_context)
+
+    # Simple space-separated format (no structured headers)
+    embedding_string = " ".join(parts)
+
+    # Normalize whitespace and length
+    embedding_string = re.sub(r"\s+", " ", embedding_string).strip()
+    if len(embedding_string) > 512:  # Much shorter limit for focus
+        embedding_string = embedding_string[:512]
+
     return embedding_string
+
+
+def _clean_query(original_query: str, preserve_actions: bool = False) -> Tuple[str, List[str]]:
+    """
+    Clean query with better token preservation.
+
+    Returns:
+        Tuple of (cleaned_query, important_tokens)
+    """
+    q = (original_query or "").lower()
+
+    # Extract important tokens before cleaning
+    important_tokens = []
+
+    # Look for specific patterns that indicate targets
+    # Pattern: "button for X", "link to X", "option for X"
+    target_match = re.search(r"\b(?:for|to|of|with)\s+(.+)$", q)
+    if target_match:
+        target = target_match.group(1)
+        important_tokens.extend(re.findall(r"\b\w+\b", target))
+
+    # Remove punctuation but preserve structure
+    q = re.sub(r"[\.,:;!\?\(\)\[\]\{\}\|]", " ", q)
+
+    # Action words to optionally preserve
+    action_words = {"click", "select", "choose", "open", "close", "submit", "search", "filter", "compare", "add", "remove", "delete"}
+    ui_elements = {"button", "link", "menu", "dropdown", "checkbox", "radio", "tab", "option", "filter", "card"}
+
+    tokens = q.split()
+    kept = []
+
+    for token in tokens:
+        # Keep UI element descriptors
+        if token in ui_elements:
+            kept.append(token)
+            if token not in important_tokens:
+                important_tokens.append(token)
+        # Optionally keep action words
+        elif preserve_actions and token in action_words:
+            kept.append(token)
+        # Keep content words (not common stop words)
+        elif token not in {"the", "a", "an", "on", "in", "at", "to", "for", "with", "of", "by", "from", "and", "or"}:
+            kept.append(token)
+            if len(token) > 2 and token not in important_tokens:
+                important_tokens.append(token)
+
+    cleaned = " ".join(kept)
+
+    # Simple pluralization handling
+    cleaned_tokens = []
+    for token in cleaned.split():
+        # Only depluralize if it's not a product name or specific term
+        if token.endswith("s") and len(token) > 3 and not token[0].isupper():
+            # Check if removing 's' creates a valid word (heuristic)
+            singular = token[:-1]
+            # Keep original if it's likely a proper noun or specific term
+            if singular in {"product", "filter", "option", "item", "result"}:
+                cleaned_tokens.append(singular)
+            else:
+                cleaned_tokens.append(token)
+        else:
+            cleaned_tokens.append(token)
+
+    return " ".join(cleaned_tokens), important_tokens[:5]  # Cap important tokens
 
 
 # ---------------------------
@@ -659,38 +671,6 @@ def _iou(b1: Tuple[int,int,int,int], b2: Tuple[int,int,int,int]) -> float:
 _EMBED_MODEL: Optional[SentenceTransformer] = None
 
 
-def _clean_query(original_query: str) -> str:
-    q = (original_query or "").lower()
-    # Remove punctuation
-    q = re.sub(r"[\.,:;!\?\(\)\[\]\{\}\|]", " ", q)
-    # Stop words and action verbs to drop (keep nouns like button/menu/cart)
-    stop = {
-        "click", "press", "tap", "open", "select", "choose", "pick", "go",
-        "search", "find", "show", "hide",
-        "on", "in", "at", "to", "for", "with", "of", "by", "from",
-        "the", "a", "an", "and", "or", "please",
-    }
-    tokens = [t for t in re.split(r"\s+", q) if t]
-    kept: List[str] = []
-    for t in tokens:
-        if t in stop:
-            continue
-        kept.append(t)
-    # Lemmatize simple plurals
-    def lem(tok: str) -> str:
-        if len(tok) > 3 and tok.endswith("ies"):
-            return tok[:-3] + "y"
-        if len(tok) > 3 and tok.endswith("ses"):
-            return tok[:-2]
-        if len(tok) > 3 and tok.endswith("s") and not tok.endswith("ss"):
-            return tok[:-1]
-        return tok
-    lemmed = [lem(t) for t in kept]
-    # collapse spaces
-    cleaned = " ".join([t for t in lemmed if t])
-    return cleaned.strip()
-
-
 def _get_model(cfg: Dict[str, Any]) -> SentenceTransformer:
     """Load embedding model, by default strictly Google Gemma (no fallback).
 
@@ -728,12 +708,16 @@ def _get_model(cfg: Dict[str, Any]) -> SentenceTransformer:
     return _EMBED_MODEL
 
 
-def _visibility_rank(vis: str) -> int:
-    if vis == 'visible':
-        return 2
-    if vis == 'offscreen':
-        return 1
-    return 0
+def _count_token_matches(text: str, tokens: List[str]) -> int:
+    """Count how many important tokens appear in the text."""
+    if not tokens:
+        return 0
+    text_lower = text.lower()
+    count = 0
+    for token in tokens:
+        if token.lower() in text_lower:
+            count += 1
+    return count
 
 
 def retrieve_best_element(
@@ -764,6 +748,7 @@ def retrieve_best_element(
         "timeout_ms": 60000,
         "similarity_threshold": 0.72,
         "ambiguity_delta": 0.05,
+        "rerank_ambiguity_threshold": 0.05, # V2: Threshold for triggering reranking
         "max_candidates": 500,
         "use_visual_fallback": True,
         "auto_install_deps": False,
@@ -828,7 +813,6 @@ def retrieve_best_element(
         timings['extracted_count'] = len(nodes)
     scope = str(cfg.get("prefilter_scope", "node_and_ancestors")).lower()
     direct_only = bool(cfg.get("prefilter_direct_text_only", False))
-    # tag-based whitelisting removed to avoid heuristic bias
 
     def match_text(text: str) -> bool:
         t = (text or '').strip()
@@ -873,19 +857,28 @@ def retrieve_best_element(
 
     # Build canonical & flattened
     t_can = time.time()
-    # Optional tag whitelist (e.g., only 'label' for Compare controls)
+    # V2: Clean query and get important tokens first
+    cleaned_query, important_tokens = _clean_query(query, preserve_actions=True)
+
     tag_whitelist = cfg.get("candidate_tag_whitelist")
     if tag_whitelist:
         wl = {str(t).lower() for t in (tag_whitelist or [])}
         filtered = [r for r in filtered if str((r.get('node', {}) or {}).get('tag') or '').lower() in wl]
     timings['whitelist_count'] = len(filtered)
     candidates: List[Dict[str, Any]] = []
-    full_flat = bool(cfg.get("embedding_full_attributes", False))
+
     for rec in filtered:
         try:
             can = build_canonical(rec)
-            flat = flatten_for_embedding(can, full=full_flat)
-            candidates.append({"canonical": can, "flat": flat, "raw": rec})
+            # V2: Pass important tokens to embedding function
+            flat = flatten_for_embedding(can, query_tokens=important_tokens)
+            token_matches = _count_token_matches(flat, important_tokens)
+            candidates.append({
+                "canonical": can,
+                "flat": flat,
+                "raw": rec,
+                "important_token_matches": token_matches
+            })
         except Exception:
             continue
     timings['canonical_count'] = len(candidates)
@@ -920,24 +913,19 @@ def retrieve_best_element(
         dedup = dedup[:max_candidates]
         timings['capped_to'] = max_candidates
 
-    # Post-filter: suppress container nodes (e.g., li/div/span) when there is a matching preferred descendant (e.g., a/button)
+    # Post-filter: suppress container nodes
     if dedup and bool(cfg.get("suppress_container_matches", True)):
-        # Treat these as containers; drop them if a preferred descendant also matches
         container_tags = {"li", "ul", "ol", "div", "section", "nav", "header", "footer", "article", "main", "aside", "span"}
-        # Consider these as preferred actionable elements for matched text
         preferred_tags = {"a", "button", "input", "select", "textarea", "summary", "label"}
         drop_indexes: set = set()
-        # Precompute node outerHTML and ancestor outerHTML sets for each candidate
         node_outer_by_idx = {i: (c.get('raw', {}).get('node', {}) or {}).get('outerHTML', '') for i, c in enumerate(dedup)}
         ancestors_outer_sets: Dict[int, set] = {}
         for i, c in enumerate(dedup):
             anc_list = (c.get('raw', {}).get('ancestors') or [])
             ancestors_outer_sets[i] = { (a or {}).get('outerHTML','') for a in anc_list if isinstance(a, dict) }
-        # Collect outerHTML of preferred nodes
         preferred_outers = { node_outer_by_idx.get(i) for i, c in enumerate(dedup)
                              if (c.get('canonical', {}).get('node', {}).get('tag') or '') in preferred_tags }
         preferred_outers.discard(None)
-        # Drop any candidate whose tag is a container OR not preferred, and whose ancestors include a preferred node
         for i, c in enumerate(dedup):
             tag_i = (c.get('canonical', {}).get('node', {}).get('tag') or '')
             if tag_i in preferred_tags:
@@ -951,7 +939,6 @@ def retrieve_best_element(
 
     if not dedup:
         result = {"best_index": None, "best_canonical": None, "best_canonical_str": None, "best_score": 0.0, "scores": [], "fallback_used": False, "fallback_info": None, "diagnostics": {"timings": timings, "num_candidates": 0, "top5": []}, "total_time_s": time.time()-overall_t0}
-        # If debug requested, print a quick notice
         if cfg.get("debug_dump_candidates"):
             print("[DEBUG] No candidates after processing.")
         return result
@@ -960,18 +947,39 @@ def retrieve_best_element(
     t_emb = time.time()
     model = _get_model(cfg)
     cand_texts = [d['flat'] for d in dedup]
-    cleaned_query = _clean_query(query)
-    # Ensure cleaned query like "apple filter button" is used
     q_emb = model.encode([cleaned_query], convert_to_tensor=True)
     cand_emb = model.encode(cand_texts, convert_to_tensor=True)
     sims_tensor = util.cos_sim(q_emb, cand_emb)[0]
     sims = sims_tensor.detach().cpu().numpy()
     timings['embedding_time'] = time.time() - t_emb
 
-    # ranking strictly by embedding similarity (no heuristics)
+    # V2: Enhanced scoring with reranking
+    rerank_threshold = float(cfg.get("rerank_ambiguity_threshold", 0.05))
     order = list(np.argsort(-sims))
-    best_idx = int(order[0])
-    best_score = float(sims[best_idx])
+    
+    if len(order) > 1:
+        top_score = sims[order[0]]
+        # Check if top candidates are ambiguous
+        if (top_score - sims[order[1]]) < rerank_threshold:
+            # Gather candidates for reranking
+            rerank_candidates_indices = [idx for idx in order[:10] if sims[idx] >= (top_score - rerank_threshold)]
+            
+            if len(rerank_candidates_indices) > 1 and important_tokens:
+                reranked_scores = []
+                for idx in rerank_candidates_indices:
+                    base_score = float(sims[idx])
+                    token_bonus = dedup[idx].get("important_token_matches", 0) * 0.01  # Small boost per token
+                    reranked_scores.append((idx, base_score + token_bonus))
+                
+                # Sort by the enhanced score
+                reranked_scores.sort(key=lambda x: x[1], reverse=True)
+                # Rebuild the final sorted order
+                best_indices_reranked = [item[0] for item in reranked_scores]
+                remaining_indices = [idx for idx in order if idx not in best_indices_reranked]
+                order = best_indices_reranked + remaining_indices
+
+    best_idx = int(order[0]) if order else -1
+    best_score = float(sims[best_idx]) if best_idx != -1 else 0.0
     second_score = float(sims[order[1]]) if len(order) > 1 else 0.0
 
     top5_scores = [float(sims[i]) for i in order[:5]]
@@ -984,7 +992,6 @@ def retrieve_best_element(
         "second_score": second_score,
     }
 
-    # Optional: debug print of candidates (embedding string + JSON + score)
     if cfg.get("debug_dump_candidates"):
         dump_k = int(cfg.get("debug_dump_top_k") or 0)
         limit = dump_k if dump_k and dump_k > 0 else len(order)
@@ -1000,16 +1007,15 @@ def retrieve_best_element(
                     continue
             print("== Candidate #", rank, "==")
             try:
-                print("canonical_string:")
+                print("embedding_string:")
                 print(c['flat'])
-            except Exception:
-                pass
+            except Exception: pass
             try:
                 print("canonical_json:")
                 print(json.dumps(c['canonical'], indent=2))
-            except Exception:
-                pass
+            except Exception: pass
             print("similarity:", float(sims[idx]))
+            print("important_token_matches:", c.get("important_token_matches", 0))
             print("----")
             printed += 1
         if only_pref and needle:
@@ -1035,7 +1041,6 @@ def retrieve_best_element(
     if use_visual_fallback and trigger_fallback:
         t_fb = time.time()
         fallback_used = True
-        # OCR fallback (Pix2Struct hook can be added here)
         ocr_matches = ocr_bboxes_from_screenshot(screenshot_b64, query, target_text)
         best_iou = 0.0
         best_idx_by_ocr: Optional[int] = None
@@ -1045,7 +1050,6 @@ def retrieve_best_element(
                 iouv = _iou((l,t,w,h), (int(cb[0]), int(cb[1]), int(cb[2]), int(cb[3])))
                 if iouv > best_iou:
                     best_iou = iouv; best_idx_by_ocr = ci
-        # Only adopt OCR-mapped candidate if IoU passes cutoff
         iou_cutoff = float(cfg.get('ocr_iou_cutoff', 0.3))
         if best_idx_by_ocr is not None and best_iou >= iou_cutoff:
             best_idx = int(best_idx_by_ocr)
@@ -1057,7 +1061,6 @@ def retrieve_best_element(
         }
         diagnostics['fallback_time'] = time.time() - t_fb
 
-    # Return top-K candidates if requested
     return_k = int(cfg.get("return_top_k") or 0)
     ranked = [
         {
@@ -1071,7 +1074,6 @@ def retrieve_best_element(
     if return_k and return_k > 0:
         ranked = ranked[:return_k]
 
-    # enrich diagnostics with top-5 candidate info and counts
     top5_details = []
     for i, j in enumerate(order[:5]):
         cnode = dedup[j]['canonical']['node']
@@ -1095,13 +1097,13 @@ def retrieve_best_element(
         "best_summary": {
             "tag": dedup[best_idx]['canonical']['node'].get('tag'),
             "text": dedup[best_idx]['canonical']['node'].get('text'),
-        }
+        } if best_idx != -1 else {}
     })
 
     result = {
-        "best_index": best_idx,
-        "best_canonical": dedup[best_idx]['canonical'],
-        "best_canonical_str": dedup[best_idx]['flat'],
+        "best_index": best_idx if best_idx != -1 else None,
+        "best_canonical": dedup[best_idx]['canonical'] if best_idx != -1 else None,
+        "best_canonical_str": dedup[best_idx]['flat'] if best_idx != -1 else None,
         "best_score": best_score,
         "scores": [float(s) for s in sims.tolist()],
         "ranked": ranked,
@@ -1171,7 +1173,7 @@ if __name__ == "__main__":
         try:
             print(f"# Rank {item['rank']} | score={item['score']:.4f}")
             print("embedding_string:")
-            print(item.get("embedding_string") or item.get("canonical_str") or "")
+            print(item.get("embedding_string") or "")
             print("canonical_json:")
             print(json.dumps(item.get("canonical"), indent=2))
             print("----")
@@ -1191,4 +1193,3 @@ if __name__ == "__main__":
         "timings": out.get("diagnostics", {}).get("timings"),
         "total_time_s": out.get("diagnostics", {}).get("total_time_s"),
     }, indent=2))
-
