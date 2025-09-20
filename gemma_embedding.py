@@ -754,7 +754,16 @@ def retrieve_best_element(
         filtered: List[Dict[str, Any]] = []
         for r in nodes:
             node_field = 'directText' if direct_only else 'text'
-            node_ok = match_text(r.get('node', {}).get(node_field) or '')
+            node_dict = r.get('node', {}) or {}
+            attrs_dict = node_dict.get('attrs', {}) or {}
+            values_to_check: List[str] = [str(node_dict.get(node_field) or '')]
+            if direct_only:
+                # Also consider accessible labels when direct-only is requested
+                for k in ("aria-label", "title", "value"):
+                    v = attrs_dict.get(k)
+                    if v:
+                        values_to_check.append(str(v))
+            node_ok = any(match_text(v) for v in values_to_check if v)
             anc_ok = False
             if scope == 'node_and_ancestors':
                 anc_texts = ' '.join([(a.get('text') or '') for a in (r.get('ancestors') or [])])
