@@ -124,7 +124,18 @@ _JS_DEEP_EXTRACT = r"""
         r = {left:b.left, top:b.top, width:b.width, height:b.height, right:b.right, bottom:b.bottom};
       } catch(e){}
       const cs = window.getComputedStyle(el);
-      return { tag: el.tagName, text: (el.innerText||'').trim(), attrs: attrs, bbox:{left:r.left,top:r.top,width:r.width,height:r.height}, outerHTML: el.outerHTML||'', css: {display: cs.display, visibility: cs.visibility, opacity: cs.opacity}, viewport: {w:viewW, h:viewH} };
+      let directText = '';
+      try {
+        const parts = [];
+        for (const n of Array.from(el.childNodes||[])) {
+          if (n && n.nodeType === Node.TEXT_NODE) {
+            const v = (n.nodeValue||'').trim();
+            if (v) parts.push(v);
+          }
+        }
+        directText = parts.join(' ').trim();
+      } catch(e) { directText = ''; }
+      return { tag: el.tagName, text: (el.innerText||'').trim(), directText: directText, attrs: attrs, bbox:{left:r.left,top:r.top,width:r.width,height:r.height}, outerHTML: el.outerHTML||'', css: {display: cs.display, visibility: cs.visibility, opacity: cs.opacity}, viewport: {w:viewW, h:viewH} };
     } catch(e){ return null; }
   }
 
@@ -313,6 +324,7 @@ def build_canonical(rec: Dict[str, Any]) -> Dict[str, Any]:
         "node": {
             "tag": (str(node.get('tag') or '')).lower(),
             "text": (node.get('text') or '').strip(),
+            "directText": (node.get('directText') or '').strip(),
             "attrs": node.get('attrs') or {},
             "bbox": [ node.get('bbox',{}).get('left',0), node.get('bbox',{}).get('top',0), node.get('bbox',{}).get('width',0), node.get('bbox',{}).get('height',0) ],
             "outerHTML": node.get('outerHTML',''),
@@ -721,6 +733,7 @@ def retrieve_best_element(
     needle = needle_raw.lower()
     match_mode = str(cfg.get("prefilter_match_mode", "contains")).lower()
     scope = str(cfg.get("prefilter_scope", "node_and_ancestors")).lower()
+    direct_only = bool(cfg.get("prefilter_direct_text_only", False))
     # tag-based whitelisting removed to avoid heuristic bias
 
     def match_text(text: str) -> bool:
@@ -740,7 +753,8 @@ def retrieve_best_element(
     if needle:
         filtered: List[Dict[str, Any]] = []
         for r in nodes:
-            node_ok = match_text(r.get('node', {}).get('text') or '')
+            node_field = 'directText' if direct_only else 'text'
+            node_ok = match_text(r.get('node', {}).get(node_field) or '')
             anc_ok = False
             if scope == 'node_and_ancestors':
                 anc_texts = ' '.join([(a.get('text') or '') for a in (r.get('ancestors') or [])])
@@ -775,16 +789,14 @@ def retrieve_best_element(
         can = c['canonical']
         tag = can['node']['tag'] or ''
         text = (can['node']['text'] or '')[:200]
+        direct_text = (can['node'].get('directText') or '')[:200]
         attrs_key = _safe_attrs_str(can['node'].get('attrs',{}), 200)
-        bbox = can['node'].get('bbox',[0,0,0,0])
+        # Ignore bbox in dedupe key to avoid duplicate 0x0 clones counting twice
         key = (
             tag,
             text,
+            direct_text,
             attrs_key,
-            int(round(float(bbox[0]) if bbox else 0)),
-            int(round(float(bbox[1]) if bbox else 0)),
-            int(round(float(bbox[2]) if bbox else 0)),
-            int(round(float(bbox[3]) if bbox else 0)),
         )
         if key in seen:
             continue
@@ -981,6 +993,7 @@ if __name__ == "__main__":
     parser.add_argument("--max-candidates", type=int, default=500, help="Maximum candidates to keep after dedupe (increase to print all matches)")
     parser.add_argument("--prefilter-mode", choices=["contains","equals","regex"], default="contains")
     parser.add_argument("--prefilter-scope", choices=["node","node_and_ancestors"], default="node_and_ancestors")
+    parser.add_argument("--prefilter-direct-text-only", action="store_true", help="If set, prefilter uses node.directText instead of node.text")
     parser.add_argument("--debug", action="store_true", help="Print debug candidate dumps")
     parser.add_argument("--wait-until", choices=["load","domcontentloaded","networkidle","commit"], default="networkidle")
     parser.add_argument("--timeout-ms", type=int, default=60000)
@@ -1004,6 +1017,7 @@ if __name__ == "__main__":
         "max_candidates": int(args.max_candidates or 500),
         "prefilter_match_mode": str(args.prefilter_mode),
         "prefilter_scope": str(args.prefilter_scope),
+        "prefilter_direct_text_only": bool(args.prefilter_direct_text_only),
         "wait_until": str(args.wait_until),
         "timeout_ms": int(args.timeout_ms),
     }
