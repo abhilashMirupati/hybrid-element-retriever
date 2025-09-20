@@ -417,7 +417,7 @@ def _collect_intent_tokens(attrs: Dict[str, Any]) -> List[str]:
 def _collect_semantic_from_ancestors(ancestors: List[Dict[str, Any]]) -> List[str]:
     if not ancestors:
         return []
-    meaningful_signals = {"filter", "filters", "menu", "compare", "cart"}
+    meaningful_signals = {"filter", "filters", "menu", "compare", "cart", "search"}
     tokens: List[str] = []
     for anc in ancestors[:3]:
         aattrs = anc.get("attrs", {}) or {}
@@ -964,32 +964,71 @@ def retrieve_best_element(
 
 
 if __name__ == "__main__":
-    # Colab-friendly example run: auto-install deps and use HF token from env
-    url = "https://www.verizon.com/smartphones/"
-    query = "Click on Apple filter button"
-    target_text = "Apple"
+    import argparse
+
+    parser = argparse.ArgumentParser(description="UI Element Locator using Gemma embeddings")
+    parser.add_argument("--url", required=True, help="Page URL to load")
+    parser.add_argument("--query", required=True, help="Natural language query")
+    parser.add_argument("--text", dest="target_text", default="", help="Optional target text to prefilter, e.g. 'Apple'")
+    parser.add_argument("--hf-token", dest="hf_token", default=os.environ.get("HUGGINGFACE_HUB_TOKEN", ""), help="Hugging Face token for Gemma model")
+    parser.add_argument("--no-visual-fallback", action="store_true", help="Disable OCR/Pix2Struct visual fallback")
+    parser.add_argument("--similarity-threshold", type=float, default=0.72)
+    parser.add_argument("--ambiguity-delta", type=float, default=0.05)
+    parser.add_argument("--ancestor-levels", type=int, default=2)
+    parser.add_argument("--max-siblings", type=int, default=1)
+    parser.add_argument("--include-hidden", action="store_true")
+    parser.add_argument("--return-top-k", type=int, default=0, help="Return top K ranked candidates in output (0 = all)")
+    parser.add_argument("--prefilter-mode", choices=["contains","equals","regex"], default="contains")
+    parser.add_argument("--prefilter-scope", choices=["node","node_and_ancestors"], default="node_and_ancestors")
+    parser.add_argument("--debug", action="store_true", help="Print debug candidate dumps")
+
+    args = parser.parse_args()
+
     cfg = {
-        "auto_install_deps": True,
-        "use_visual_fallback": False,
+        "ancestor_levels": int(args.ancestor_levels),
+        "max_siblings": int(args.max_siblings),
+        "include_hidden": bool(args.include_hidden),
+        "similarity_threshold": float(args.similarity_threshold),
+        "ambiguity_delta": float(args.ambiguity_delta),
+        "use_visual_fallback": (not args.no_visual_fallback),
         "embedding_model_name": "google/embeddinggemma-300m",
         "allow_embedding_fallback": False,
-        "hf_token": os.environ.get("HUGGINGFACE_HUB_TOKEN"),
-        "debug_dump_candidates": True,
+        "hf_token": args.hf_token or os.environ.get("HUGGINGFACE_HUB_TOKEN"),
+        "debug_dump_candidates": bool(args.debug),
         "debug_dump_only_prefiltered": True,
         "debug_dump_top_k": 0,
-        "return_top_k": 0,
-        "prefilter_match_mode": "equals",
-        "prefilter_scope": "node",
+        "return_top_k": int(args.return_top_k or 0),
+        "prefilter_match_mode": str(args.prefilter_mode),
+        "prefilter_scope": str(args.prefilter_scope),
     }
-    out = retrieve_best_element(url, query, target_text=target_text, config=cfg)
+
+    out = retrieve_best_element(args.url, args.query, target_text=(args.target_text or None), config=cfg)
+
+    # Always print each matching candidate (those considered after prefilter/dedupe) with embedding string, canonical JSON, and score
+    ranked = out.get("ranked") or []
+    print("\n=== Matching candidates (after prefilter & dedupe) ===")
+    for item in ranked:
+        try:
+            print(f"# Rank {item['rank']} | score={item['score']:.4f}")
+            print("embedding_string:")
+            print(item.get("embedding_string") or item.get("canonical_str") or "")
+            print("canonical_json:")
+            print(json.dumps(item.get("canonical"), indent=2))
+            print("----")
+        except Exception:
+            continue
+
+    # Summary
+    print("\n=== Summary ===")
     print(json.dumps({
         "best_index": out.get("best_index"),
         "best_score": out.get("best_score"),
         "best_tag": out.get("best_canonical", {}).get("node", {}).get("tag"),
         "best_text": out.get("best_canonical", {}).get("node", {}).get("text"),
         "fallback_used": out.get("fallback_used"),
-        "top5": out.get("diagnostics", {}).get("top5"),
-        "num_candidates": out.get("diagnostics", {}).get("num_candidates"),
-        "timings": out.get("diagnostics", {}).get("timings")
+        "gap": out.get("diagnostics", {}).get("gap"),
+        "counts": out.get("diagnostics", {}).get("counts"),
+        "timings": out.get("diagnostics", {}).get("timings"),
+        "total_time_s": out.get("diagnostics", {}).get("total_time_s"),
     }, indent=2))
 
