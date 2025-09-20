@@ -774,6 +774,12 @@ def retrieve_best_element(
 
     # Build canonical & flattened
     t_can = time.time()
+    # Optional tag whitelist (e.g., only 'label' for Compare controls)
+    tag_whitelist = cfg.get("candidate_tag_whitelist")
+    if tag_whitelist:
+        wl = {str(t).lower() for t in (tag_whitelist or [])}
+        filtered = [r for r in filtered if str((r.get('node', {}) or {}).get('tag') or '').lower() in wl]
+    timings['whitelist_count'] = len(filtered)
     candidates: List[Dict[str, Any]] = []
     full_flat = bool(cfg.get("embedding_full_attributes", False))
     for rec in filtered:
