@@ -617,6 +617,9 @@ def retrieve_best_element(
 
     # tie-breakers
     bonuses = np.zeros_like(sims, dtype=np.float32)
+    query_lower = (query or '').lower()
+    query_mentions_button = ('button' in query_lower)
+    query_mentions_filter = ('filter' in query_lower)
     for idx, c in enumerate(dedup):
         node = c['canonical']['node']
         attrs = node.get('attrs', {}) or {}
@@ -625,21 +628,50 @@ def retrieve_best_element(
         # exact equality bonus (prefer target_text if provided)
         if target_text and text_norm == target_text.strip().lower():
             bonuses[idx] += 0.02
-        # role/button hints
+        # role/button vs anchor hints (separate weights)
         tag = (node.get('tag') or '').upper()
         role = str(attrs.get('role','')).lower()
-        data_track = 'data-track' in attrs or 'data_tracking' in attrs
-        if tag in ('BUTTON',) or role == 'button' or (tag == 'A' and ('href' in attrs)):
-            bonuses[idx] += 0.01
-        if data_track:
+        has_href = 'href' in attrs
+        data_track_val = (attrs.get('data-track') or attrs.get('data_tracking') or '')
+        data_analytic_val = (attrs.get('data-analyticstrack') or '')
+        data_strings = f"{data_track_val} {data_analytic_val}".lower()
+
+        is_buttonish = (tag == 'BUTTON') or (role == 'button')
+        is_anchor = (tag == 'A') and has_href
+
+        # Base preference: buttons > anchors
+        if is_buttonish:
+            bonuses[idx] += 0.03
+        if is_anchor:
             bonuses[idx] += 0.005
-        # visibility
-        if vis == 'visible':
+
+        # Intent-aware boosts from query
+        if query_mentions_button and is_buttonish:
+            bonuses[idx] += 0.03
+        if query_mentions_button and is_anchor:
+            bonuses[idx] -= 0.005
+        if query_mentions_filter:
+            if ('filter' in data_strings) or ('searchfilters' in data_strings) or ('tab-' in data_strings):
+                bonuses[idx] += 0.02
+            # Also slightly prefer elements nearer the top of the page when asking for filters
+            try:
+                top_y = float(node.get('bbox', [0,0,0,0])[1] or 0)
+                if top_y >= 0 and top_y < 1500:
+                    bonuses[idx] += 0.01
+            except Exception:
+                pass
+
+        # data-track generic hint
+        if ('data-track' in attrs) or ('data_tracking' in attrs) or ('data-analyticstrack' in attrs):
             bonuses[idx] += 0.003
+
+        # visibility preference (stronger)
+        if vis == 'visible':
+            bonuses[idx] += 0.02
         elif vis == 'offscreen':
             bonuses[idx] += 0.0
         else:  # hidden
-            bonuses[idx] -= 0.01
+            bonuses[idx] -= 0.02
 
     final_scores = sims + bonuses
     order = list(np.argsort(-final_scores))
