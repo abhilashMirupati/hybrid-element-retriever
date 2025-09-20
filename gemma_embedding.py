@@ -25,6 +25,7 @@ import hashlib
 import time
 import subprocess
 from typing import Any, Dict, List, Optional, Tuple
+import re
 
 import nest_asyncio
 nest_asyncio.apply()
@@ -467,8 +468,14 @@ def retrieve_best_element(
         "debug_dump_candidates": False,
         # 0 or None -> dump all when debug enabled
         "debug_dump_top_k": 0,
+        # show only target_text matches in debug dump when True
+        "debug_dump_only_prefiltered": False,
         # return top-K ranked candidates in payload (0/None -> all)
         "return_top_k": 100,
+        # prefilter tuning
+        "prefilter_match_mode": "contains",  # contains | equals | regex
+        "prefilter_scope": "node_and_ancestors",  # node | node_and_ancestors
+        "tag_whitelist": None,  # e.g., ["A", "BUTTON"]
     }
     if config:
         cfg.update(config)
@@ -495,14 +502,44 @@ def retrieve_best_element(
 
     # pre-filter by target_text
     pre_t0 = time.time()
-    if target_text and target_text.strip():
-        needle = target_text.strip().lower()
+    needle_raw = (target_text or '').strip()
+    needle = needle_raw.lower()
+    match_mode = str(cfg.get("prefilter_match_mode", "contains")).lower()
+    scope = str(cfg.get("prefilter_scope", "node_and_ancestors")).lower()
+    tag_whitelist = cfg.get("tag_whitelist") or None
+    if tag_whitelist:
+        tag_whitelist = [str(t).upper() for t in tag_whitelist]
+
+    def match_text(text: str) -> bool:
+        t = (text or '').strip()
+        if not needle_raw:
+            return True
+        if match_mode == 'equals':
+            return t.lower() == needle
+        if match_mode == 'regex':
+            try:
+                return re.search(needle_raw, t, flags=re.IGNORECASE) is not None
+            except re.error:
+                return False
+        # default contains
+        return needle in t.lower()
+
+    if needle:
         filtered: List[Dict[str, Any]] = []
         for r in nodes:
-            nt = (r.get('node',{}).get('text') or '').lower()
-            anc_texts = ' '.join([(a.get('text') or '') for a in (r.get('ancestors') or [])]).lower()
-            if needle in nt or needle in anc_texts:
-                filtered.append(r)
+            node_ok = match_text(r.get('node', {}).get('text') or '')
+            anc_ok = False
+            if scope == 'node_and_ancestors':
+                anc_texts = ' '.join([(a.get('text') or '') for a in (r.get('ancestors') or [])])
+                anc_ok = match_text(anc_texts)
+            passed_text = node_ok or anc_ok
+            if not passed_text:
+                continue
+            if tag_whitelist:
+                tag = str(r.get('node', {}).get('tag') or '').upper()
+                if tag not in tag_whitelist:
+                    continue
+            filtered.append(r)
     else:
         filtered = nodes[:]
     timings['prefilter_count'] = len(filtered)
@@ -624,9 +661,16 @@ def retrieve_best_element(
     if cfg.get("debug_dump_candidates"):
         dump_k = int(cfg.get("debug_dump_top_k") or 0)
         limit = dump_k if dump_k and dump_k > 0 else len(order)
-        print(f"[DEBUG] Dumping top {limit} candidates (of {len(order)})")
+        only_pref = bool(cfg.get("debug_dump_only_prefiltered", False))
+        printed = 0
+        print(f"[DEBUG] Dumping top {limit} candidates (of {len(order)})" + (" — only matches" if only_pref and needle else ""))
         for rank, idx in enumerate(order[:limit], start=1):
             c = dedup[idx]
+            if only_pref and needle:
+                node_text = (c['canonical']['node'].get('text') or '').lower()
+                anc_texts = ' '.join([(a.get('text') or '') for a in (c.get('raw',{}).get('ancestors') or [])]).lower()
+                if (needle not in node_text) and (needle not in anc_texts):
+                    continue
             print("== Candidate #", rank, "==")
             try:
                 print("canonical_string:")
@@ -640,6 +684,9 @@ def retrieve_best_element(
                 pass
             print("similarity:", float(sims[idx]))
             print("----")
+            printed += 1
+        if only_pref and needle:
+            print(f"[DEBUG] Printed {printed} candidates matching '{needle}'.")
 
     # fallback
     use_visual_fallback = bool(cfg['use_visual_fallback'])
